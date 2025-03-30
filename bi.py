@@ -115,9 +115,9 @@ def delmem(start,end):
     mem1=[]
     mem2=[]
     for j in range(start):
-        mem1=[mem[j]]
-    for j in range(len(mem)-end):
-        mem2=[mem[j]]
+        mem1+=[mem[j]]
+    for j in range(end+1,len(mem)):
+        mem2+=[mem[j]]
     mem=mem1+mem2
     modified=True
 
@@ -260,6 +260,8 @@ def fedit():
                 setmem(addr,readmem(addr)&mask|c<<sh)
                 modified=True
             inccurx()
+        elif ch=='x':
+            delmem(fpos(),fpos())
 
 def readfile(fn):
     global mem,newfile
