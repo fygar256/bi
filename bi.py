@@ -4,7 +4,7 @@ import tty
 import termios
 import string
 ESC='\033['
-LENONSCR=20
+LENONSCR=(20*16)
 mem=[]
 coltab=[0,1,4,5,2,6,3,7]
 filename=""
@@ -182,7 +182,7 @@ def stdmm(s):
 
 def jump(addr):
     global homeaddr,curx,cury
-    if addr < homeaddr or addr>=homeaddr+16*LENONSCR:
+    if addr < homeaddr or addr>=homeaddr+LENONSCR:
         homeaddr=addr & ~(0xff)
     i=addr-homeaddr
     curx=(i&0xf)*2
