@@ -46,21 +46,21 @@ Overview
 
     [address]               ----- jump to the address
     [address]j              ----- jump to the address
-	[offset]S<string>		----- insert string before [offset]
-	[offset]s<string>		----- overwrite string on and after [offset]
+	[offset] S<string>		----- insert string before [offset]
+	[offset] s<string>		----- overwrite string on and after [offset]
 
-	[offset]R<filename>		----- read file (insert) before [offset]
-	[offset]r<filename>		----- read file (overwrite) on and after [offset]
-	[offset]f<length>,<data>	----- fill with <data> (by length)
-	<start>,<end>f<xx>	    	----- fill with xx (by range)
-	[offset]i<length>,[data]	----- insert data
-	[offset]d<length>		----- delete by length
+	[offset] R<filename>		----- read file (insert) before [offset]
+	[offset] r<filename>		----- read file (overwrite) on and after [offset]
+	[offset] f<length>,<data>	----- fill with <data> (by length)
+	<start>,<end> f<xx>	    	----- fill with xx (by range)
+	[offset] i<length>,[data]	----- insert data
+	[offset] d<length>		----- delete by length
 
-	<start>,<end>d 		    ----- delete by range
-	<start>,<end>y			----- yank to yankbuffer
-	<start>,<end>m[destination]	----- move data
-	<start>,<end>c[destination]	----- copy data (data will be yanked)
-	<start>,<end>w<filename>	----- write data on file
+	<start>,<end> d 		----- delete by range
+	<start>,<end> y			----- yank to yankbuffer
+	<start>,<end> m[destination]	----- move data
+	<start>,<end> c[destination]	----- copy data (data will be yanked)
+	<start>,<end> w<filename>	----- write data on file
 	!<string>			    ----- invoke command.com
 	q				        ----- quit
 	q!				        ----- overriding quit
