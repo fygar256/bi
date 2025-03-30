@@ -35,6 +35,7 @@ Overview
 
     p               ----- paste yank buffer (overwrite)
     P               ----- paste yank buffer (insert)
+@   q               ----- quit
 @   x               ----- delete a byte
 @   Z               ----- write and quit
 
