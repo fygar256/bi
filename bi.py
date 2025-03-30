@@ -8,6 +8,7 @@ mem=[]
 coltab=[0,1,4,5,2,3,6,7]
 filename=""
 modified=False
+newfile=True
 homeaddr=0
 insmod=False
 curx=0
@@ -165,6 +166,16 @@ def setmem(addr,data):
         for i in range(addr-len(mem)+1):
             mem+=[0]
     mem[addr]=data
+def clrmm():
+    esclocate(0,23)
+    esccolor(6)
+    print(" "*79,end='')
+
+def stdmm(s):
+    clrmm()
+    esccolor(6)
+    esclocate(0,23)
+    print(s,end='')
 
 def fedit():
     global modified,insmod,homeaddr,curx,cury
@@ -176,27 +187,35 @@ def fedit():
         if ch==chr(2):
             if homeaddr>=256:
                 homeaddr-=256
+            continue
         elif ch==chr(6):
             homeaddr+=256
+            continue
         elif ch==chr(0x15):
             if homeaddr>=128:
                 homeaddr-=128
+            continue
         elif ch==chr(4):
             homeaddr+=128
+            continue
         elif ch=='^':
             curx=0
+            continue
         elif ch=='$':
             curx=30
+            continue
         elif ch=='j':
             if cury<19:
                 cury+=1
             else:
                 scrdown()
+            continue
         elif ch=='k':
             if cury>0:
                 cury-=1
             else:
                 scrup()
+            continue
         elif ch=='h':
             if curx>0:
                 curx-=1
@@ -206,24 +225,29 @@ def fedit():
                     cury-=1
                 else:
                     scrup()
+            continue
         elif ch=='l':
             inccurx()
-        elif ch=='Z':
-            return
-        elif ch=='i':
-            insmod=not insmod
-            stroke=False
+            continue
         elif ch==chr(12):
             repaint()
-        elif ch==chr(3):
-            return
+            continue
+        elif ch=='Z':
+            return(True)
+        elif ch=='q':
+            return(False)
+        clrmm()
+
+        if ch=='i':
+            insmod=not insmod
+            stroke=False
         elif ch in string.hexdigits:
             addr=fpos()
             c=int("0x"+ch,16)
             sh=4 if not curx&1 else 0
             mask=0xf if not curx&1 else 0xf0
             if insmod:
-                if not stroke:
+                if not stroke and addr<len(mem):
                     insmem(addr,addr,c<<sh)
                 else:
                     setmem(addr,readmem(addr)&mask|c<<sh)
@@ -235,9 +259,15 @@ def fedit():
 
 def readfile(fn):
     global mem
-    f=open(fn,"rb")
-    mem=list(f.read())
-    f.close()
+    try:
+        f=open(fn,"rb")
+    except:
+        newfile=True
+        stdmm("<new file>")
+        mem=[]
+    else:
+        mem=list(f.read())
+        f.close()
 
 def writefile(fn):
     global mem
@@ -249,8 +279,9 @@ def main():
     global filename
     filename=sys.argv[1]
     readfile(filename)
-    fedit()
-    writefile(filename)
+    f=fedit()
+    if f:
+        writefile(filename)
 
 if __name__=="__main__":
     main()
