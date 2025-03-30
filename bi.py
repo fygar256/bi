@@ -249,11 +249,12 @@ def fedit():
             if curx>0:
                 curx-=1
             else:
-                curx=31
-                if cury>0:
-                    cury-=1
-                else:
-                    scrup()
+                if fpos()!=0:
+                    curx=31
+                    if cury>0:
+                        cury-=1
+                    else:
+                        scrup()
             continue
         elif ch=='l':
             inccurx()
