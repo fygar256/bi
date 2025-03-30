@@ -23,15 +23,15 @@ Overview
 @	^L				----- repaint screen.
 @	^				----- jump to the left end of line
 @	$				----- jump to the right end of line
-	m[a-z]			----- mark currrent position
-	'[a-z]			----- jump to marked point
+@	m[a-z]			----- mark currrent position
+@	'[a-z]			----- jump to marked point
 	/				----- search string forward
 	?				----- search string backward
 	//xx xx xx ...	----- search binary data forward
 	??xx xx xx ...	----- search binary data backward
 	n				----- search the next 
 	N				----- search the last
-	M				----- display marks
+@	M				----- display marks
 
 	p				----- paste yank buffer (overwrite)
 	P				----- paste yank buffer (insert)
@@ -43,22 +43,21 @@ Overview
     ◎コマンドラインで使えるコマンド------------------------On command line mode
 
     [address]               ----- jump to the address
-    [address]j              ----- jump to the address
-	[offset]S<string>		----- insert string before [offset]
-	[offset]s<string>		----- overwrite string on and after [offset]
+	[offset] S "string"		----- insert string before [offset]
+	[offset] s "string"		----- overwrite string on and after [offset]
 
-	[offset]Rfilename		----- read file (insert) before [offset]
-	[offset]rfilename		----- read file (overwrite) on and after [offset]
-	[offset]f<length>,<data>	----- fill with <data> (by length)
-	<start>,<end>f<xx>	    	----- fill with xx (by range)
-	[offset]i<length>,[data]	----- insert data
-	[offset]d<length>		----- delete by length
+	[offset] R filename		----- read file (insert) before [offset]
+	[offset] r filename		----- read file (overwrite) on and after [offset]
+	[offset] f <length>,<data>	----- fill with <data> (by length)
+	<start>,<end> f <xx>    	----- fill with xx (by range)
+	[offset] i <length>,[data]	----- insert data
+	[offset] d <length>		----- delete by length
 
-	<start>,<end>d 		    ----- delete by range
-	<start>,<end>y			----- yank to yankbuffer
-	<start>,<end>m[destination]	----- move data
-	<start>,<end>c[destination]	----- copy data (data will be yanked)
-	<start>,<end>w<filename>	----- write data on file
+	<start>,<end> d 	    ----- delete by range
+	<start>,<end> y			----- yank to yankbuffer
+	<start>,<end> m [destination]	----- move data
+	<start>,<end> c [destination]	----- copy data (data will be yanked)
+	<start>,<end> w <filename>	----- write data on file
 	!<string>			    ----- invoke command.com
 	q				        ----- quit
 	q!				        ----- overriding quit
@@ -114,8 +113,9 @@ Overview
 1992-02-05	wqのバグ修正				version 0.99992
 1992-02-10	メモリアロケーションエラーのバグ修正	version 0.99998
 		^D,^U コマンド追加
-2025-03-29      linux version 1.98
-2025-03-30      linux version ちょっとデバッグ。`x`コマンド追加。 version 1.983
+2025-03-29  linux version 1.98
+2025-03-30  linux version 1.989 ちょっとデバッグ、xコマンド、Mコマンド、'コマンド、mコマンドを追加。
+
 --------------------
 
 		と、いうわけで、もし蟲を見つけた方がいらっしゃいましたら

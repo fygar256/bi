@@ -4,6 +4,7 @@ import tty
 import termios
 import string
 ESC='\033['
+LENONSCR=20
 mem=[]
 coltab=[0,1,4,5,2,6,3,7]
 filename=""
@@ -13,6 +14,8 @@ homeaddr=0
 insmod=False
 curx=0
 cury=0
+mark=[0] * 26
+
 
 def getch():
     fd = sys.stdin.fileno()
@@ -68,7 +71,7 @@ def repaint():
     print_title()
     esclocate(0,2)
     esccolor(4)
-    print("OFFSET       +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F ASCII            ")
+    print("OFFSET       +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF  ")
     esccolor(7)
     addr=homeaddr
     for y in range(0x14):
@@ -177,6 +180,28 @@ def stdmm(s):
     esclocate(0,23)
     print(s,end='')
 
+def jump(addr):
+    global homeaddr,curx,cury
+    if addr < homeaddr or addr>=homeaddr+16*LENONSCR:
+        homeaddr=addr & ~(0xff)
+    i=addr-homeaddr
+    curx=(i&0xf)*2
+    cury=(i//16)
+
+def disp_marks():
+    j=0
+    esclocate(0,23)
+    esccolor(7)
+    for i in 'abcdefghijklmnopqrstuvwxyz':
+        print(f"{i} = {mark[j]:012X}    ",end='')
+        j+=1
+        if j%3==0:
+            print()
+    esccolor(4)
+    print("[ hit any key ]")
+    getch()
+    escclear()
+
 def fedit():
     global modified,insmod,homeaddr,curx,cury
     stroke=False
@@ -240,6 +265,19 @@ def fedit():
             return(True)
         elif ch=='q':
             return(False)
+        elif ch=='M':
+            disp_marks()
+            continue
+        elif ch=='m':
+            ch=getch().lower()
+            if 'a'<=ch<='z':
+                mark[ord(ch)-ord('a')]=fpos()
+            continue
+        elif ch=='\'':
+            ch=getch().lower()
+            if 'a'<=ch<='z':
+                jump(mark[ord(ch)-ord('a')])
+            continue
         clrmm()
 
         if ch=='i':
