@@ -5,7 +5,7 @@ import termios
 import string
 ESC='\033['
 mem=[]
-coltab=[0,1,4,5,2,3,6,7]
+coltab=[0,1,4,5,2,6,3,7]
 filename=""
 modified=False
 newfile=False
@@ -187,6 +187,8 @@ def fedit():
         if ch==chr(2):
             if homeaddr>=256:
                 homeaddr-=256
+            else:
+                homeaddr=0
             continue
         elif ch==chr(6):
             homeaddr+=256
@@ -194,6 +196,8 @@ def fedit():
         elif ch==chr(0x15):
             if homeaddr>=128:
                 homeaddr-=128
+            else:
+                homeaddr=0
             continue
         elif ch==chr(4):
             homeaddr+=128
