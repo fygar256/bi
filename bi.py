@@ -8,7 +8,7 @@ mem=[]
 coltab=[0,1,4,5,2,3,6,7]
 filename=""
 modified=False
-newfile=True
+newfile=False
 homeaddr=0
 insmod=False
 curx=0
@@ -258,7 +258,7 @@ def fedit():
             inccurx()
 
 def readfile(fn):
-    global mem
+    global mem,newfile
     try:
         f=open(fn,"rb")
     except:
@@ -266,11 +266,12 @@ def readfile(fn):
         stdmm("<new file>")
         mem=[]
     else:
+        newfile=False
         mem=list(f.read())
         f.close()
 
 def writefile(fn):
-    global mem
+    global mem,newfile
     f=open(fn,"wb")
     f.write(bytes(mem))
     f.close()
