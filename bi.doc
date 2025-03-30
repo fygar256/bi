@@ -39,7 +39,7 @@ Overview
 @   x               ----- delete a byte
 @   Z               ----- write and quit
 
-    :               ----- to command line mode
+@   :               ----- to command line mode
 
     ◎コマンドラインで使えるコマンド------------------------On command line mode
 
@@ -59,12 +59,12 @@ Overview
     <start>,<end> m [destination]   ----- move data
     <start>,<end> c [destination]   ----- copy data (data will be yanked)
     <start>,<end> w <filename>  ----- write data on file
-    !<string>               ----- invoke command.com
-    q                       ----- quit
-    q!                      ----- overriding quit
-    wq                      ----- write and quit
-    w <filename>            ----- write file
-    <CR> without any command    ----- return to on-screen mode
+@   !<string>               ----- invoke shell
+@   q                       ----- quit
+@   q!                      ----- overriding quit
+@   wq,wq!                  ----- write and quit
+@   w <filename>            ----- write file
+@   <CR> without any command or <ESC>   ----- return to on-screen mode
 
 
       サーチコマンドでは、正規表現は使えません。

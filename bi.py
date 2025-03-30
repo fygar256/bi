@@ -3,8 +3,10 @@ import sys
 import tty
 import termios
 import string
+import os
 ESC='\033['
 LENONSCR=(20*16)
+BOTTOMLN=23
 mem=[]
 coltab=[0,1,4,5,2,6,3,7]
 filename=""
@@ -16,18 +18,6 @@ curx=0
 cury=0
 mark=[0] * 26
 
-
-def getch():
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-    tty.setraw(sys.stdin.fileno())
-    ch = sys.stdin.read(1)
-    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-    return ch
-
-def putch(c):
-    print(c,end='',flush=True)
-
 def escup(n=1):
     print(f"{ESC}{n}A",end='')
 
@@ -38,7 +28,7 @@ def escright(n=1):
     print(f"{ESC}{n}C",end='')
 
 def escleft(n=1):
-    print(f"{ESC}{n}D",end='')
+    print(f"{ESC}{n}D",end='',flush=True)
 
 def esclocate(x=0,y=0):
     print(f"{ESC}{y+1};{x+1}H",end='',flush=True)
@@ -58,6 +48,35 @@ def esccolor(col1=7,col2=0):
 
 def escresetcolor():
     print(f"{ESC}0m",end='')
+
+def getch():
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    tty.setraw(sys.stdin.fileno())
+    ch = sys.stdin.read(1)
+    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return ch
+
+def putch(c):
+    print(c,end='',flush=True)
+
+def getln():
+    s=""
+    while True:
+        ch=getch()
+        if ch=='\033':
+            return s
+        elif ch==chr(13):
+            return s
+        elif ch==chr(0x7f):
+            if s!='':
+                escleft()
+                putch(' ')
+                escleft()
+                s=s[:len(s)-1]
+        else:
+            putch(ch)
+            s+=ch
 
 def print_title():
     global filename,modified,insmod,mem
@@ -170,14 +189,14 @@ def setmem(addr,data):
             mem+=[0]
     mem[addr]=data
 def clrmm():
-    esclocate(0,23)
+    esclocate(0,BOTTOMLN)
     esccolor(6)
     print(" "*79,end='')
 
 def stdmm(s):
     clrmm()
     esccolor(6)
-    esclocate(0,23)
+    esclocate(0,BOTTOMLN)
     print(s,end='')
 
 def jump(addr):
@@ -190,7 +209,7 @@ def jump(addr):
 
 def disp_marks():
     j=0
-    esclocate(0,23)
+    esclocate(0,BOTTOMLN)
     esccolor(7)
     for i in 'abcdefghijklmnopqrstuvwxyz':
         print(f"{i} = {mark[j]:012X}    ",end='')
@@ -201,6 +220,46 @@ def disp_marks():
     print("[ hit any key ]")
     getch()
     escclear()
+
+def invoke_shell(s):
+    esccolor(7)
+    print()
+    s=line[1:].lstrip()
+    os.system(s.lstrip())
+    esccolor(4)
+    print("[ Hit any key to return ]",end='',flush=True)
+    getch()
+    escclear()
+
+def commandline():
+    esclocate(0,BOTTOMLN)
+    esccolor(7)
+    putch(':')
+    line=getln()
+    if line=='':
+        return -1
+    elif line=='q':
+        if modified:
+            stdmm("No write since last change. To overriding quit, use 'q!'.")
+            return -1
+        return 0
+    elif line=='q!':
+        return 0
+    elif line=='wq':
+        return 1
+    elif line=='wq!':
+        return 1
+    elif line[0]=='w':
+        if len(line)>=2:
+            s=line[1:].lstrip()
+            writefile(s)
+        return -1
+    elif line[0]=='!':
+        if len(line)>=2:
+            invoke_shell(line[1:])
+            return -1
+
+    return -1
 
 def fedit():
     global modified,insmod,homeaddr,curx,cury
@@ -260,6 +319,7 @@ def fedit():
             inccurx()
             continue
         elif ch==chr(12):
+            escclear()
             repaint()
             continue
         elif ch=='Z':
@@ -301,6 +361,12 @@ def fedit():
             inccurx()
         elif ch=='x':
             delmem(fpos(),fpos())
+        elif ch==':':
+            f=commandline()
+            if f==1:
+                return True
+            elif f==0:
+                return False
 
 def readfile(fn):
     global mem,newfile
@@ -323,6 +389,9 @@ def writefile(fn):
 
 def main():
     global filename
+    if len(sys.argv)<=1:
+        print("Usage: bi file")
+        return
     filename=sys.argv[1]
     readfile(filename)
     f=fedit()
