@@ -153,6 +153,19 @@ def inccurx():
         else:
             scrdown()
 
+def readmem(addr):
+    global mem
+    if addr>=len(mem):
+        return 0
+    return mem[addr]
+
+def setmem(addr,data):
+    global mem
+    if addr>=len(mem):
+        for i in range(addr-len(mem)+1):
+            mem+=[0]
+    mem[addr]=data
+
 def fedit():
     global modified,insmod,homeaddr,curx,cury
     stroke=False
@@ -213,10 +226,10 @@ def fedit():
                 if not stroke:
                     insmem(addr,addr,c<<sh)
                 else:
-                    mem[addr]=mem[addr]&mask|c<<sh
+                    setmem(addr,readmem(addr)&mask|c<<sh)
                 stroke=(not stroke) if not curx&1 else False
             else:
-                mem[addr]=mem[addr]&mask|c<<sh
+                setmem(addr,readmem(addr)&mask|c<<sh)
                 modified=True
             inccurx()
 
