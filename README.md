@@ -7,4 +7,12 @@ The first version was written in C, but this version is written in Python.
 
 There are still some glitches here and there, but it's an alpha version.
 
+```
+##### installation
+chmod +x bi.py
+sudo cp bi.py /usr/bin/bi
+
+##### execution
+bi file
+
 bi
