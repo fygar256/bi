@@ -16,6 +16,8 @@ Overview
 
      ◎エディットモードで使えるコマンド------------------ Commands on edit mode.
 
+@   <hexadeimal keys>     ----- set data
+@   i               ----- toggle insert mode
 @	hjkl     		----- move cursor
 @	^F ^B   		----- move by a page ( 256 bytes )
 @	^D ^U			----- move by half a page ( 128 bytes )
@@ -34,6 +36,7 @@ Overview
 
 	p				----- paste yank buffer (overwrite)
 	P				----- paste yank buffer (insert)
+@   q               ----- quit without write
     x               ----- delete a byte
 @	Z				----- write and quit
 
@@ -46,8 +49,8 @@ Overview
 	[offset]S<string>		----- insert string before [offset]
 	[offset]s<string>		----- overwrite string on and after [offset]
 
-	[offset]Rfilename		----- read file (insert) before [offset]
-	[offset]rfilename		----- read file (overwrite) on and after [offset]
+	[offset]R<filename>		----- read file (insert) before [offset]
+	[offset]r<filename>		----- read file (overwrite) on and after [offset]
 	[offset]f<length>,<data>	----- fill with <data> (by length)
 	<start>,<end>f<xx>	    	----- fill with xx (by range)
 	[offset]i<length>,[data]	----- insert data
@@ -114,6 +117,7 @@ Overview
 1992-02-10	メモリアロケーションエラーのバグ修正	version 0.99998
 		^D,^U コマンド追加
 2025-03-29  linux version 1.98
+2025-03-30  linux version ちょっとデバッグ version 1.981
 --------------------
 
 		と、いうわけで、もし蟲を見つけた方がいらっしゃいましたら
