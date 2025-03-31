@@ -43,22 +43,22 @@ Overview
 
     ◎コマンドラインで使えるコマンド------------------------On command line mode
 
-    [address]               ----- jump to the address
-    [offset] S "string"     ----- insert string before [offset]
-    [offset] s "string"     ----- overwrite string on and after [offset]
+    [offset]                ----- jump to the address
+    [offset]Sstring         ----- insert string before [offset]
+    [offset]sstring         ----- overwrite string on and after [offset]
 
-    [offset] R filename     ----- read file (insert) before [offset]
-    [offset] r filename     ----- read file (overwrite) on and after [offset]
-    [offset] f <length>,<data>  ----- fill with <data> (by length)
-    <start>,<end> f <xx>        ----- fill with xx (by range)
-    [offset] i <length>,[data]  ----- insert data
-    [offset] d <length>     ----- delete by length
+    [offset]Rfilename       ----- read file (insert) before [offset]
+    [offset]rfilename       ----- read file (overwrite) on and after [offset]
+    [offset]f<len>,<data>   ----- fill with <data> (by length)
+    <start>,<end>f<xx>      ----- fill with xx (by range)
+    [offset]i<len>,[data]   ----- insert data
+    [offset]d<len>          ----- delete by length
 
-    <start>,<end> d         ----- delete by range
-    <start>,<end> y         ----- yank to yankbuffer
-    <start>,<end> m [destination]   ----- move data
-    <start>,<end> c [destination]   ----- copy data (data will be yanked)
-    <start>,<end> w <filename>  ----- write data on file
+    <start>,<end>d          ----- delete by range
+    <start>,<end>y          ----- yank to yankbuffer
+    <start>,<end>m<destination>   ----- move data
+    <start>,<end>c<destination>   ----- copy data (data will be yanked)
+    <start>,<end>w<filename>      ----- write data on file
 @   !<string>               ----- invoke shell
 @   q                       ----- quit
 @   q!                      ----- overriding quit
@@ -72,20 +72,14 @@ Overview
       [] で囲まれた値は省略可能です。省略されたときにはカレントポジション
     がその値となります。
 
-      コマンドライン上での数値の指定は１０進数が基本です。
-    １６進を使いたいときは頭に x または 0xのプリフィックス を付けて下さい。
-    バイナリデータサーチ (//,??) ではx または 0x のprefixは要りません。
-    また、'[a-z]でマークの位置を、^でファイル先頭、.でカーソルの現在位置、
-    $でファイル終端を与える事ができます。
+    コマンドラインでの値の指定は16進数値または、'[a-z]でマークの位置を、^でファイル先頭、.でカーソルの現在位置、$でファイル終端を与える事ができます。
 
       Search commands cannot handle regular expressions yet, Sorry.
 
       The values enclosed with `[]` can be left out, when
     these commands above take the current position as the value omitted. 
 
-      On command line, you've got to give values in decimal. A hexiadecimal
-    number requires the prefix 'x' or '0x' but binary search commands // and
-    ?? don't need prefix.
+      On command line, you've got to give values in hexadecimal.
 
     And you can also give values with '[a-z] as marked position,
     ^ as the top of file, . as the current position, and $ as the bottom
@@ -116,6 +110,7 @@ Overview
         ^D,^U コマンド追加
 2025-03-29  linux version 1.98
 2025-03-30  linux version 1.989 ちょっとデバッグ、xコマンド、Mコマンド、'コマンド、mコマンドを追加。
+2025-03-30  linux version 1,9893 command lineコマンドを追加。!,w,q,wq,wq!,w<file>コマンドを追加。
 
 --------------------
 
