@@ -33,8 +33,8 @@ Overview
     N               ----- search the last
 @   M               ----- display marks
 
-    p               ----- paste yank buffer (overwrite)
-    P               ----- paste yank buffer (insert)
+@   p               ----- paste yank buffer (overwrite)
+@   P               ----- paste yank buffer (insert)
 @   q               ----- quit
 @   x               ----- delete a byte
 @   Z               ----- write and quit
@@ -54,8 +54,8 @@ Overview
     [offset]i<len>,[data]   ----- insert data
     [offset] d <len>        ----- delete by length
 
-@   <start>,<end> d          ----- delete by range
-    <start>,<end>y          ----- yank to yankbuffer
+@   <start>,<end> d         ----- delete by range
+@   <start>,<end>y          ----- yank to yankbuffer
     <start>,<end>m<destination>   ----- move data
     <start>,<end> c <destination> ----- copy data (data will be yanked)
     <start>,<end>w<filename>      ----- write data on file
@@ -72,7 +72,9 @@ Overview
       [] で囲まれた値は省略可能です。省略されたときにはカレントポジション
     がその値となります。
 
-    コマンドラインでの値の指定は16進数値または、'[a-z]でマークの位置を、^でファイル先頭、.でカーソルの現在位置、$でファイル終端を与える事ができます。
+    コマンドラインでの値の指定は16進数値、先頭に'#'の付いた10進数、または、
+    '[a-z]でマークの位置を、^でファイル先頭、.でカーソルの現在位置、
+    $でファイル終端を与える事ができます。
 
       Search commands cannot handle regular expressions yet, Sorry.
 
@@ -107,11 +109,13 @@ Overview
 1992-01-23  ドキュメント書き変え            version 0.9999
 1992-02-05  wqのバグ修正                version 0.99992
 1992-02-10  メモリアロケーションエラーのバグ修正    version 0.99998
-        ^D,^U コマンド追加
+            ^D,^U コマンド追加
 2025-03-29  linux version 1.98
-2025-03-30  linux version 1.989 ちょっとデバッグ、xコマンド、Mコマンド、'コマンド、mコマンドを追加。
-2025-03-31  linux version 1.9893 command lineコマンドを追加。!,w,q,wq,wq!,w<file>コマンドを追加。
-2025-04-01  linux version 1.9895 dコマンド追加
+2025-03-30  linux version 1.989 ちょっとデバッグ、xコマンド、Mコマンド、
+            'コマンド、mコマンドを追加。
+2025-03-31  linux version 1.9893 command lineコマンドを追加。!,w,q,wq,wq!,
+            w<file>コマンドを追加。
+2025-04-01  linux version 1.98951 y,d,p,Pコマンド追加
 
 --------------------
 
