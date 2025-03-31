@@ -7,6 +7,7 @@ import os
 ESC='\033['
 LENONSCR=(20*16)
 BOTTOMLN=23
+UNKNOWN=0xffffffffffffffffffffffffffffffff
 mem=[]
 coltab=[0,1,4,5,2,6,3,7]
 filename=""
@@ -16,7 +17,7 @@ homeaddr=0
 insmod=False
 curx=0
 cury=0
-mark=[0] * 26
+mark=[UNKNOWN] * 26
 
 def escup(n=1):
     print(f"{ESC}{n}A",end='')
@@ -77,6 +78,11 @@ def getln():
         else:
             putch(ch)
             s+=ch
+
+def skipspc(s,idx):
+    while idx<len(s) and s[idx]==' ':
+        idx+=1
+    return idx
 
 def print_title():
     global filename,modified,insmod,mem
@@ -212,7 +218,11 @@ def disp_marks():
     esclocate(0,BOTTOMLN)
     esccolor(7)
     for i in 'abcdefghijklmnopqrstuvwxyz':
-        print(f"{i} = {mark[j]:012X}    ",end='')
+        m=mark[j]
+        if m==UNKNOWN:
+            print(f"{i} = unknown         ",end='')
+        else:
+            print(f"{i} = {mark[j]:012X}    ",end='')
         j+=1
         if j%3==0:
             print()
@@ -231,6 +241,43 @@ def invoke_shell(s):
     getch()
     escclear()
 
+def get_value(s,idx):
+    global mem
+    v=0
+    idx=skipspc(s,idx)
+    if idx>=len(s):
+        return UNKNOWN,UNKNOWN
+    if s[idx]=='$':
+        idx+=1
+        v=len(mem)-1
+    elif s[idx]=='^':
+        idx+=1
+        v=0
+    elif s[idx]=='.':
+        idx+=1
+        v=fpos()
+    elif s[idx]=='\'' and 'a'<=s[idx+1]<='z':
+        v=mark[ord(s[idx+1])-ord('a')]
+        if v==UNKNOWN:
+            stdmm("Unknown mark.")
+            return UNKNOWN,UNKNOWN
+        else:
+            idx+=2
+    elif s[idx].lower() in '0123456789abcdef':
+        x=0
+        while idx<len(s) and s[idx].lower() in '0123456789abcdef':
+            x=16*x+int(s[idx].lower(),16)
+            idx+=1
+        v=x
+    elif s[idx]=='#':
+        x=0
+        idx+=1
+        while idx<len(s) and s[idx] in '0123456789':
+            x=10*x+int(s[idx])
+            idx+=1
+        v=x
+    return v,idx
+
 def commandline():
     esclocate(0,BOTTOMLN)
     esccolor(7)
@@ -238,7 +285,7 @@ def commandline():
     line=getln()
     if line=='':
         return -1
-    elif line=='q':
+    if line=='q':
         if modified:
             stdmm("No write since last change. To overriding quit, use 'q!'.")
             return -1
@@ -258,7 +305,26 @@ def commandline():
         if len(line)>=2:
             invoke_shell(line[1:])
             return -1
+    idx=skipspc(line,0)
+    x,idx=get_value(line,idx)
+    x2=x
 
+    idx=skipspc(line,idx)
+
+    if idx==len(line) and not x==UNKNOWN:
+        jump(x)
+        return -1
+
+    if idx<len(line) and line[idx]==',':
+        x2,idx=get_value(line,idx+1)
+
+    idx=skipspc(line,idx)
+
+    if idx<len(line) and line[idx]=='d':
+        delmem(x,x2)
+        return -1
+
+    stdmm("Unrecognized command.")
     return -1
 
 def fedit():

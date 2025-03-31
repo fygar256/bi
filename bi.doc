@@ -43,21 +43,21 @@ Overview
 
     ◎コマンドラインで使えるコマンド------------------------On command line mode
 
-    [offset]                ----- jump to the address
+@   [offset]                ----- jump to the address
     [offset]Sstring         ----- insert string before [offset]
     [offset]sstring         ----- overwrite string on and after [offset]
 
     [offset]Rfilename       ----- read file (insert) before [offset]
     [offset]rfilename       ----- read file (overwrite) on and after [offset]
-    [offset]f<len>,<data>   ----- fill with <data> (by length)
+    [offset] f <len>,<data> ----- fill with <data> (by length)
     <start>,<end>f<xx>      ----- fill with xx (by range)
     [offset]i<len>,[data]   ----- insert data
-    [offset]d<len>          ----- delete by length
+    [offset] d <len>        ----- delete by length
 
-    <start>,<end>d          ----- delete by range
+@   <start>,<end> d          ----- delete by range
     <start>,<end>y          ----- yank to yankbuffer
     <start>,<end>m<destination>   ----- move data
-    <start>,<end>c<destination>   ----- copy data (data will be yanked)
+    <start>,<end> c <destination> ----- copy data (data will be yanked)
     <start>,<end>w<filename>      ----- write data on file
 @   !<string>               ----- invoke shell
 @   q                       ----- quit
@@ -110,7 +110,8 @@ Overview
         ^D,^U コマンド追加
 2025-03-29  linux version 1.98
 2025-03-30  linux version 1.989 ちょっとデバッグ、xコマンド、Mコマンド、'コマンド、mコマンドを追加。
-2025-03-30  linux version 1,9893 command lineコマンドを追加。!,w,q,wq,wq!,w<file>コマンドを追加。
+2025-03-31  linux version 1.9893 command lineコマンドを追加。!,w,q,wq,wq!,w<file>コマンドを追加。
+2025-04-01  linux version 1.9895 dコマンド追加
 
 --------------------
 
