@@ -3,12 +3,14 @@ import sys
 import tty
 import termios
 import string
+import copy
 import os
 ESC='\033['
 LENONSCR=(20*16)
 BOTTOMLN=23
 UNKNOWN=0xffffffffffffffffffffffffffffffff
 mem=[]
+yank=[]
 coltab=[0,1,4,5,2,6,3,7]
 filename=""
 modified=False
@@ -112,34 +114,34 @@ def repaint():
             print("~" if a>=len(mem) else (chr(mem[a]) if 0x20<=mem[a]<=0x7f else "."),end='')
         print("")
 
-def insmem(start,end,code):
+def insmem(start,mem2):
     global mem,modified
-    length=end-start+1
-    if length<=0:
-        return
-    if end>=len(mem):
-        for i in range(end-len(mem)+1):
-            mem+=[code]
+    if start>=len(mem):
+        for i in range(start-len(mem)+1):
+            mem+=[0]
     if start<len(mem):
         mem1=[]
-        mem2=[]
         mem3=[]
         for j in range(start):
             mem1+=[mem[j]]
-        for j in range(length):
-            mem2+=[code]
         for j in range(len(mem)-start):
             mem3+=[mem[start+j]]
         mem=mem1+mem2+mem3
     modified=True
 
-def delmem(start,end):
-    global mem,modified
+def delmem(start,end,yf):
+    global yank,mem,modified
     length=end-start+1
     if length<=0:
         return
     if start>=len(mem):
         return
+    if yf:
+        yank=[]
+        for j in range(start,end+1):
+            if j<len(mem):
+                yank+=[mem[j]]
+
     mem1=[]
     mem2=[]
     for j in range(start):
@@ -149,13 +151,37 @@ def delmem(start,end):
     mem=mem1+mem2
     modified=True
 
+def yankmem(start,end):
+    global yank,mem,modified
+    length=end-start+1
+    if length<=0:
+        return
+    if start>=len(mem):
+        return
+    yank=[]
+    cnt=0
+    for j in range(start,end+1):
+        if j<len(mem):
+            cnt+=1
+            yank+=[mem[j]]
+
+    stdmm(f"{cnt} bytes yanked.")
+
 def ovwmem(start,mem0):
     global mem,modified
+
+    if mem0==[]:
+        return
+
+    if start+len(mem0)>len(mem):
+        for j in range(start+len(mem0)-len(mem)):
+            mem+=[0]
+
     for j in range(len(mem0)):
         if j>=len(mem):
             mem+=[mem0[j]]
         else:
-            mem[start+j]=mem[j]
+            mem[start+j]=mem0[j]
     modified=True
 
 def scrup():
@@ -321,14 +347,17 @@ def commandline():
     idx=skipspc(line,idx)
 
     if idx<len(line) and line[idx]=='d':
-        delmem(x,x2)
+        delmem(x,x2,True)
+        return -1
+    elif idx<len(line) and line[idx]=='y':
+        yankmem(x,x2)
         return -1
 
     stdmm("Unrecognized command.")
     return -1
 
 def fedit():
-    global modified,insmod,homeaddr,curx,cury
+    global yank,modified,insmod,homeaddr,curx,cury
     stroke=False
     while True:
         repaint()
@@ -405,6 +434,18 @@ def fedit():
             if 'a'<=ch<='z':
                 jump(mark[ord(ch)-ord('a')])
             continue
+        elif ch=='p':
+            y=list(yank)
+            ovwmem(fpos(),y)
+            jump(fpos()+len(y))
+            continue
+        elif ch=='P':
+            y=list(yank)
+            insmem(fpos(),y)
+            delmem(len(mem)-1,len(mem)-1,False)
+            jump(fpos()+len(yank))
+            continue
+
         clrmm()
 
         if ch=='i':
@@ -417,7 +458,7 @@ def fedit():
             mask=0xf if not curx&1 else 0xf0
             if insmod:
                 if not stroke and addr<len(mem):
-                    insmem(addr,addr,c<<sh)
+                    insmem(addr,[c<<sh])
                 else:
                     setmem(addr,readmem(addr)&mask|c<<sh)
                 stroke=(not stroke) if not curx&1 else False
@@ -426,7 +467,7 @@ def fedit():
                 modified=True
             inccurx()
         elif ch=='x':
-            delmem(fpos(),fpos())
+            delmem(fpos(),fpos(),False)
         elif ch==':':
             f=commandline()
             if f==1:
