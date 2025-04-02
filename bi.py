@@ -391,6 +391,16 @@ def commandline():
 
         return -1
 
+    if idx<len(line) and (line[idx]=='s' or line[idx]=='S'):
+        ch=line[idx]
+        idx+=1
+        l=[ord(c) for c in line[idx:]]
+        if ch=='s':
+            ovwmem(x,l)
+        elif ch=='S':
+            insmem(x,l)
+        return -1
+
     if idx<len(line) and line[idx]=='d':
         length,idx=get_value(line,idx+1)
 

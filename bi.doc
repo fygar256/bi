@@ -42,8 +42,8 @@ Overview
     ◎コマンドラインで使えるコマンド------------------------On command line mode
 
 @   [offset]                ----- jump to the address
-    [offset]Sstring         ----- insert string before [offset]
-    [offset]sstring         ----- overwrite string on and after [offset]
+@   [offset]Sstring         ----- insert string before [offset]
+@   [offset]sstring         ----- overwrite string on and after [offset]
 
 @   [offset]Rfilename       ----- read file (insert) before [offset]
 @   [offset]rfilename       ----- read file (overwrite) on and after [offset]
@@ -118,6 +118,7 @@ Overview
 2025-04-02  linux version 1.98953 r,Rコマンド追加
 2025-04-02  linux version 1.98955 i,fコマンド追加
 2025-04-02  linux version 1.9896 c,mコマンド追加
+2025-04-03  linux version 1.9897 s,Sコマンド追加
 
 --------------------
 
