@@ -177,7 +177,7 @@ def ovwmem(start,mem0):
     if mem0==[]:
         return
 
-    if start+len(mem0)>len(mem):
+    if start+len(mem0)>=len(mem):
         for j in range(start+len(mem0)-len(mem)):
             mem+=[0]
 
