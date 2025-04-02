@@ -56,7 +56,7 @@ Overview
 @   <start>,<end>y          ----- yank to yankbuffer
 @   <start>,<end>m<destination>   ----- move data
 @   <start>,<end> c <destination> ----- copy data (data will be yanked)
-    <start>,<end>w<filename>      ----- write data on file
+@   <start>,<end>w<filename>      ----- write data on file
 @   !<string>               ----- invoke shell
 @   q                       ----- quit
 @   q!                      ----- overriding quit
@@ -118,7 +118,7 @@ Overview
 2025-04-02  linux version 1.98953 r,Rコマンド追加
 2025-04-02  linux version 1.98955 i,fコマンド追加
 2025-04-02  linux version 1.9896 c,mコマンド追加
-2025-04-03  linux version 1.9897 s,Sコマンド追加
+2025-04-03  linux version 1.9897 s,S,wコマンド追加
 
 --------------------
 

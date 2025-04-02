@@ -447,6 +447,11 @@ def commandline():
     elif idx<len(line) and line[idx]=='y':
         yankmem(x,x2)
         return -1
+    elif idx<len(line) and line[idx]=='w':
+        idx+=1
+        fn=line[idx:].lstrip()
+        wrtfile(x,x2,fn)
+        return -1
 
     if idx<len(line) and line[idx]=='f' or line[idx]=='m' or line[idx]=='c':
         ch=line[idx]
@@ -604,6 +609,16 @@ def writefile(fn):
     global mem,newfile
     f=open(fn,"wb")
     f.write(bytes(mem))
+    f.close()
+
+def wrtfile(start,end,fn):
+    global mem
+    f=open(fn,"wb")
+    for i in range(start,end+1):
+        if i<len(mem):
+            f.write(bytes([mem[i]]))
+        else:
+            f.write(bytes([0]))
     f.close()
 
 def main():
