@@ -25,10 +25,10 @@ Overview
 @   $               ----- jump to the right end of line
 @   m[a-z]          ----- mark currrent position
 @   '[a-z]          ----- jump to marked point
-    /               ----- search string
-    ?xx xx xx ...   ----- search binary data
-    n               ----- search the next 
-    N               ----- search the last
+@   /               ----- search string
+@   ?xx xx xx ...   ----- search binary data
+@   n               ----- search the next 
+@   N               ----- search the last
 @   M               ----- display marks
 
 @   p               ----- paste yank buffer (overwrite)
@@ -119,6 +119,7 @@ Overview
 2025-04-02  linux version 1.98955 i,fコマンド追加
 2025-04-02  linux version 1.9896 c,mコマンド追加
 2025-04-03  linux version 1.9897 s,S,wコマンド追加
+2025-04-03  linux version 1.9899 /,?,N,nコマンド追加
 
 --------------------
 

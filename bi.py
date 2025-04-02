@@ -20,6 +20,7 @@ insmod=False
 curx=0
 cury=0
 mark=[UNKNOWN] * 26
+smem=[]
 
 def escup(n=1):
     print(f"{ESC}{n}A",end='')
@@ -242,6 +243,7 @@ def setmem(addr,data):
         for i in range(addr-len(mem)+1):
             mem+=[0]
     mem[addr]=data
+
 def clrmm():
     esclocate(0,BOTTOMLN)
     esccolor(6)
@@ -473,12 +475,84 @@ def commandline():
     stdmm("Unrecognized command.")
     return -1
 
+def hit(addr):
+    global smem,mem
+    for i in range(len(smem)):
+        if addr+i<len(mem) and mem[addr+i]==smem[i]:
+            continue
+        else:
+            return False
+    return True
+
+def searchnext(fp):
+    global smem
+    curpos=fp
+    start=fp
+    while True:
+        if curpos>=len(mem):
+            stdmm("Wrap to top")
+            curpos=0
+
+        if hit(curpos):
+            jump(curpos)
+            return
+
+        curpos+=1
+
+        if curpos==start:
+            stdmm("Not found.")
+            return
+
+def searchlast(fp):
+    global smem
+    curpos=fp
+    start=fp
+    while True:
+        if curpos<0:
+            stdmm("Wrap to bottom")
+            curpos=len(mem)-1
+        if hit(curpos):
+            jump(curpos)
+            return
+        curpos-=1
+        if curpos==start:
+            stdmm("Not found.")
+            return
+
+def searchstr():
+    global smem
+    esclocate(0,BOTTOMLN)
+    esccolor(7)
+    print("/",end='',flush=True)
+    s=getln()
+    if s!="":
+        smem=[ ord(c) for c in s ]
+        searchnext(fpos())
+
+def searchhex():
+    global smem
+    esclocate(0,BOTTOMLN)
+    esccolor(7)
+    print("?",end='',flush=True)
+    s=getln()
+    if s!="":
+        idx=0
+        smem=[]
+        while idx<len(s):
+            v,idx=get_value(s,idx)
+            if v==UNKNOWN:
+                return
+            smem+=[v]
+        searchnext(fpos())
+
 def fedit():
     global yank,modified,insmod,homeaddr,curx,cury
     stroke=False
+    ch=''
     while True:
         repaint()
         esclocate( curx//2*3+13+(curx&1),cury+3)
+        lch=ch
         ch=getch()
         if ch==chr(2):
             if homeaddr>=256:
@@ -545,6 +619,20 @@ def fedit():
             ch=getch().lower()
             if 'a'<=ch<='z':
                 mark[ord(ch)-ord('a')]=fpos()
+            continue
+        elif ch=='?':
+            searchhex()
+            continue
+        elif ch=='/':
+            searchstr()
+            continue
+        elif ch=='n':
+            clrmm()
+            searchnext(fpos()+1)
+            continue
+        elif ch=='N':
+            clrmm()
+            searchlast(fpos()-1)
             continue
         elif ch=='\'':
             ch=getch().lower()
