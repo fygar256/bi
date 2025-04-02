@@ -205,8 +205,6 @@ def cpymem(start,end,dest):
 def movmem(start,end,dest):
     m=redmem(start,end)
     delmem(start,end,True)
-    repaint()
-    getch()
     ovwmem(dest-(end-start+1),m)
 
 def scrup():
