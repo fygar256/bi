@@ -25,10 +25,8 @@ Overview
 @   $               ----- jump to the right end of line
 @   m[a-z]          ----- mark currrent position
 @   '[a-z]          ----- jump to marked point
-    /               ----- search string forward
-    ?               ----- search string backward
-    //xx xx xx ...  ----- search binary data forward
-    ??xx xx xx ...  ----- search binary data backward
+    /               ----- search string
+    ?xx xx xx ...   ----- search binary data
     n               ----- search the next 
     N               ----- search the last
 @   M               ----- display marks
