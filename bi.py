@@ -91,7 +91,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 0.98 by T.Maekawa                                               {"ins" if insmod else "ovw"} ")
+    print(f"bi version 1.98 by T.Maekawa                                               {"ins" if insmod else "ovw"} ")
     esccolor(5)
     print(f"file:[{filename:<40}] length: {len(mem)} bytes {("not " if not modified else "")+"modified"}    ")
 
