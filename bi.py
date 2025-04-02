@@ -115,22 +115,22 @@ def repaint():
             print("~" if a>=len(mem) else (chr(mem[a]) if 0x20<=mem[a]<=0x7f else "."),end='')
         print("")
 
-def genmem(code,length):
-    return [code]*length
-
 def insmem(start,mem2):
     global mem,modified
     if start>=len(mem):
-        for i in range(start-len(mem)+1):
+        for i in range(start-len(mem)):
             mem+=[0]
-    if start<len(mem):
-        mem1=[]
-        mem3=[]
-        for j in range(start):
-            mem1+=[mem[j]]
-        for j in range(len(mem)-start):
-            mem3+=[mem[start+j]]
-        mem=mem1+mem2+mem3
+        mem=mem+mem2
+        modified=True
+        return
+
+    mem1=[]
+    mem3=[]
+    for j in range(start):
+        mem1+=[mem[j]]
+    for j in range(len(mem)-start):
+        mem3+=[mem[start+j]]
+    mem=mem1+mem2+mem3
     modified=True
 
 def delmem(start,end,yf):
@@ -430,7 +430,7 @@ def commandline():
             if code==UNKNOWN:
                 code=0x00
 
-        data=genmem(code,length)
+        data=[code]*length
 
         if ch=='i':
             insmem(x,data)
