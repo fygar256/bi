@@ -56,8 +56,8 @@ Overview
 
 @   <start>,<end> d         ----- delete by range
 @   <start>,<end>y          ----- yank to yankbuffer
-    <start>,<end>m<destination>   ----- move data
-    <start>,<end> c <destination> ----- copy data (data will be yanked)
+@   <start>,<end>m<destination>   ----- move data
+@   <start>,<end> c <destination> ----- copy data (data will be yanked)
     <start>,<end>w<filename>      ----- write data on file
 @   !<string>               ----- invoke shell
 @   q                       ----- quit
@@ -119,6 +119,7 @@ Overview
 2025-04-01  linux version 1.98951 y,d,p,Pコマンド追加
 2025-04-02  linux version 1.98953 r,Rコマンド追加
 2025-04-02  linux version 1.98955 i,fコマンド追加
+2025-04-02  linux version 1.9896 c,mコマンド追加
 
 --------------------
 

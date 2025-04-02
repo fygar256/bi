@@ -187,6 +187,25 @@ def ovwmem(start,mem0):
             mem[start+j]=mem0[j]
     modified=True
 
+def redmem(start,end):
+    global mem
+    m=[]
+    for i in range(start,end+1):
+        if len(mem)>i:
+            m+=[mem[i]]
+        else:
+            m+=[0]
+    return m
+
+def cpymem(start,end,dest):
+    m=redmem(start,end)
+    ovwmem(dest,m)
+
+def movmem(start,end,dest):
+    m=redmem(start,end)
+    delmem(start,end,True)
+    ovwmem(dest-(end-start+1),m)
+
 def scrup():
     global homeaddr
     if homeaddr>=16:
@@ -428,6 +447,12 @@ def commandline():
         if ch=='f':
             data=[x3]*(x2-x+1)
             ovwmem(x,data)
+            return -1
+        elif ch=='c':
+            cpymem(x,x2,x3)
+            return -1
+        elif ch=='m':
+            movmem(x,x2,x3)
             return -1
 
     stdmm("Unrecognized command.")
