@@ -205,6 +205,8 @@ def cpymem(start,end,dest):
 def movmem(start,end,dest):
     m=redmem(start,end)
     delmem(start,end,True)
+    repaint()
+    getch()
     ovwmem(dest-(end-start+1),m)
 
 def scrup():
@@ -646,7 +648,6 @@ def fedit():
         elif ch=='P':
             y=list(yank)
             insmem(fpos(),y)
-            delmem(len(mem)-1,len(mem)-1,False)
             jump(fpos()+len(yank))
             continue
 
