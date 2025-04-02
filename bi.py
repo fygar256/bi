@@ -489,15 +489,15 @@ def searchnext(fp):
     curpos=fp
     start=fp
     while True:
-        if curpos>=len(mem):
-            stdmm("Wrap to top")
-            curpos=0
-
         if hit(curpos):
             jump(curpos)
             return
 
         curpos+=1
+
+        if curpos>=len(mem):
+            stdmm("Wrap to top")
+            curpos=0
 
         if curpos==start:
             stdmm("Not found.")
@@ -508,13 +508,13 @@ def searchlast(fp):
     curpos=fp
     start=fp
     while True:
-        if curpos<0:
-            stdmm("Wrap to bottom")
-            curpos=len(mem)-1
         if hit(curpos):
             jump(curpos)
             return
         curpos-=1
+        if curpos<0:
+            stdmm("Wrap to bottom")
+            curpos=len(mem)-1
         if curpos==start:
             stdmm("Not found.")
             return
@@ -552,7 +552,6 @@ def fedit():
     while True:
         repaint()
         esclocate( curx//2*3+13+(curx&1),cury+3)
-        lch=ch
         ch=getch()
         if ch==chr(2):
             if homeaddr>=256:
