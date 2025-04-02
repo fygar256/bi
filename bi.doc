@@ -50,9 +50,9 @@ Overview
 @   [offset]Rfilename       ----- read file (insert) before [offset]
 @   [offset]rfilename       ----- read file (overwrite) on and after [offset]
 @   [offset] f <len>,<data> ----- fill with <data> (by length)
-    <start>,<end>f<xx>      ----- fill with xx (by range)
+@   <start>,<end> f <xx>    ----- fill with xx (by range)
 @   [offset]i<len>,<data>   ----- insert data
-    [offset] d <len>        ----- delete by length
+@   [offset] d <len>        ----- delete by length
 
 @   <start>,<end> d         ----- delete by range
 @   <start>,<end>y          ----- yank to yankbuffer

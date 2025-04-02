@@ -372,6 +372,20 @@ def commandline():
 
         return -1
 
+    if idx<len(line) and line[idx]=='d':
+        length,idx=get_value(line,idx+1)
+
+        if length==UNKNOWN:
+            length=1
+
+        idx=skipspc(line,idx)
+
+        delmem(x,x+length-1,True)
+        return -1
+        stdmm("Unrecognized command.")
+        return -1
+        
+
     if idx<len(line) and (line[idx]=='i' or line[idx]=='f'):
         ch=line[idx]
         length,idx=get_value(line,idx+1)
@@ -392,7 +406,7 @@ def commandline():
         elif ch=='f':
             ovwmem(x,data)
         return -1
-        
+
     if idx<len(line) and line[idx]==',':
         x2,idx=get_value(line,idx+1)
 
@@ -404,6 +418,17 @@ def commandline():
     elif idx<len(line) and line[idx]=='y':
         yankmem(x,x2)
         return -1
+
+    if idx<len(line) and line[idx]=='f' or line[idx]=='m' or line[idx]=='c':
+        ch=line[idx]
+        x3,idx=get_value(line,idx+1)
+        if x3==UNKNOWN:
+            stdmm("Invalid parameter.")
+            return -1
+        if ch=='f':
+            data=[x3]*(x2-x+1)
+            ovwmem(x,data)
+            return -1
 
     stdmm("Unrecognized command.")
     return -1
