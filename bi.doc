@@ -87,6 +87,10 @@ Overview
     ^ as the top of file, . as the current position, and $ as the bottom
     of file.
 
+    mコマンドに少し癖があります。<start>から<end>までのデータを削除して
+    <dest>に移しますが、dest==filesizeだと、削除した後のデータの終端+1から
+    削除したデータを移し、<dest>filesizeだとfileの終端+1からdestまで0で
+    フィルし、destから削除したデータを書き込みます。
 
 ★注意                                    ★Attention
 
