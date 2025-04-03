@@ -92,6 +92,11 @@ Overview
     削除したデータを移し、<dest>filesizeだとfileの終端+1からdestまで0で
     フィルし、destから削除したデータを書き込みます。
 
+    The m command has a bit of a quirk. It deletes data from <start> to <end>
+    and moves it to <dest>, but if dest==filesize, the deleted data is moved
+    to the end of the data + 1, and if dest>filesize, it fills from the end of
+    the file + 1 to dest with 0s, and writes the deleted data from dest.
+
 ★注意                                    ★Attention
 
     It doesn't support undo command yet.
