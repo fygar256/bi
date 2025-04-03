@@ -5,7 +5,7 @@ This is a binary file editor with an interface similar to vi. It started when I 
 
 The first version was written in C, but this version is written in Python.
 
-There may be still some glitches, but it's a beta version.
+There may be still some glitches. linux version is a beta version.
 
 ```
 ##### installation
