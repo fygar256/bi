@@ -214,7 +214,10 @@ def movmem(start,end,dest):
     if dest>l:
         ovwmem(dest,m)
     else:
-        insmem(dest-(end-start+1),m)
+        if dest>start:
+            insmem(dest-(end-start+1),m)
+        else:
+            insmem(dest,m)
 
 def scrup():
     global homeaddr
