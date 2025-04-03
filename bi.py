@@ -211,7 +211,7 @@ def movmem(start,end,dest):
         return
     l=len(mem)
     delmem(start,end,True)
-    if dest>=l:
+    if dest>l:
         ovwmem(dest,m)
     else:
         insmem(dest-(end-start+1),m)
