@@ -141,10 +141,7 @@ def delmem(start,end,yf):
     if start>=len(mem):
         return
     if yf:
-        yank=[]
-        for j in range(start,end+1):
-            if j<len(mem):
-                yank+=[mem[j]]
+        yankmem(start,end)
 
     mem1=[]
     mem2=[]
@@ -558,6 +555,7 @@ def fedit():
         repaint()
         esclocate( curx//2*3+13+(curx&1),cury+3)
         ch=getch()
+        clrmm()
         if ch==chr(2):
             if homeaddr>=256:
                 homeaddr-=256
@@ -631,11 +629,9 @@ def fedit():
             searchstr()
             continue
         elif ch=='n':
-            clrmm()
             searchnext(fpos()+1)
             continue
         elif ch=='N':
-            clrmm()
             searchlast(fpos()-1)
             continue
         elif ch=='\'':
@@ -653,8 +649,6 @@ def fedit():
             insmem(fpos(),y)
             jump(fpos()+len(yank))
             continue
-
-        clrmm()
 
         if ch=='i':
             insmod=not insmod
