@@ -13,6 +13,7 @@ mem=[]
 yank=[]
 coltab=[0,1,4,5,2,6,3,7]
 filename=""
+lastchange=False
 modified=False
 newfile=False
 homeaddr=0
@@ -116,12 +117,13 @@ def repaint():
         print("")
 
 def insmem(start,mem2):
-    global mem,modified
+    global mem,lastchange,modified
     if start>=len(mem):
         for i in range(start-len(mem)):
             mem+=[0]
         mem=mem+mem2
         modified=True
+        lastchange=True
         return
 
     mem1=[]
@@ -132,9 +134,10 @@ def insmem(start,mem2):
         mem3+=[mem[start+j]]
     mem=mem1+mem2+mem3
     modified=True
+    lastchange=True
 
 def delmem(start,end,yf):
-    global yank,mem,modified
+    global yank,mem,modified,lastchange
     length=end-start+1
     if length<=0:
         return
@@ -150,10 +153,11 @@ def delmem(start,end,yf):
     for j in range(end+1,len(mem)):
         mem2+=[mem[j]]
     mem=mem1+mem2
+    lastchange=True
     modified=True
 
 def yankmem(start,end):
-    global yank,mem,modified
+    global yank,mem
     length=end-start+1
     if length<=0:
         return
@@ -169,7 +173,7 @@ def yankmem(start,end):
     stdmm(f"{cnt} bytes yanked.")
 
 def ovwmem(start,mem0):
-    global mem,modified
+    global mem,modified,lastchange
 
     if mem0==[]:
         return
@@ -183,6 +187,7 @@ def ovwmem(start,mem0):
             mem+=[mem0[j]]
         else:
             mem[start+j]=mem0[j]
+    lastchange=True
     modified=True
 
 def redmem(start,end):
@@ -328,6 +333,7 @@ def get_value(s,idx):
     return v,idx
 
 def commandline():
+    global lastchange
     esclocate(0,BOTTOMLN)
     esccolor(7)
     putch(':')
@@ -335,7 +341,7 @@ def commandline():
     if line=='':
         return -1
     if line=='q':
-        if modified:
+        if lastchange:
             stdmm("No write since last change. To overriding quit, use 'q!'.")
             return -1
         return 0
@@ -349,6 +355,8 @@ def commandline():
         if len(line)>=2:
             s=line[1:].lstrip()
             writefile(s)
+        stdmm("File written.")
+        lastchange=False
         return -1
     elif line[0]=='!':
         if len(line)>=2:
@@ -550,7 +558,7 @@ def searchhex():
         searchnext(fpos())
 
 def fedit():
-    global yank,modified,insmod,homeaddr,curx,cury
+    global yank,lastchange,lastchange,modified,insmod,homeaddr,curx,cury
     stroke=False
     ch=''
     while True:
@@ -668,6 +676,7 @@ def fedit():
                 stroke=(not stroke) if not curx&1 else False
             else:
                 setmem(addr,readmem(addr)&mask|c<<sh)
+                lastchange=True
                 modified=True
             inccurx()
         elif ch=='x':
@@ -718,6 +727,7 @@ def main():
     f=fedit()
     if f:
         writefile(filename)
+        stdmm("File written.")
 
 if __name__=="__main__":
     main()
