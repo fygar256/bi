@@ -93,7 +93,7 @@ def print_title():
     esccolor(6)
     print(f"bi version 1.98 by T.Maekawa                                               {"ins" if insmod else "ovw"} ")
     esccolor(5)
-    print(f"file:[{filename:<40}] length: {len(mem)} bytes {("not " if not modified else "")+"modified"}    ")
+    print(f"file:[{filename:<32}] length: {len(mem)} bytes [ {("not " if not modified else "")+"modified"} ]    ")
 
 def repaint():
     print_title()
@@ -498,7 +498,7 @@ def searchnext(fp):
         curpos+=1
 
         if curpos>=len(mem):
-            stdmm("Wrap to top")
+            stdmm("Search reached bottom, continuing from top.")
             curpos=0
 
         if curpos==start:
@@ -515,7 +515,7 @@ def searchlast(fp):
             return
         curpos-=1
         if curpos<0:
-            stdmm("Wrap to bottom")
+            stdmm("Search reached top, continuing from bottom.")
             curpos=len(mem)-1
         if curpos==start:
             stdmm("Not found.")
