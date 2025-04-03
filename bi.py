@@ -201,6 +201,8 @@ def cpymem(start,end,dest):
 
 def movmem(start,end,dest):
     m=redmem(start,end)
+    if start<=dest<=end:
+        return
     delmem(start,end,True)
     insmem(dest-(end-start+1),m)
 
