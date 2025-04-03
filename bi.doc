@@ -56,6 +56,7 @@ Overview
 @   <start>,<end>y          ----- yank to yankbuffer
 @   <start>,<end>m<destination>   ----- move data
 @   <start>,<end> c <destination> ----- copy data (data will be yanked)
+@   <start>,<end> i <destination> ----- insert data
 @   <start>,<end>w<filename>      ----- write data on file
 @   !<string>               ----- invoke shell
 @   q                       ----- quit

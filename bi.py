@@ -455,7 +455,7 @@ def commandline():
         wrtfile(x,x2,fn)
         return -1
 
-    if idx<len(line) and line[idx]=='f' or line[idx]=='m' or line[idx]=='c':
+    if idx<len(line) and (line[idx]=='f' or line[idx]=='m' or line[idx]=='c' or line[idx]=='i'):
         ch=line[idx]
         x3,idx=get_value(line,idx+1)
         if x3==UNKNOWN:
@@ -471,6 +471,11 @@ def commandline():
         elif ch=='m':
             movmem(x,x2,x3)
             return -1
+        elif ch=='i':
+            m=redmem(x,x2)
+            insmem(x3,m)
+            return -1
+
 
     stdmm("Unrecognized command.")
     return -1
