@@ -88,7 +88,7 @@ Overview
     of file.
 
     mコマンドに少し癖があります。<start>から<end>までのデータを削除して
-    <dest>に移しますが、dest==filesizeだと、削除した後のデータの終端+1から
+    <dest>に移しますが、dest==filesizeだと、削除した後のデータの終端+1に
     削除したデータを移し、dest>filesizeだとfileの終端+1からdestまで0で
     フィルし、destから削除したデータを書き込みます。
 
@@ -131,7 +131,7 @@ Overview
 2025-04-03  linux version 1.9897 s,S,wコマンド追加
 2025-04-03  linux version 1.9899 /,?,N,nコマンド追加
 2025-04-03  linux version 一応完成。
-2025-04-04  linux version 不具合修正。
+2025-04-04  linux version 不具合修正。完成。
 
 --------------------
 
