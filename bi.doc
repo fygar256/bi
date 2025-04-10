@@ -99,19 +99,21 @@ Overview
 1992-02-05 Fixed a bug in wq version 0.99992
 1992-02-10 Fixed a bug in memory allocation errors version 0.99998
 Added ^D,^U commands
-2025-03-29 Linux version 1.98
-2025-03-30 Linux version 1.989 Added a little debugging, x command, M command,
+--- linux version is as follows.
+2025-03-29 version 1.98
+2025-03-30 version 1.989 Added a little debugging, x command, M command,
 ' command, and m command.
-2025-03-31 Linux version 1.9893 Added command line commands. Added !,w,q,wq,wq!,
+2025-03-31 version 1.9893 Added command line commands. Added !,w,q,wq,wq!,
 w<file> commands.
-2025-04-01 linux version 1.98951 y, d, p, P commands added
-2025-04-02 linux version 1.98953 r, R commands added
-2025-04-02 linux version 1.98955 i, f commands added
-2025-04-02 linux version 1.9896 c, m commands added
-2025-04-03 linux version 1.9897 s, S, w commands added
-2025-04-03 linux version 1.9899 /, ?, N, n commands added
-2025-04-03 linux version is now complete.
-2025-04-04 linux version Bug fixes. Completed. version 2.0
+2025-04-01 version 1.98951 y, d, p, P commands added
+2025-04-02 version 1.98953 r, R commands added
+2025-04-02 version 1.98955 i, f commands added
+2025-04-02 version 1.9896 c, m commands added
+2025-04-03 version 1.9897 s, S, w commands added
+2025-04-03 version 1.9899 /, ?,N, n commands added
+2025-04-03 linux version is basically complete.
+2025-04-04 Bug fixes. Complete. version 2.0
+2025-04-11 version 2.1 a little adjustment.
 --------------------
 
       I won't owe any responsibility for the result of application of
