@@ -70,7 +70,7 @@ def getln():
     while True:
         ch=getch()
         if ch=='\033':
-            return s
+            return ''
         elif ch==chr(13):
             return s
         elif ch==chr(0x7f):

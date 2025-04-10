@@ -43,8 +43,8 @@ Overview
    [offset]Sstring         ----- insert string before [offset]
    [offset]sstring         ----- overwrite string on and after [offset]
 
-   [offset]R<filename>       ----- read file (insert) before [offset]
-   [offset]r<filename>       ----- read file (overwrite) on and after [offset]
+   [offset]R<filename>     ----- read file (insert) before [offset]
+   [offset]r<filename>     ----- read file (overwrite) on and after [offset]
    [offset] f <len>,<data> ----- fill with <data> (by length)
    <start>,<end> f <xx>    ----- fill with xx (by range)
    [offset]i<len>,<data>   ----- insert data
@@ -52,10 +52,10 @@ Overview
 
    <start>,<end> d         ----- delete by range
    <start>,<end>y          ----- yank to yankbuffer
-   <start>,<end>m<destination>   ----- move data
-   <start>,<end> c <destination> ----- copy data (data will be yanked)
-   <start>,<end> i <destination> ----- insert data
-   <start>,<end>w<filename>      ----- write data on file
+   <start>,<end>m<dest>    ----- move data
+   <start>,<end> c <dest>  ----- copy data (data will be yanked)
+   <start>,<end> i <dest>  ----- insert data
+   <start>,<end>w<filename> ---- write data on file
    !<string>               ----- invoke shell
    q                       ----- quit
    q!                      ----- overriding quit
