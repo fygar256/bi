@@ -639,6 +639,9 @@ def fedit():
         elif ch=='Z':
             return(True)
         elif ch=='q':
+            if lastchange:
+                stdmm("No write since last change. To overriding quit, use 'q!'.")
+                continue
             return(False)
         elif ch=='M':
             disp_marks()
