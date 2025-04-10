@@ -1,14 +1,14 @@
 
-                   vi like binary file editor 'bi'
+                   vi like binary editor 'bi'
 
                    Programmed by T.Maekawa (fygar256)
 
 Overview
 --------
 
-    BI is a binary file editor designed to mimic the interface of the
-    UNIX editor 'vi'. The name (BI) is an abbreviation for Binary file
-    editor like vI. 
+    BI is a binary editor designed to mimic the interface of the
+    UNIX editor 'vi'. The name (BI) is an abbreviation for Binary editor
+	like vI. 
 
 ★Command Reference
 
