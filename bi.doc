@@ -89,7 +89,7 @@ Overview
     to the end of the data + 1, and if dest>filesize, it fills from the end of
     the file + 1 to dest with 0s, and writes the deleted data from dest.
 
-    the commands that marked with `@` are not implememted yet.
+    the commands that marked with `@` are not implemented yet.
 
 ★Attention
 
