@@ -139,5 +139,6 @@ w<file> commands.
 
 ##### Screenshot
 
-![image](https://github.com/user-attachments/assets/f1e16ea8-f74c-4f20-832b-efcc648b3bab)
+(screenshot-2025-04-11 11-26-00.png)
+
 
