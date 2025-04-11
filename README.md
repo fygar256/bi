@@ -139,6 +139,6 @@ w<file> commands.
 
 ##### Screenshot
 
-(screenshot-2025-04-11 11-26-00.png)
+(screenshot-2025-04-11)
 
 
