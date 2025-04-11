@@ -554,12 +554,7 @@ def searchnext(fp):
 
         if curpos>=len(mem):
             stdmm("Search reached to bottom, continuing from top. Hit enter.")
-            while getch()!=chr(13):
-                pass
-            clrmm()
-
             curpos=0
-            continue
 
         if curpos==start:
             stdmm("Not found.")
@@ -583,11 +578,8 @@ def searchlast(fp):
         curpos-=1
         if curpos<0:
             stdmm("Search reached to top, continuing from bottom. Hit enter.")
-            while getch()!=chr(13):
-                pass
-            clrmm()
             curpos=len(mem)-1
-            continue
+
         if curpos==start:
             stdmm("Not found.")
             return
