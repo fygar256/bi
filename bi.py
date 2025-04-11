@@ -4,6 +4,7 @@ import tty
 import termios
 import string
 import copy
+import re
 import os
 ESC='\033['
 LENONSCR=(20*16)
@@ -22,6 +23,8 @@ curx=0
 cury=0
 mark=[UNKNOWN] * 26
 smem=[]
+regexp=False
+remem=''
 
 def escup(n=1):
     print(f"{ESC}{n}A",end='')
@@ -66,22 +69,23 @@ def putch(c):
     print(c,end='',flush=True)
 
 def getln():
-    s=""
+    s = ""
     while True:
-        ch=getch()
-        if ch=='\033':
+        ch = getch()
+        if ch == '\033':
             return ''
-        elif ch==chr(13):
+        elif ch == chr(13):
             return s
-        elif ch==chr(0x7f):
-            if s!='':
+        elif ch == chr(0x7f):
+            if s != '':
                 escleft()
                 putch(' ')
                 escleft()
-                s=s[:len(s)-1]
+                s = s[:len(s) - 1]
         else:
             putch(ch)
-            s+=ch
+            s += ch
+    return s
 
 def skipspc(s,idx):
     while idx<len(s) and s[idx]==' ':
@@ -105,7 +109,7 @@ def repaint():
     addr=homeaddr
     for y in range(0x14):
         esccolor(5)
-        print(f"{addr+y*16:012X} ",end='')
+        print(f"{(addr+y*16)&0xffffffffffff:012X} ",end='')
         esccolor(7)
         for i in range(16):
             a=y*16+i+addr
@@ -115,6 +119,7 @@ def repaint():
             a=y*16+i+addr
             print("~" if a>=len(mem) else (chr(mem[a]) if 0x20<=mem[a]<=0x7f else "."),end='')
         print("")
+    esccolor(0)
 
 def insmem(start,mem2):
     global mem,lastchange,modified
@@ -265,7 +270,7 @@ def stdmm(s):
     clrmm()
     esccolor(6)
     esclocate(0,BOTTOMLN)
-    print(s,end='')
+    print(s,end='',flush=True)
 
 def jump(addr):
     global homeaddr,curx,cury
@@ -363,7 +368,6 @@ def commandline():
         if len(line)>=2:
             s=line[1:].lstrip()
             writefile(s)
-        stdmm("File written.")
         lastchange=False
         return -1
     elif line[0]=='!':
@@ -501,6 +505,26 @@ def commandline():
     stdmm("Unrecognized command.")
     return -1
 
+
+def srematch(a,b):
+    f=False
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    tty.setraw(fd)
+    f=re.match(a, b)
+    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return f
+
+def hitre(addr):
+    global mem,remem
+    s=''
+    if not remem:
+        return True
+    for i in range(addr,len(mem)):
+        s+=chr(mem[i])
+
+    return srematch(remem,s)
+
 def hit(addr):
     global smem,mem
     for i in range(len(smem)):
@@ -514,15 +538,26 @@ def searchnext(fp):
     global smem
     curpos=fp
     start=fp
+    if regexp==False and not smem:
+        return
     while True:
-        if hit(curpos):
+        if regexp:
+            f=hitre(curpos)
+        else:
+            f=hit(curpos)
+
+        if f:
             jump(curpos)
             return
 
         curpos+=1
 
         if curpos>=len(mem):
-            stdmm("Search reached to bottom, continuing from top.")
+            stdmm("Search reached to bottom, continuing from top. Hit enter.")
+            while getch()!=chr(13):
+                pass
+            clrmm()
+
             curpos=0
             continue
 
@@ -531,16 +566,26 @@ def searchnext(fp):
             return
 
 def searchlast(fp):
-    global smem
     curpos=fp
     start=fp
+    if regexp==False and not smem:
+        return
     while True:
-        if hit(curpos):
+        if regexp:
+            f=hitre(curpos)
+        else:
+            f=hit(curpos)
+
+        if f:
             jump(curpos)
             return
+
         curpos-=1
         if curpos<0:
-            stdmm("Search reached to top, continuing from bottom.")
+            stdmm("Search reached to top, continuing from bottom. Hit enter.")
+            while getch()!=chr(13):
+                pass
+            clrmm()
             curpos=len(mem)-1
             continue
         if curpos==start:
@@ -548,20 +593,23 @@ def searchlast(fp):
             return
 
 def searchstr():
-    global smem
+    global regexp,remem
     esclocate(0,BOTTOMLN)
     esccolor(7)
     print("/",end='',flush=True)
     s=getln()
     if s!="":
-        smem=[ ord(c) for c in s ]
+        regexp=True
+        remem=s
         searchnext(fpos())
 
 def searchhex():
-    global smem
+    global smem,remem,regexp
     esclocate(0,BOTTOMLN)
     esccolor(7)
     print("?",end='',flush=True)
+    remem=''
+    regexp=False
     s=getln()
     if s!="":
         idx=0
@@ -574,150 +622,151 @@ def searchhex():
         searchnext(fpos())
 
 def fedit():
-    global yank,lastchange,lastchange,modified,insmod,homeaddr,curx,cury
-    stroke=False
-    ch=''
+    global yank, lastchange, lastchange, modified, insmod, homeaddr, curx, cury
+    stroke = False
+    ch = ''
     while True:
         repaint()
-        esclocate( curx//2*3+13+(curx&1),cury+3)
-        ch=getch()
+        esclocate(curx // 2 * 3 + 13 + (curx & 1), cury + 3)
+        ch = getch()
 
-        if ch==chr(27):
-            c2=getch()
-            c3=getch()
-            if c3=='A':
-                ch='k'
-            elif c3=='B':
-                ch='j'
-            elif c3=='C':
-                ch='l'
-            elif c3=='D':
-                ch='h'
+        if ch == chr(27):
+            c2 = getch()
+            c3 = getch()
+            if c3 == 'A':
+                ch = 'k'
+            elif c3 == 'B':
+                ch = 'j'
+            elif c3 == 'C':
+                ch = 'l'
+            elif c3 == 'D':
+                ch = 'h'
 
-        clrmm()
-        if ch==chr(2):
-            if homeaddr>=256:
-                homeaddr-=256
+        clrmm()  # ここでメッセージ領域をクリア
+        if ch == 'n':
+            searchnext(fpos() + 1)
+            continue
+        elif ch == 'N':
+            searchlast(fpos() - 1)
+            continue
+
+        elif ch == chr(2):
+            if homeaddr >= 256:
+                homeaddr -= 256
             else:
-                homeaddr=0
+                homeaddr = 0
             continue
-        elif ch==chr(6):
-            homeaddr+=256
+        elif ch == chr(6):
+            homeaddr += 256
             continue
-        elif ch==chr(0x15):
-            if homeaddr>=128:
-                homeaddr-=128
+        elif ch == chr(0x15):
+            if homeaddr >= 128:
+                homeaddr -= 128
             else:
-                homeaddr=0
+                homeaddr = 0
             continue
-        elif ch==chr(4):
-            homeaddr+=128
+        elif ch == chr(4):
+            homeaddr += 128
             continue
-        elif ch=='^':
-            curx=0
+        elif ch == '^':
+            curx = 0
             continue
-        elif ch=='$':
-            curx=30
+        elif ch == '$':
+            curx = 30
             continue
-        elif ch=='j':
-            if cury<19:
-                cury+=1
+        elif ch == 'j':
+            if cury < 19:
+                cury += 1
             else:
                 scrdown()
             continue
-        elif ch=='k':
-            if cury>0:
-                cury-=1
+        elif ch == 'k':
+            if cury > 0:
+                cury -= 1
             else:
                 scrup()
             continue
-        elif ch=='h':
-            if curx>0:
-                curx-=1
+        elif ch == 'h':
+            if curx > 0:
+                curx -= 1
             else:
-                if fpos()!=0:
-                    curx=31
-                    if cury>0:
-                        cury-=1
+                if fpos() != 0:
+                    curx = 31
+                    if cury > 0:
+                        cury -= 1
                     else:
                         scrup()
             continue
-        elif ch=='l':
+        elif ch == 'l':
             inccurx()
             continue
-        elif ch==chr(12):
+        elif ch == chr(12):
             escclear()
             repaint()
             continue
-        elif ch=='Z':
-            return(True)
-        elif ch=='q':
+        elif ch == 'Z':
+            return (True)
+        elif ch == 'q':
             if lastchange:
                 stdmm("No write since last change. To overriding quit, use 'q!'.")
                 continue
-            return(False)
-        elif ch=='M':
+            return (False)
+        elif ch == 'M':
             disp_marks()
             continue
-        elif ch=='m':
-            ch=getch().lower()
-            if 'a'<=ch<='z':
-                mark[ord(ch)-ord('a')]=fpos()
+        elif ch == 'm':
+            ch = getch().lower()
+            if 'a' <= ch <= 'z':
+                mark[ord(ch) - ord('a')] = fpos()
             continue
-        elif ch=='?':
+        elif ch == '?':
             searchhex()
             continue
-        elif ch=='/':
+        elif ch == '/':
             searchstr()
             continue
-        elif ch=='n':
-            searchnext(fpos()+1)
+        elif ch == '\'':
+            ch = getch().lower()
+            if 'a' <= ch <= 'z':
+                jump(mark[ord(ch) - ord('a')])
             continue
-        elif ch=='N':
-            searchlast(fpos()-1)
+        elif ch == 'p':
+            y = list(yank)
+            ovwmem(fpos(), y)
+            jump(fpos() + len(y))
             continue
-        elif ch=='\'':
-            ch=getch().lower()
-            if 'a'<=ch<='z':
-                jump(mark[ord(ch)-ord('a')])
-            continue
-        elif ch=='p':
-            y=list(yank)
-            ovwmem(fpos(),y)
-            jump(fpos()+len(y))
-            continue
-        elif ch=='P':
-            y=list(yank)
-            insmem(fpos(),y)
-            jump(fpos()+len(yank))
+        elif ch == 'P':
+            y = list(yank)
+            insmem(fpos(), y)
+            jump(fpos() + len(yank))
             continue
 
-        if ch=='i':
-            insmod=not insmod
-            stroke=False
+        if ch == 'i':
+            insmod = not insmod
+            stroke = False
         elif ch in string.hexdigits:
-            addr=fpos()
-            c=int("0x"+ch,16)
-            sh=4 if not curx&1 else 0
-            mask=0xf if not curx&1 else 0xf0
+            addr = fpos()
+            c = int("0x" + ch, 16)
+            sh = 4 if not curx & 1 else 0
+            mask = 0xf if not curx & 1 else 0xf0
             if insmod:
-                if not stroke and addr<len(mem):
-                    insmem(addr,[c<<sh])
+                if not stroke and addr < len(mem):
+                    insmem(addr, [c << sh])
                 else:
-                    setmem(addr,readmem(addr)&mask|c<<sh)
-                stroke=(not stroke) if not curx&1 else False
+                    setmem(addr, readmem(addr) & mask | c << sh)
+                stroke = (not stroke) if not curx & 1 else False
             else:
-                setmem(addr,readmem(addr)&mask|c<<sh)
-                lastchange=True
-                modified=True
+                setmem(addr, readmem(addr) & mask | c << sh)
+                lastchange = True
+                modified = True
             inccurx()
-        elif ch=='x':
-            delmem(fpos(),fpos(),False)
-        elif ch==':':
-            f=commandline()
-            if f==1:
+        elif ch == 'x':
+            delmem(fpos(), fpos(), False)
+        elif ch == ':':
+            f = commandline()
+            if f == 1:
                 return True
-            elif f==0:
+            elif f == 0:
                 return False
 
 def readfile(fn):
@@ -738,6 +787,7 @@ def writefile(fn):
     f=open(fn,"wb")
     f.write(bytes(mem))
     f.close()
+    stdmm("File written.")
 
 def wrtfile(start,end,fn):
     global mem
@@ -759,8 +809,8 @@ def main():
     f=fedit()
     if f:
         writefile(filename)
-        stdmm("File written.")
+    else:
+        esccolor(0)
 
 if __name__=="__main__":
     main()
-    exit(0)
