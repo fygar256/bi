@@ -12,10 +12,11 @@ sudo cp bi.py /usr/bin/bi
 
 ##### execution
 bi file
-
+```
 
 ##### Manual
 
+```
 
                    vi like binary editor 'bi'
 
@@ -136,9 +137,10 @@ w<file> commands.
 
       I won't owe any responsibility for the result of application of
     this program. 
+```
 
 ##### Screenshot
 
-(screenshot-2025-04-11)
+(screenshot-2025-04-11.png)
 
 
