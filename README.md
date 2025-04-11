@@ -141,4 +141,4 @@ w<file> commands.
 
 ##### Screenshot
 
-<img alt="image" src="https://github.com/fygar256/bi/screenshot-2025-04-11.png">
+<img alt="image" src="https://github.com/fygar256/bi/blob/main/screenshot-2025-04-11.png">
