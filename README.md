@@ -137,5 +137,7 @@ w<file> commands.
       I won't owe any responsibility for the result of application of
     this program. 
 
+##### Screenshot
 
+![image](https://github.com/user-attachments/assets/f1e16ea8-f74c-4f20-832b-efcc648b3bab)
 
