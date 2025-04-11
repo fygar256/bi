@@ -33,28 +33,29 @@ Overview
 
      Commands on edit mode.
 
-   <hex-key>       ----- set data
-   hjkl            ----- move cursor
-   ^F ^B           ----- move by a page ( 256 bytes )
-   ^D ^U           ----- move by half a page ( 128 bytes )
-   ^L              ----- repaint screen.
-   ^               ----- jump to the left end of line
-   $               ----- jump to the right end of line
-   m[a-z]          ----- mark currrent position
-   '[a-z]          ----- jump to marked point
-   /               ----- search string
-   ?xx xx xx ...   ----- search binary data
-   n               ----- search the next 
-   N               ----- search the last
-   M               ----- display marks
+   <hex-key>               ----- set data
+   hjkl or allow key       ----- move cursor
+   ^F ^B                   ----- move by a page ( 256 bytes )
+   ^D ^U                   ----- move by half a page ( 128 bytes )
+   ^L                      ----- repaint screen.
+   ^                       ----- jump to the left end of line
+   $                       ----- jump to the right end of line
+   m[a-z]                  ----- mark currrent position
+   '[a-z]                  ----- jump to marked point
+   /<string>               ----- search string
+   ?xx xx xx ...           ----- search binary data
 
-   p               ----- paste yank buffer (overwrite)
-   P               ----- paste yank buffer (insert)
-   q               ----- quit
-   x               ----- delete a byte
-   Z               ----- write and quit
+   n                       ----- search the next 
+   N                       ----- search the last
+   M                       ----- display marks
 
-   :               ----- to command line mode
+   p                       ----- paste yank buffer (overwrite)
+   P                       ----- paste yank buffer (insert)
+   q                       ----- quit
+   x                       ----- delete a byte
+   Z                       ----- write and quit
+
+   :                       ----- to command line mode
 
     ◎On command line mode
 
@@ -74,6 +75,10 @@ Overview
    <start>,<end>m<dest>    ----- move data
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
    <start>,<end> i <dest>  ----- insert data
+@  yy /str                 ----- yank to yank buffer with string
+@  yy ?xx xx xx ...        ----- yank to yank buffer with data
+@  <start>,<end> a /str1/str2                 ----- replace str1 with str2
+@  <start>,<end> a ?xx xx xx ...?xx xx xx ... ----- replace data1 with data2
    <start>,<end>w<filename> ---- write data on file
    !<string>               ----- invoke shell
    q                       ----- quit
@@ -99,6 +104,8 @@ Overview
     and moves it to <dest>, but if dest==filesize, the deleted data is moved
     to the end of the data + 1, and if dest>filesize, it fills from the end of
     the file + 1 to dest with 0s, and writes the deleted data from dest.
+
+    the commands that marked with `@` are not implemented yet.
 
 ★Attention
 
@@ -137,6 +144,7 @@ w<file> commands.
 
       I won't owe any responsibility for the result of application of
     this program. 
+
 ```
 
 ##### Screenshot
