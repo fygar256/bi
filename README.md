@@ -88,7 +88,7 @@ Overview
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
 
-      Search commands cannot handle regular expressions yet, Sorry.
+    Regular expression can be used for string search.
 
       The values enclosed with `[]` can be left out, when
     these commands above take the current position as the value omitted. 
@@ -140,6 +140,7 @@ w<file> commands.
 2025-04-03 linux version is basically complete.
 2025-04-04 Bug fixes. Complete. version 2.0
 2025-04-11 version 2.1 a little adjustment.
+2025-04-12 version 2.2 regular expression support.
 --------------------
 
       I won't owe any responsibility for the result of application of
