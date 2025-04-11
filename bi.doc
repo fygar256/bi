@@ -15,7 +15,7 @@ Overview
      Commands on edit mode.
 
    <hex-key>               ----- set data
-   hjkl                    ----- move cursor
+   hjkl or allow key       ----- move cursor
    ^F ^B                   ----- move by a page ( 256 bytes )
    ^D ^U                   ----- move by half a page ( 128 bytes )
    ^L                      ----- repaint screen.
@@ -25,13 +25,6 @@ Overview
    '[a-z]                  ----- jump to marked point
    /<string>               ----- search string
    ?xx xx xx ...           ----- search binary data
-
-@  /<str1>/<str2>          ----- replace <str1> with <str2>
-@  /<str1>?xx xx ...       ----- replace <str1> with binary data
-@  ?xx xx .../<str>        ----- replace binary data with <str>
-@  ?xx xx ...?xx xx ...    ----- replace binary data with binary data
-@  r                       ----- replace the next
-@  R                       ----- replace the last
 
    n                       ----- search the next 
    N                       ----- search the last
@@ -63,6 +56,10 @@ Overview
    <start>,<end>m<dest>    ----- move data
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
    <start>,<end> i <dest>  ----- insert data
+@  yy /str                 ----- yank to yank buffer with string
+@  yy ?xx xx xx ...        ----- yank to yank buffer with data
+@  <start>,<end> a /str1/str2                 ----- replace str1 with str2
+@  <start>,<end> a ?xx xx xx ...?xx xx xx ... ----- replace data1 with data2
    <start>,<end>w<filename> ---- write data on file
    !<string>               ----- invoke shell
    q                       ----- quit

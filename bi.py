@@ -581,6 +581,19 @@ def fedit():
         repaint()
         esclocate( curx//2*3+13+(curx&1),cury+3)
         ch=getch()
+
+        if ch==chr(27):
+            c2=getch()
+            c3=getch()
+            if c3=='A':
+                ch='k'
+            elif c3=='B':
+                ch='j'
+            elif c3=='C':
+                ch='l'
+            elif c3=='D':
+                ch='h'
+
         clrmm()
         if ch==chr(2):
             if homeaddr>=256:
