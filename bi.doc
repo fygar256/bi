@@ -23,8 +23,16 @@ Overview
    $               ----- jump to the right end of line
    m[a-z]          ----- mark currrent position
    '[a-z]          ----- jump to marked point
-   /               ----- search string
+   /<string>       ----- search string
    ?xx xx xx ...   ----- search binary data
+
+@  /<str1>/<str2>  ----- replace <str1> with <str2>
+@  /<str1>?xx xx ... --- replace <str1> with binary data
+@  ?xx xx .../<str>  --- replace binary data with <str>
+@  ?xx xx .../xx xx ...  replace binary data with binary data
+@  r               ----- replace the next
+@  R               ----- replace the last
+
    n               ----- search the next 
    N               ----- search the last
    M               ----- display marks
@@ -80,6 +88,8 @@ Overview
     and moves it to <dest>, but if dest==filesize, the deleted data is moved
     to the end of the data + 1, and if dest>filesize, it fills from the end of
     the file + 1 to dest with 0s, and writes the deleted data from dest.
+
+    the commands that marked with `@` are not implememted yet.
 
 ★Attention
 
