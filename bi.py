@@ -553,7 +553,7 @@ def searchnext(fp):
         curpos+=1
 
         if curpos>=len(mem):
-            stdmm("Search reached to bottom, continuing from top. Hit enter.")
+            stdmm("Search reached to bottom, continuing from top.")
             curpos=0
 
         if curpos==start:
@@ -577,7 +577,7 @@ def searchlast(fp):
 
         curpos-=1
         if curpos<0:
-            stdmm("Search reached to top, continuing from bottom. Hit enter.")
+            stdmm("Search reached to top, continuing from bottom.")
             curpos=len(mem)-1
 
         if curpos==start:
