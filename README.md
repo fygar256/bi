@@ -43,7 +43,7 @@ Overview
    m[a-z]                  ----- mark currrent position
    '[a-z]                  ----- jump to marked point
    /<regexp>               ----- search regular expression string
-   ?xx xx xx ...           ----- search binary data
+   //xx xx xx ...          ----- search binary data
 
    n                       ----- search the next 
    N                       ----- search the last
@@ -76,11 +76,11 @@ Overview
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
    <start>,<end> i <dest>  ----- insert data
    u/str                   ----- yank to yank buffer with string
-   u?xx xx xx ...          ----- yank to yank buffer with data
-@  <start>,<end> a /regexp/str                ----- replace str1 with str2
-@  <start>,<end> a /regexp?xx xx xx ...       ----- replace str1 with data
-@  <start>,<end> a ?xx xx xx ...?xx xx xx ... ----- replace data1 with data2
-@  <start>,<end> a ?xx xx xx .../str          ----- replace data1 with str
+   u//xx xx xx ...         ----- yank to yank buffer with data
+@  <start>,<end> a /regexp/str                  ----- replace regexp with str
+@  <start>,<end> a /regexp//xx xx xx ...        ----- replace regexp with data
+@  <start>,<end> a //xx xx xx .../str           ----- replace data1 with str
+@  <start>,<end> a //xx xx xx ...//xx xx xx ... ----- replace data1 with data2
    <start>,<end>w<filename> ---- write data on file
    !<string>               ----- invoke shell
    q                       ----- quit
@@ -144,6 +144,7 @@ w<file> commands.
 2025-04-11 version 2.1 a little adjustment.
 2025-04-12 version 2.2 regular expression support.
 2025-04-12 version 2.3 u command added
+2025-04-12 version 2.4 change '?' to '//' for uniform notation
 --------------------
 
       I won't owe any responsibility for the result of application of
