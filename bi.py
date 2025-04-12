@@ -268,7 +268,7 @@ def clrmm():
 
 def stdmm(s):
     clrmm()
-    esccolor(6)
+    esccolor(4)
     esclocate(0,BOTTOMLN)
     print(s,end='',flush=True)
 
@@ -470,12 +470,12 @@ def commandline():
     if idx<len(line) and line[idx]=='u':
         idx+=1
         idx=skipspc(line,idx)
-        if idx<len(line) and (line[idx]=='?' or line[idx]=='/'):
-            ch=line[idx]
-            if ch=='?':
+        if idx<len(line) and line[idx]=='/':
+            idx+=1
+            if idx<len(line) and line[idx]=='/':
                 yank,idx=get_hexs(line,idx+1)
             else:
-                s,idx=get_str(line,idx+1)
+                s,idx=get_str(line,idx)
                 yank=[ ord(c) for c in s ]
                 
             stdmm(f"{len(yank)} bytes yanked.")
@@ -620,12 +620,18 @@ def searchlast(fp):
             stdmm("Not found.")
             return
 
-def searchstr():
-    global regexp,remem
+def search():
     esclocate(0,BOTTOMLN)
     esccolor(7)
     print("/",end='',flush=True)
     s=getln()
+    if len(s)>1 and s[0]=='/':
+        searchhex(s[1:])
+    else:
+        searchstr(s)
+
+def searchstr(s):
+    global regexp,remem
     if s!="":
         regexp=True
         remem=s
@@ -653,14 +659,10 @@ def get_hexs(s,idx):
         m+=[v]
     return m,idx
 
-def searchhex():
+def searchhex(s):
     global smem,remem,regexp
-    esclocate(0,BOTTOMLN)
-    esccolor(7)
-    print("?",end='',flush=True)
     remem=''
     regexp=False
-    s=getln()
     if s!="":
         smem,idx=get_hexs(s,0)
         searchnext(fpos())
@@ -763,11 +765,8 @@ def fedit():
             if 'a' <= ch <= 'z':
                 mark[ord(ch) - ord('a')] = fpos()
             continue
-        elif ch == '?':
-            searchhex()
-            continue
         elif ch == '/':
-            searchstr()
+            search()
             continue
         elif ch == '\'':
             ch = getch().lower()
