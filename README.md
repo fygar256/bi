@@ -77,10 +77,10 @@ Overview
    <start>,<end> i <dest>  ----- insert data
    u/str                   ----- yank to yank buffer with string
    u//xx xx xx ...         ----- yank to yank buffer with data
-@  <start>,<end> a /regexp/str                  ----- replace regexp with str
-@  <start>,<end> a /regexp//xx xx xx ...        ----- replace regexp with data
-@  <start>,<end> a //xx xx xx .../str           ----- replace data1 with str
-@  <start>,<end> a //xx xx xx ...//xx xx xx ... ----- replace data1 with data2
+   <start>,<end> a /regexp/str                  ----- replace regexp with str
+   <start>,<end> a /regexp//xx xx xx ...        ----- replace regexp with data
+   <start>,<end> a //xx xx xx .../str           ----- replace data1 with str
+   <start>,<end> a //xx xx xx ...//xx xx xx ... ----- replace data1 with data2
    <start>,<end>w<filename> ---- write data on file
    !<string>               ----- invoke shell
    q                       ----- quit
@@ -145,6 +145,7 @@ w<file> commands.
 2025-04-12 version 2.2 regular expression support.
 2025-04-12 version 2.3 u command added
 2025-04-12 version 2.4 change '?' to '//' for uniform notation
+2025-04-13 version 2.5 a command added
 --------------------
 
       I won't owe any responsibility for the result of application of
