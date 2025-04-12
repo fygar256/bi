@@ -1,0 +1,202 @@
+
+.TH BI 1 "April 14, 2025" "bi 2.5.5" "User Commands"
+.SH NAME
+bi \- vi-like binary editor
+.SH SYNOPSIS
+.B bi
+.RI [ file ]
+.SH DESCRIPTION
+.B bi
+is a vi-like binary editor for low-level editing of binary files. It mimics the look and feel of the UNIX 'vi' editor and supports both screen-based navigation and powerful command-line editing.
+
+.SH SCREEN MODE COMMANDS
+.TP
+.B <hex-key>
+Set byte data at cursor location.
+.TP
+.B hjkl or arrow keys
+Move cursor.
+.TP
+.B ^F, ^B
+Move by a page (256 bytes).
+.TP
+.B ^D, ^U
+Move by half a page (128 bytes).
+.TP
+.B ^L
+Redraw screen.
+.TP
+.B ^
+Jump to beginning of line.
+.TP
+.B $
+Jump to end of line.
+.TP
+.B m[a-z]
+Mark current position.
+.TP
+.B '[a-z]
+Jump to marked point.
+.TP
+.B /<regexp>
+Search regular expression string.
+.TP
+.B //xx xx xx ...
+Search binary data.
+.TP
+.B n
+Search next.
+.TP
+.B N
+Search previous.
+.TP
+.B M
+Display marks.
+.TP
+.B p
+Paste yank buffer (overwrite).
+.TP
+.B P
+Paste yank buffer (insert).
+.TP
+.B x
+Delete a byte.
+.TP
+.B q
+Quit.
+.TP
+.B Z
+Write and quit.
+.TP
+.B :
+Enter command line mode.
+
+.SH COMMAND LINE MODE
+.TP
+.B [offset]
+Jump to address.
+.TP
+.B [offset]S<string>
+Insert string before [offset].
+.TP
+.B [offset]s<string>
+Overwrite string on and after [offset].
+.TP
+.B [offset]R<filename>
+Insert file before [offset].
+.TP
+.B [offset]r<filename>
+Overwrite file from [offset].
+.TP
+.B [offset] f <len>,<data>
+Fill with <data> by length.
+.TP
+.B <start>,<end> f <xx>
+Fill with <xx> by range.
+.TP
+.B [offset]i<len>,<data>
+Insert data.
+.TP
+.B [offset] d <len>
+Delete by length.
+.TP
+.B <start>,<end> d
+Delete by range.
+.TP
+.B <start>,<end>y
+Yank to buffer.
+.TP
+.B y/str
+Yank by string.
+.TP
+.B y//xx xx ...
+Yank by binary data.
+.TP
+.B <start>,<end>m<dest>
+Move data.
+.TP
+.B <start>,<end> c <dest>
+Copy data (also yanks).
+.TP
+.B <start>,<end> i <dest>
+Insert yanked data.
+.TP
+.B <start>,<end> a /regexp/str
+Replace regexp with string.
+.TP
+.B <start>,<end> a /regexp//xx xx ...
+Replace regexp with binary.
+.TP
+.B <start>,<end> a //xx xx/str
+Replace binary with string.
+.TP
+.B <start>,<end> a //xx xx//xx xx
+Replace binary with binary.
+.TP
+.B <start>,<end>w<filename>
+Write data to file.
+.TP
+.B !<string>
+Invoke shell.
+.TP
+.B q
+Quit.
+.TP
+.B q!
+Force quit.
+.TP
+.B wq, wq!
+Write and quit.
+.TP
+.B w <filename>
+Write to filename.
+.TP
+.B <CR> or <ESC>
+Return to screen mode.
+
+.SH SPECIAL VALUES
+.TP
+.B ^
+Top of file.
+.TP
+.B .
+Current position.
+.TP
+.B $
+Bottom of file.
+.TP
+.B '[a-z]
+Marked position.
+.TP
+Values can be hexadecimal or prefixed with '#' for decimal.
+
+.SH NOTES
+The
+.B m
+command deletes data from <start> to <end> and moves it to <dest>. If dest is greater than file size, the area is padded with zeros and data is placed at dest.
+
+.SH LIMITATIONS
+Undo is not supported.
+
+.SH HISTORY
+.TP
+1991-12-04
+Project initiated due to floppy disk failure.
+.TP
+1992-01-18
+Renamed to bi.
+.TP
+2025-04-03
+Linux version completed (v2.0).
+.TP
+2025-04-14
+Latest version 2.5.5 released.
+
+.SH AUTHOR
+T. Maekawa (fygar256)
+
+.SH SEE ALSO
+.BR vi (1),
+.BR bvi (1),
+.BR hexedit (1),
+.BR hexdump (1)
