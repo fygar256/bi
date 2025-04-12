@@ -15,7 +15,7 @@ Overview
      Commands on edit mode.
 
    <hex-key>               ----- set data
-   hjkl or allow key       ----- move cursor
+   hjkl or arrow key       ----- move cursor
    ^F ^B                   ----- move by a page ( 256 bytes )
    ^D ^U                   ----- move by half a page ( 128 bytes )
    ^L                      ----- repaint screen.
