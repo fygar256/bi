@@ -25,6 +25,8 @@ mark=[UNKNOWN] * 26
 smem=[]
 regexp=False
 remem=''
+span=0
+nff=True
 
 def escup(n=1):
     print(f"{ESC}{n}A",end='')
@@ -309,34 +311,35 @@ def invoke_shell(s):
     escclear()
 
 def get_value(s,idx):
-    global mem
+    if idx>=len(s):
+        return UNKNOWN,idx
     v=UNKNOWN
     idx=skipspc(s,idx)
-    if idx>=len(s):
-        return UNKNOWN,UNKNOWN
-    if s[idx]=='$':
+    ch=s[idx]
+    if ch=='$':
         idx+=1
         v=len(mem)-1
-    elif s[idx]=='^':
+    elif ch=='^':
         idx+=1
         v=0
-    elif s[idx]=='.':
+    elif ch=='.':
         idx+=1
         v=fpos()
-    elif s[idx]=='\'' and 'a'<=s[idx+1]<='z':
-        v=mark[ord(s[idx+1])-ord('a')]
+    elif ch=='\'' and len(s)>idx+1 and 'a'<=s[idx+1]<='z':
+        idx+=1
+        v=mark[ord(s[idx])-ord('a')]
         if v==UNKNOWN:
             stdmm("Unknown mark.")
-            return UNKNOWN,UNKNOWN
+            return UNKNOWN,idx-1
         else:
-            idx+=2
-    elif s[idx].lower() in '0123456789abcdef':
+            idx+=1
+    elif idx<len(s) and s[idx] in '0123456789abcdefABCDEF':
         x=0
-        while idx<len(s) and s[idx].lower() in '0123456789abcdef':
-            x=16*x+int(s[idx].lower(),16)
+        while idx<len(s) and s[idx] in '0123456789abcdefABCDEF':
+            x=16*x+int("0x"+s[idx],16)
             idx+=1
         v=x
-    elif s[idx]=='#':
+    elif ch=='#':
         x=0
         idx+=1
         while idx<len(s) and s[idx] in '0123456789':
@@ -345,15 +348,57 @@ def get_value(s,idx):
         v=x
     return v,idx
 
-"""
-def acommand(line,idx):
-    return line,idx
+def acommand(start,end,line,idx):
+    global span,nff
+    nff=False
     idx=skipspc(line,idx)
-    if idx<len(line) and (line[idx]=='?' or line[idx]=='/'):
-        ch=line[idx]
-        idx+=1
-"""
+    f=False
 
+    m=''
+    hs=[]
+    if idx<len(line) and line[idx]=='/':
+        idx+=1
+        f=True
+        if idx<len(line) and line[idx]!='/':
+            m,idx=get_restr(line,idx)
+            re_=True
+        elif idx<len(line) and line[idx]=='/':
+            hs,idx=get_hexs(line,idx+1)
+            re_=False
+
+    if idx<len(line) and line[idx]=='/' and f==True:
+        idx+=1
+        if idx<len(line) and line[idx]!='/':
+            str_,idx=get_restr(line,idx)
+            n=[ ord(c) for c in str_]
+        elif idx<len(line) and line[idx]=='/':
+            idx+=1
+            n,idx=get_hexs(line,idx)
+        else:
+            stdmm("Unrecognized command.")
+    else:
+        stdmm("Unrecognized command.")
+
+    orgpos=fpos()
+    jump(start)
+    if re_==True:
+        f=searchstr(m)
+        i=fpos()
+    else:
+        f=searchhex(hs)
+        span=len(hs)
+        i=fpos()
+
+    while i<=end and f:
+        delmem(i,i+span-1,False)
+        insmem(i,n)
+        i=i-span+len(n)
+        f=searchnext(i)
+        i=fpos()
+
+    jump(orgpos)
+
+            
 def commandline():
     global lastchange,yank
     esclocate(0,BOTTOMLN)
@@ -475,7 +520,7 @@ def commandline():
             if idx<len(line) and line[idx]=='/':
                 yank,idx=get_hexs(line,idx+1)
             else:
-                s,idx=get_str(line,idx)
+                s,idx=get_restr(line,idx)
                 yank=[ ord(c) for c in s ]
                 
             stdmm(f"{len(yank)} bytes yanked.")
@@ -504,11 +549,9 @@ def commandline():
         fn=line[idx:].lstrip()
         wrtfile(x,x2,fn)
         return -1
-    """
     elif ch=='a':
-        acommand(line,idx+1)
+        acommand(x,x2,line,idx+1)
         return -1
-    """
 
     if idx<len(line) and (line[idx]=='f' or line[idx]=='m' or line[idx]=='c' or line[idx]=='i'):
         ch=line[idx]
@@ -541,13 +584,19 @@ def commandline():
 
 
 def srematch(a,b):
-    f=False
+    global span
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     tty.setraw(fd)
+    span=0
     f=re.match(a, b)
     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-    return f
+    if f:
+        start,end=f.span()
+        span=end-start
+        return span
+    else:
+        return 0
 
 def hitre(addr):
     global mem,remem
@@ -569,11 +618,11 @@ def hit(addr):
     return True
 
 def searchnext(fp):
-    global smem
+    global smem,nff
     curpos=fp
     start=fp
     if regexp==False and not smem:
-        return
+        return False
     while True:
         if regexp:
             f=hitre(curpos)
@@ -582,7 +631,7 @@ def searchnext(fp):
 
         if f:
             jump(curpos)
-            return
+            return True
 
         curpos+=1
 
@@ -592,14 +641,15 @@ def searchnext(fp):
             esccolor(0)
 
         if curpos==start:
-            stdmm("Not found.")
-            return
+            if nff:
+                stdmm("Not found.")
+            return False
 
 def searchlast(fp):
     curpos=fp
     start=fp
     if regexp==False and not smem:
-        return
+        return False
     while True:
         if regexp:
             f=hitre(curpos)
@@ -608,7 +658,7 @@ def searchlast(fp):
 
         if f:
             jump(curpos)
-            return
+            return True
 
         curpos-=1
         if curpos<0:
@@ -618,26 +668,9 @@ def searchlast(fp):
 
         if curpos==start:
             stdmm("Not found.")
-            return
+            return False
 
-def search():
-    esclocate(0,BOTTOMLN)
-    esccolor(7)
-    print("/",end='',flush=True)
-    s=getln()
-    if len(s)>1 and s[0]=='/':
-        searchhex(s[1:])
-    else:
-        searchstr(s)
-
-def searchstr(s):
-    global regexp,remem
-    if s!="":
-        regexp=True
-        remem=s
-        searchnext(fpos())
-
-def get_str(s,idx):
+def get_restr(s,idx):
     m=''
     while idx<len(s):
         ch=s[idx]
@@ -645,36 +678,58 @@ def get_str(s,idx):
             if idx+1<len(s):
                 ch=s[idx+1]
         if s[idx]=='/':
-            return m,idx+1
+            return m,idx
         m+=ch
         idx+=1
     return m,idx
+
+def searchstr(s):
+    global regexp,remem
+    if s!="":
+        regexp=True
+        remem=s
+        return(searchnext(fpos()))
+    return False
+
+def search():
+    esclocate(0,BOTTOMLN)
+    esccolor(7)
+    print("/",end='',flush=True)
+    s=getln()
+    if len(s)>1 and s[0]=='/':
+        sm,idx=get_hexs(s,1)
+        return searchhex(sm)
+    else:
+        m,idx=get_restr(s,0)
+        return searchstr(m)
 
 def get_hexs(s,idx):
     m=[]
     while idx<len(s):
         v,idx=get_value(s,idx)
         if v==UNKNOWN:
-            return m,idx
+            break
         m+=[v]
     return m,idx
 
-def searchhex(s):
+def searchhex(sm):
     global smem,remem,regexp
     remem=''
     regexp=False
-    if s!="":
-        smem,idx=get_hexs(s,0)
-        searchnext(fpos())
+    if sm:
+        smem=sm
+        return(searchnext(fpos()))
+    return False
 
 def fedit():
-    global yank, lastchange, lastchange, modified, insmod, homeaddr, curx, cury
+    global nff, yank, lastchange, lastchange, modified, insmod, homeaddr, curx, cury
     stroke = False
     ch = ''
     while True:
         repaint()
         esclocate(curx // 2 * 3 + 13 + (curx & 1), cury + 3)
         ch = getch()
+        nff = True
 
         if ch == chr(27):
             c2 = getch()
