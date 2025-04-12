@@ -512,7 +512,7 @@ def commandline():
         jump(x)
         return -1
 
-    if idx<len(line) and line[idx]=='u':
+    if idx<len(line) and line[idx]=='y':
         idx+=1
         idx=skipspc(line,idx)
         if idx<len(line) and line[idx]=='/':
