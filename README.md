@@ -42,7 +42,7 @@ Overview
    $                       ----- jump to the right end of line
    m[a-z]                  ----- mark currrent position
    '[a-z]                  ----- jump to marked point
-   /<string>               ----- search string
+   /<regexp>               ----- search regular expression string
    ?xx xx xx ...           ----- search binary data
 
    n                       ----- search the next 
@@ -60,8 +60,8 @@ Overview
     ◎On command line mode
 
    [offset]                ----- jump to the address
-   [offset]Sstring         ----- insert string before [offset]
-   [offset]sstring         ----- overwrite string on and after [offset]
+   [offset]S<string>       ----- insert string before [offset]
+   [offset]s<string>       ----- overwrite string on and after [offset]
 
    [offset]R<filename>     ----- read file (insert) before [offset]
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
@@ -75,10 +75,12 @@ Overview
    <start>,<end>m<dest>    ----- move data
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
    <start>,<end> i <dest>  ----- insert data
-@  yy /str                 ----- yank to yank buffer with string
-@  yy ?xx xx xx ...        ----- yank to yank buffer with data
-@  <start>,<end> a /str1/str2                 ----- replace str1 with str2
+   u/str                   ----- yank to yank buffer with string
+   u?xx xx xx ...          ----- yank to yank buffer with data
+@  <start>,<end> a /regexp/str                ----- replace str1 with str2
+@  <start>,<end> a /regexp?xx xx xx ...       ----- replace str1 with data
 @  <start>,<end> a ?xx xx xx ...?xx xx xx ... ----- replace data1 with data2
+@  <start>,<end> a ?xx xx xx .../str          ----- replace data1 with str
    <start>,<end>w<filename> ---- write data on file
    !<string>               ----- invoke shell
    q                       ----- quit
@@ -141,6 +143,7 @@ w<file> commands.
 2025-04-04 Bug fixes. Complete. version 2.0
 2025-04-11 version 2.1 a little adjustment.
 2025-04-12 version 2.2 regular expression support.
+2025-04-12 version 2.3 u command added
 --------------------
 
       I won't owe any responsibility for the result of application of
