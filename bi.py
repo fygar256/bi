@@ -52,7 +52,7 @@ def escclear():
     esclocate()
 
 def esccolor(col1=7,col2=0):
-    print(f"{ESC}3{coltab[col1]}m{ESC}4{coltab[col2]}m",end='')
+    print(f"{ESC}3{coltab[col1]}m{ESC}4{coltab[col2]}m",end='',flush=True)
 
 def escresetcolor():
     print(f"{ESC}0m",end='')
@@ -345,8 +345,17 @@ def get_value(s,idx):
         v=x
     return v,idx
 
+"""
+def acommand(line,idx):
+    return line,idx
+    idx=skipspc(line,idx)
+    if idx<len(line) and (line[idx]=='?' or line[idx]=='/'):
+        ch=line[idx]
+        idx+=1
+"""
+
 def commandline():
-    global lastchange
+    global lastchange,yank
     esclocate(0,BOTTOMLN)
     esccolor(7)
     putch(':')
@@ -458,23 +467,48 @@ def commandline():
         jump(x)
         return -1
 
+    if idx<len(line) and line[idx]=='u':
+        idx+=1
+        idx=skipspc(line,idx)
+        if idx<len(line) and (line[idx]=='?' or line[idx]=='/'):
+            ch=line[idx]
+            if ch=='?':
+                yank,idx=get_hexs(line,idx+1)
+            else:
+                s,idx=get_str(line,idx+1)
+                yank=[ ord(c) for c in s ]
+                
+            stdmm(f"{len(yank)} bytes yanked.")
+            return -1
+        stdmm("Unrecognized command.")
+        return -1
+
     if idx<len(line) and line[idx]==',':
         x2,idx=get_value(line,idx+1)
 
     idx=skipspc(line,idx)
 
-    if idx<len(line) and line[idx]=='d':
+    if idx<len(line):
+        ch=line[idx]
+    else:
+        ch=''
+    if ch=='d':
         delmem(x,x2,True)
         jump(x)
         return -1
-    elif idx<len(line) and line[idx]=='y':
+    elif ch=='y':
         yankmem(x,x2)
         return -1
-    elif idx<len(line) and line[idx]=='w':
+    elif ch=='w':
         idx+=1
         fn=line[idx:].lstrip()
         wrtfile(x,x2,fn)
         return -1
+    """
+    elif ch=='a':
+        acommand(line,idx+1)
+        return -1
+    """
 
     if idx<len(line) and (line[idx]=='f' or line[idx]=='m' or line[idx]=='c' or line[idx]=='i'):
         ch=line[idx]
@@ -555,6 +589,7 @@ def searchnext(fp):
         if curpos>=len(mem):
             stdmm("Search reached to bottom, continuing from top.")
             curpos=0
+            esccolor(0)
 
         if curpos==start:
             stdmm("Not found.")
@@ -578,6 +613,7 @@ def searchlast(fp):
         curpos-=1
         if curpos<0:
             stdmm("Search reached to top, continuing from bottom.")
+            esccolor(0)
             curpos=len(mem)-1
 
         if curpos==start:
@@ -595,6 +631,28 @@ def searchstr():
         remem=s
         searchnext(fpos())
 
+def get_str(s,idx):
+    m=''
+    while idx<len(s):
+        ch=s[idx]
+        if s[idx]=='\\':
+            if idx+1<len(s):
+                ch=s[idx+1]
+        if s[idx]=='/':
+            return m,idx+1
+        m+=ch
+        idx+=1
+    return m,idx
+
+def get_hexs(s,idx):
+    m=[]
+    while idx<len(s):
+        v,idx=get_value(s,idx)
+        if v==UNKNOWN:
+            return m,idx
+        m+=[v]
+    return m,idx
+
 def searchhex():
     global smem,remem,regexp
     esclocate(0,BOTTOMLN)
@@ -604,13 +662,7 @@ def searchhex():
     regexp=False
     s=getln()
     if s!="":
-        idx=0
-        smem=[]
-        while idx<len(s):
-            v,idx=get_value(s,idx)
-            if v==UNKNOWN:
-                return
-            smem+=[v]
+        smem,idx=get_hexs(s,0)
         searchnext(fpos())
 
 def fedit():
