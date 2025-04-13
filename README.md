@@ -155,6 +155,7 @@ w<file> commands.
 2025-04-12 version 2.4 change '?' to '//' for uniform notation
 2025-04-13 version 2.5 a command added
 2025-04-13 version 2.5.5 change 'u' to 'y' for uniform notation
+2025-04-13 version 2.5.7 Bug fix of shell invoke
 --------------------
 
       I won't owe any responsibility for the result of application of
