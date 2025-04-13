@@ -300,11 +300,10 @@ def disp_marks():
     getch()
     escclear()
 
-def invoke_shell(s):
+def invoke_shell(line):
     esccolor(7)
     print()
-    s=line[1:].lstrip()
-    os.system(s.lstrip())
+    os.system(line.lstrip())
     esccolor(4)
     print("[ Hit any key to return ]",end='',flush=True)
     getch()
