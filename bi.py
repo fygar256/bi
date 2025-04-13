@@ -50,7 +50,7 @@ def escscrolldown(n=1):
     print(f"{ESC}{n}T",end='')
 
 def escclear():
-    print(f"{ESC}2J",end='')
+    print(f"{ESC}2J",end='',flush=True)
     esclocate()
 
 def esccolor(col1=7,col2=0):
@@ -98,9 +98,9 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 2.0 by T.Maekawa                                               {"ins" if insmod else "ovw"} ")
+    print(f"bi version 2.6.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
-    print(f"file:[{filename:<32}] length: {len(mem)} bytes [ {("not " if not modified else "")+"modified"} ]    ")
+    print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
 def repaint():
     print_title()
@@ -318,9 +318,6 @@ def get_value(s,idx):
     if ch=='$':
         idx+=1
         v=len(mem)-1
-    elif ch=='^':
-        idx+=1
-        v=0
     elif ch=='.':
         idx+=1
         v=fpos()
@@ -397,7 +394,27 @@ def acommand(start,end,line,idx):
 
     jump(orgpos)
 
+def opeand(x,x2,x3):
+    for i in range(x,x2+1):
+        setmem(i,readmem(i)&(x3&0xff))
+    return
             
+def opeor(x,x2,x3):
+    for i in range(x,x2+1):
+        setmem(i,readmem(i)|(x3&0xff))
+    return
+            
+def opexor(x,x2,x3):
+    for i in range(x,x2+1):
+        setmem(i,readmem(i)^(x3&0xff))
+    return
+            
+def openot(x,x2):
+    for i in range(x,x2+1):
+        setmem(i,(~(readmem(i))&0xff))
+    return
+            
+
 def commandline():
     global lastchange,yank
     esclocate(0,BOTTOMLN)
@@ -529,6 +546,8 @@ def commandline():
 
     if idx<len(line) and line[idx]==',':
         x2,idx=get_value(line,idx+1)
+    else:
+        x2=fpos()
 
     idx=skipspc(line,idx)
 
@@ -552,7 +571,13 @@ def commandline():
         acommand(x,x2,line,idx+1)
         return -1
 
-    if idx<len(line) and (line[idx]=='f' or line[idx]=='m' or line[idx]=='c' or line[idx]=='i'):
+    if idx<len(line) and line[idx]=='~':
+        ch=line[idx]
+        idx+=1
+        openot(x,x2)
+        return -1
+
+    if idx<len(line) and (line[idx]=='f' or line[idx]=='m' or line[idx]=='c' or line[idx]=='i' or line[idx]=='&' or line[idx]=='|' or line[idx]=='^'):
         ch=line[idx]
         x3,idx=get_value(line,idx+1)
         if x3==UNKNOWN:
@@ -575,6 +600,15 @@ def commandline():
             m=redmem(x,x2)
             insmem(x3,m)
             jump(x3)
+            return -1
+        elif ch=='&':
+            opeand(x,x2,x3)
+            return -1
+        elif ch=='|':
+            opeor(x,x2,x3)
+            return -1
+        elif ch=='^':
+            opexor(x,x2,x3)
             return -1
 
 
@@ -904,6 +938,7 @@ def main():
         return
     filename=sys.argv[1]
     readfile(filename)
+    escclear()
     f=fedit()
     if f:
         writefile(filename)

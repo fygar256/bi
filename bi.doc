@@ -47,21 +47,25 @@ Overview
    [offset]R<filename>     ----- read file and insert on [offset]
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
    [offset] f <len>,<data> ----- fill with <data> (by length)
-   <start>,<end> f <xx>    ----- fill with xx (by range)
+   [start,end] f <xx>      ----- fill with xx (by range)
    [offset]i<len>,<data>   ----- insert data
    [offset] d <len>        ----- delete by length
 
-   <start>,<end> d         ----- delete by range
-   <start>,<end>y          ----- yank to yankbuffer
    y/str                   ----- yank to yank buffer with string
    y//xx xx xx ...         ----- yank to yank buffer with data
-   <start>,<end>m<dest>    ----- move data
-   <start>,<end> c <dest>  ----- copy data (data will be yanked)
-   <start>,<end> i <dest>  ----- insert data
-   <start>,<end> a /regexp/str                  ----- replace regexp with str
-   <start>,<end> a /regexp//xx xx xx ...        ----- replace regexp with data
-   <start>,<end> a //xx xx xx .../str           ----- replace data1 with str
-   <start>,<end> a //xx xx xx ...//xx xx xx ... ----- replace data1 with data2
+   [start,end] d           ----- delete by range
+   [start,end]y            ----- yank to yankbuffer
+   [start,end]|<data>      ----- bitwise or with data
+   [start,end]&<data>      ----- bitwise and with data
+   [start,end]^<data>      ----- bitwise xor with data
+   [start,end]~            ----- bitwise not with data
+   [start,end] m <dest>    ----- move data
+   [start,end] c <dest>    ----- copy data (data will be yanked)
+   [start,end] i <dest>    ----- insert data
+   [start,end] a /regexp/str                  ----- replace regexp with str
+   [start,end] a /regexp//xx xx xx ...        ----- replace regexp with data
+   [start,end] a //xx xx xx .../str           ----- replace data1 with str
+   [start,end] a //xx xx xx ...//xx xx xx ... ----- replace data1 with data2
    <start>,<end>w<filename> ---- write data on file
    !<string>               ----- invoke shell
    q                       ----- quit
@@ -81,7 +85,7 @@ Overview
       prefix '#'.
 
     And you can also give values with '[a-z] as marked position,
-    ^ as the top of file, . as the current position, and $ as the bottom
+    0 as the top of file, . as the current position, and $ as the bottom
     of file.
 
     The m command has a bit of a quirk. It deletes data from <start> to <end>
@@ -130,6 +134,7 @@ w<file> commands.
 2025-04-13 version 2.5 a command added
 2025-04-13 version 2.5.5 change 'u' to 'y' for uniform notation
 2025-04-13 version 2.5.7 Bug fixed of shell invoke
+2025-04-13 version 2.6.0 &,^,|,~ command added. adjustment to get start,end parameters
 --------------------
 
       I won't owe any responsibility for the result of application of
