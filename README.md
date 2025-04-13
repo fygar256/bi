@@ -22,7 +22,6 @@ man bi
 ##### Manual
 
 ```
-
                    vi like binary editor 'bi'
 
                    Programmed by T.Maekawa (fygar256)
@@ -34,7 +33,7 @@ Overview
     UNIX editor 'vi'. The name (BI) is an abbreviation for Binary editor
 	like vI. For the vi and binary enthusiasts.
 
-★Command Reference
+Command Reference
 
      Commands on edit mode.
 
@@ -61,7 +60,7 @@ Overview
    /                       ----- to command line search mode
    :                       ----- to command line mode
 
-    ◎On command line mode
+On command line mode
 
    ;                       ----- comment. will be ignored after ';'
    /<regexp>               ----- search regular expression string
@@ -102,6 +101,10 @@ Overview
    [start,end] a /regexp//xx xx xx ...        ----- replace regexp with data
    [start,end] a //xx xx xx .../str           ----- replace data1 with str
    [start,end] a //xx xx xx ...//xx xx xx ... ----- replace data1 with data2
+@  [start,end] < [[times],[0,1]]  ----- left shift(0,1) or rotate by byte
+@  [start,end] << [[times],[0,1]] ----- left shift(0,1) or rotate by multibyte
+@  [start,end] > [[times],[0,1]]  ----- right shift(0,1) or rotate by byte
+@  [start,end] >> [times],[0,1]]  ----- right shift(0,1) or rotate by multibyte
    <start>,<end>w<filename> ---- write data on file
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
@@ -115,10 +118,13 @@ Overview
       The values enclosed with `[]` can be left out, when
     these commands above take the current position as the value omitted.
 
-      On command line, you've got to give values in hexadecimal or decimal with
-      prefix '#'.
+      On command line, you've got to give values by simple expression as 
+      followings.
 
-    And you can also give values with '[a-z] as marked position,
+      <expression> := <factor> [+|-] <factor>
+
+      factor is number in hexadecimal or decimal with prefix '#'. 
+      And you can also give values with '[a-z] as marked position,
     0 as the top of file, . as the current position, and $ as the bottom
     of file.
 
@@ -129,7 +135,7 @@ Overview
 
     the functions marked with `@` are not implemented yet.
 
-Scripting function
+Scripting functionality
 
     bi has Scripting functionality.
     bi sctipt is named 'file.bi'. The command line synopsis of specificaton
@@ -178,6 +184,7 @@ w<file> commands.
 2025-04-13 version 2.6.9 change 'm' to 'v' for scripting notation in the future and adjustment of search commands
 2025-04-14 version 2.7.0 added scripting function.
 2025-04-14 version 2.7.3 a little adjustment
+2025-04-14 version 2.8.0 added simple expression functionality and add a little adjustment
 --------------------
 
       I won't owe any responsibility for the result of application of
