@@ -1,192 +1,200 @@
-.TH BI 1 "April 2025" "Version 2.6.0" "User Commands"
+.TH BI 1 "April 2025" "Version 2.7.0" "User Commands"
 .SH NAME
-bi \- vi-like binary editor
+bi \- a vi-like binary editor
 .SH SYNOPSIS
 .B bi
-[filename]
+[\-v] [\-s script.bi] filename
 .SH DESCRIPTION
-bi is a binary editor designed to resemble the UNIX editor 'vi'.
-The name "bi" stands for "Binary editor like vI". It is intended for those who enjoy working with both vi and binary files.
+.B bi
+is a binary editor designed to emulate the interface and behavior of the classic UNIX text editor
+.BR vi .
+The name "bi" stands for Binary editor like vI. It offers vi-style navigation and editing for binary files,
+making it ideal for users familiar with vi.
 
-The editor operates in two modes: edit mode and command-line mode.
-
+bi operates in two primary modes: edit mode and command-line mode.
 .SH EDIT MODE COMMANDS
 .TP
 <hex-key>
-Set binary data
+Set binary data at current cursor position.
 .TP
-h, j, k, l
-Move cursor (also arrow keys)
+hjkl, arrow keys
+Move cursor left, down, up, right.
 .TP
-Ctrl-F, Ctrl-B
-Move by a page (256 bytes)
+^F, ^B
+Move forward/backward by 256 bytes.
 .TP
-Ctrl-D, Ctrl-U
-Move by half a page (128 bytes)
+^D, ^U
+Move down/up by 128 bytes.
 .TP
-Ctrl-L
-Repaint screen
+^L
+Repaint the screen.
 .TP
 ^
-Jump to beginning of line
+Jump to the start of the current line.
 .TP
 $
-Jump to end of line
+Jump to the end of the current line.
 .TP
 m[a-z]
-Mark current position
+Mark current position with label a-z.
 .TP
 '[a-z]
-Jump to a marked point
-.TP
-/<regexp>
-Search using a regular expression
-.TP
-//xx xx xx ...
-Search for binary pattern
+Jump to a previously marked position.
 .TP
 n
-Search next occurrence
+Search forward.
 .TP
 N
-Search previous occurrence
+Search backward.
 .TP
 M
-Display all marks
+Display all mark positions.
 .TP
 p
-Paste yank buffer (overwrite)
+Paste yank buffer (overwrite).
 .TP
 P
-Paste yank buffer (insert)
-.TP
-q
-Quit
+Paste yank buffer (insert).
 .TP
 x
-Delete one byte
+Delete current byte.
 .TP
 Z
-Write and quit
-.TP
-:
-Enter command-line mode
-
-.SH COMMAND LINE MODE
-.TP
-[offset]
-Jump to address
-.TP
-[offset]S<string>
-Insert string at offset
-.TP
-[offset]s<string>
-Overwrite string at and after offset
-.TP
-[offset]R<filename>
-Insert file at offset
-.TP
-[offset]r<filename>
-Overwrite file contents at and after offset
-.TP
-[offset] f <len>,<data>
-Fill with <data> of length <len>
-.TP
-[start,end] f <xx>
-Fill specified range with <xx>
-.TP
-[offset]i<len>,<data>
-Insert data at offset
-.TP
-[offset] d <len>
-Delete <len> bytes from offset
-.TP
-y/str
-Yank string into buffer
-.TP
-y//xx xx xx ...
-Yank binary data into buffer
-.TP
-[start,end] d
-Delete data in range
-.TP
-[start,end]y
-Yank data in range
-.TP
-[start,end]|<data>
-Bitwise OR with <data>
-.TP
-[start,end]&<data>
-Bitwise AND with <data>
-.TP
-[start,end]^<data>
-Bitwise XOR with <data>
-.TP
-[start,end]~
-Bitwise NOT in range
-.TP
-[start,end] m <dest>
-Move data to destination
-.TP
-[start,end] c <dest>
-Copy data to destination (also yanks)
-.TP
-[start,end] i <dest>
-Insert data at destination
-.TP
-[start,end] a /regexp/str
-Replace string matching regexp with str
-.TP
-[start,end] a /regexp//xx xx xx ...
-Replace regexp match with binary
-.TP
-[start,end] a //xx xx xx .../str
-Replace binary with string
-.TP
-[start,end] a //xx xx xx ...//xx xx xx ...
-Replace binary with binary
-.TP
-<start>,<end>w<filename>
-Write specified range to file
-.TP
-!<string>
-Execute shell command
+Write changes and quit.
 .TP
 q
-Quit
+Quit editing session.
+.TP
+/
+Enter search command mode.
+.TP
+:
+Enter command-line mode.
+.SH COMMAND LINE MODE
+.TP
+;
+Comment (ignored after ';').
+.TP
+/<regexp>
+Search for a regular expression.
+.TP
+//xx xx ...
+Search for binary data.
+.TP
+!<command>
+Execute shell command.
+.TP
+q
+Quit.
 .TP
 q!
-Force quit
+Force quit without saving.
 .TP
 wq, wq!
-Write and quit
+Write and quit.
 .TP
 w <filename>
-Write file
+Write to specified file.
 .TP
-<Enter> or <ESC>
-Return to edit mode
-
+[offset]
+Jump to address.
+.TP
+[offset]m[a-z]
+Mark address with label.
+.TP
+[offset]S<string>
+Insert string at offset.
+.TP
+[offset]s<string>
+Overwrite string at offset.
+.TP
+[offset]R<filename>
+Insert contents of file at offset.
+.TP
+[offset]r<filename>
+Overwrite with file contents at offset.
+.TP
+[offset]p
+Paste yank buffer (overwrite).
+.TP
+[offset]P
+Paste yank buffer (insert).
+.TP
+[offset]f<len>,<data>
+Fill len bytes with data from offset.
+.TP
+[start,end]f<xx>
+Fill range with value xx.
+.TP
+[offset]i<len>,<data>
+Insert binary data.
+.TP
+[offset]d<len>
+Delete length of bytes.
+.TP
+y/str
+Yank string to buffer.
+.TP
+y//xx xx ...
+Yank binary data to buffer.
+.TP
+[start,end]d
+Delete range.
+.TP
+[start,end]y
+Yank range to buffer.
+.TP
+[start,end]|<data>
+Bitwise OR with data.
+.TP
+[start,end]&<data>
+Bitwise AND with data.
+.TP
+[start,end]^<data>
+Bitwise XOR with data.
+.TP
+[start,end]~
+Bitwise NOT of data.
+.TP
+[start,end]v<dest>
+Move data to destination.
+.TP
+[start,end]c<dest>
+Copy data to destination.
+.TP
+[start,end]i<dest>
+Insert data at destination.
+.TP
+[start,end]a/regexp/str
+Replace regex with string.
+.TP
+[start,end]a/regexp//xx xx ...
+Replace regex with binary data.
+.TP
+[start,end]a//xx xx .../str
+Replace data with string.
+.TP
+[start,end]a//xx xx ...//xx xx ...
+Replace binary with binary.
+.TP
+<start>,<end>w<filename>
+Write range to file.
 .SH NOTES
-Arguments such as [offset] and [start,end] can be omitted to use the current position.
-Positions can be specified as:
-0 = start of file, . = current position, $ = end of file, [a-z] = marked position
-Values can be given in hexadecimal or decimal (prefixed with '#').
-In regular expressions, '/' can be escaped using '\\'.
-The m command deletes data from <start> to <end> and moves it to <dest>.
-If dest == filesize, the data is moved after EOF. If dest > filesize, the gap is filled with zeros.
-
-.SH LIMITATIONS
+Regular expressions can be used with '/' and must escape '/' with '\'. Hexadecimal and decimal (prefixed by '#') values are allowed.
+Positions can be denoted as 0 (start), . (current), $ (end), and [a-z] for marks.
+.SH SCRIPTING
+bi supports scripting via a file named
+.B file.bi .
+Run with:
+.B bi -s file.bi targetfile
+.SH VERSION HISTORY
+Development began in 1991. Notable recent versions include:
+- v2.5.5: Command 'y' added
+- v2.6.0: Bitwise operations &, ^, |, ~
+- v2.7.0: Scripting support
+.SH BUGS
 Undo functionality is not yet implemented.
-
-.SH VERSION
-Version 2.6.0 (April 13, 2025)
-
 .SH AUTHOR
 T. Maekawa (fygar256)
-
 .SH DISCLAIMER
-The author accepts no responsibility for any outcome resulting from the use of this program.
-
-.SH SEE ALSO
-vi(1), xxd(1), hexdump(1)
+No responsibility is taken for the use of this program.
