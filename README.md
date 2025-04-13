@@ -7,12 +7,9 @@ The first version was written in C,this version is written in Python.
 
 ```
 ##### installation
-chmod +x bi.py
-sudo cp bi.py /usr/bin/bi
-
-##### installation for man file
-sudo cp bi.1 /usr/share/man/man1/bi.1
-sudo mandb
+git clone http://github.com/fygar256/bi
+cd bi
+make
 
 ##### execution
 bi file
