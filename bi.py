@@ -101,7 +101,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 2.6.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 2.7.3 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -611,10 +611,17 @@ def commandline(line):
             writefile(s)
         lastchange=False
         return -1
+    elif line[0]=='n':
+        searchnext(fpos()+1)
+        return -1
+    elif line[0]=='N':
+        searchlast(fpos()-1)
+        return -1
     elif line[0]=='!':
         if len(line)>=2:
             invoke_shell(line[1:])
             return -1
+        return -1
     elif line[0]=='/':
         searchsub(line)
         return -1
@@ -629,6 +636,23 @@ def commandline(line):
 
     if idx==len(line) and not x==UNKNOWN:
         jump(x)
+        return -1
+    
+    if idx<len(line) and line[idx] == 'p':
+        y = list(yank)
+        ovwmem(x, y)
+        jump(x + len(y))
+        return -1
+
+    if idx<len(line) and line[idx] == 'P':
+        y = list(yank)
+        insmem(x, y)
+        jump(x + len(yank))
+        return -1
+
+    if idx+1<len(line) and line[idx]=='m':
+        if 'a'<=line[idx+1]<='z':
+            mark[ord(line[idx+1])-ord('a')]=x
         return -1
 
     if idx<len(line) and (line[idx]=='r' or line[idx]=='R'):
@@ -793,7 +817,7 @@ def commandln():
     esclocate(0,BOTTOMLN)
     esccolor(7)
     putch(':')
-    line=getln()
+    line=getln().lstrip()
     return commandline(line)
 
 def fedit():
@@ -820,10 +844,10 @@ def fedit():
 
         clrmm()  # ここでメッセージ領域をクリア
         if ch == 'n':
-            searchnext(fpos() + 1)
+            searchnext(fpos()+1)
             continue
         elif ch == 'N':
-            searchlast(fpos() - 1)
+            searchlast(fpos()-1)
             continue
 
         elif ch == chr(2):
@@ -987,12 +1011,14 @@ def scripting(scriptfile):
         if verbose:
             print(line)
         if flag==0:
+            f.close()
             return 0
         elif flag==1:
+            f.close()
             return 1
         line=f.readline().strip()
     f.close()
-    return flag
+    return 0
 
 def main():
     global filename,verbose
