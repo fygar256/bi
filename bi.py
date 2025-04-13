@@ -908,8 +908,7 @@ def main():
     f=fedit()
     if f:
         writefile(filename)
-    else:
-        esccolor(0)
+    esccolor(7)
 
 if __name__=="__main__":
     main()
