@@ -70,6 +70,8 @@ On command line mode
    q!                      ----- overriding quit
    wq,wq!                  ----- write and quit
    w <filename>            ----- write file
+   t <filename>            ----- scripting with filename in silence mode
+   T <filename>            ----- scripting with filename in verbose mode
    n                       ----- search the next
    N                       ----- search the last
    [offset]                ----- jump to the address
