@@ -53,7 +53,7 @@ Overview
    /<regexp>               ----- search regular expression string
    //xx xx xx ...          ----- search binary data
 
-   n                       ----- search the next 
+   n                       ----- search the next
    N                       ----- search the last
    M                       ----- display marks
 
@@ -68,27 +68,31 @@ Overview
     ◎On command line mode
 
    [offset]                ----- jump to the address
-   [offset]S<string>       ----- insert string before [offset]
+   [offset]S<string>       ----- insert string on [offset]
    [offset]s<string>       ----- overwrite string on and after [offset]
 
-   [offset]R<filename>     ----- read file (insert) before [offset]
+   [offset]R<filename>     ----- read file and insert on [offset]
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
    [offset] f <len>,<data> ----- fill with <data> (by length)
-   <start>,<end> f <xx>    ----- fill with xx (by range)
+   [start,end] f <xx>      ----- fill with xx (by range)
    [offset]i<len>,<data>   ----- insert data
    [offset] d <len>        ----- delete by length
 
-   <start>,<end> d         ----- delete by range
-   <start>,<end>y          ----- yank to yankbuffer
    y/str                   ----- yank to yank buffer with string
    y//xx xx xx ...         ----- yank to yank buffer with data
-   <start>,<end>m<dest>    ----- move data
-   <start>,<end> c <dest>  ----- copy data (data will be yanked)
-   <start>,<end> i <dest>  ----- insert data
-   <start>,<end> a /regexp/str                  ----- replace regexp with str
-   <start>,<end> a /regexp//xx xx xx ...        ----- replace regexp with data
-   <start>,<end> a //xx xx xx .../str           ----- replace data1 with str
-   <start>,<end> a //xx xx xx ...//xx xx xx ... ----- replace data1 with data2
+   [start,end] d           ----- delete by range
+   [start,end]y            ----- yank to yankbuffer
+   [start,end]|<data>      ----- bitwise or with data
+   [start,end]&<data>      ----- bitwise and with data
+   [start,end]^<data>      ----- bitwise xor with data
+   [start,end]~            ----- bitwise not with data
+   [start,end] m <dest>    ----- move data
+   [start,end] c <dest>    ----- copy data (data will be yanked)
+   [start,end] i <dest>    ----- insert data
+   [start,end] a /regexp/str                  ----- replace regexp with str
+   [start,end] a /regexp//xx xx xx ...        ----- replace regexp with data
+   [start,end] a //xx xx xx .../str           ----- replace data1 with str
+   [start,end] a //xx xx xx ...//xx xx xx ... ----- replace data1 with data2
    <start>,<end>w<filename> ---- write data on file
    !<string>               ----- invoke shell
    q                       ----- quit
@@ -99,15 +103,16 @@ Overview
 
 
     Regular expression can be used for string search.
+    '/' can be escaped with escape character '\' in regular expression.
 
       The values enclosed with `[]` can be left out, when
-    these commands above take the current position as the value omitted. 
+    these commands above take the current position as the value omitted.
 
       On command line, you've got to give values in hexadecimal or decimal with
       prefix '#'.
 
     And you can also give values with '[a-z] as marked position,
-    ^ as the top of file, . as the current position, and $ as the bottom
+    0 as the top of file, . as the current position, and $ as the bottom
     of file.
 
     The m command has a bit of a quirk. It deletes data from <start> to <end>
@@ -155,11 +160,12 @@ w<file> commands.
 2025-04-12 version 2.4 change '?' to '//' for uniform notation
 2025-04-13 version 2.5 a command added
 2025-04-13 version 2.5.5 change 'u' to 'y' for uniform notation
-2025-04-13 version 2.5.7 Bug fix of shell invoke
+2025-04-13 version 2.5.7 Bug fixed of shell invoke
+2025-04-13 version 2.6.0 &,^,|,~ command added. adjustment to get start,end parameters
 --------------------
 
       I won't owe any responsibility for the result of application of
-    this program. 
+    this program.
 
 ```
 
