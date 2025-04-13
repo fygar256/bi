@@ -22,7 +22,6 @@ man bi
 ##### Manual
 
 ```
-
                    vi like binary editor 'bi'
 
                    Programmed by T.Maekawa (fygar256)
@@ -63,6 +62,7 @@ Overview
 
     ◎On command line mode
 
+   ;                       ----- comment. will be ignored after ';'
    /<regexp>               ----- search regular expression string
    //xx xx xx ...          ----- search binary data
    !<string>               ----- invoke shell
@@ -107,6 +107,9 @@ Overview
 
     Regular expression can be used for string search.
     '/' can be escaped with escape character '\' in regular expression.
+
+    Comment can be written in command with ';'. You have to write command
+    including semicolon with escape character '\'.
 
       The values enclosed with `[]` can be left out, when
     these commands above take the current position as the value omitted.
