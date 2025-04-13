@@ -564,12 +564,36 @@ def searchhex(sm):
     return False
 
 
+def comment(line):
+  """
+  文字列 line から、'\\'でエスケープされない';'以降を無視する関数。
+
+  Args:
+    line: 処理対象の文字列。
+
+  Returns:
+    ';'以降が無視された文字列。
+  """
+  result = ""
+  escaped = False
+  for char in line:
+    if char == '\\':
+      result += char
+      escaped = not escaped
+    elif char == ';' and not escaped:
+      break
+    else:
+      result += char
+      escaped = False
+  return result
+
 
 def commandline(line):
     global lastchange,yank
 
     if line=='':
         return -1
+    line=comment(line)
     if line=='q':
         if lastchange:
             stdmm("No write since last change. To overriding quit, use 'q!'.")
