@@ -47,8 +47,6 @@ Overview
    $                       ----- jump to the right end of line
    m[a-z]                  ----- mark currrent position
    '[a-z]                  ----- jump to marked point
-   /<regexp>               ----- search regular expression string
-   //xx xx xx ...          ----- search binary data
 
    n                       ----- search the next
    N                       ----- search the last
@@ -60,16 +58,29 @@ Overview
    x                       ----- delete a byte
    Z                       ----- write and quit
 
+   /                       ----- to command line search mode
    :                       ----- to command line mode
 
     ◎On command line mode
 
+   /<regexp>               ----- search regular expression string
+   //xx xx xx ...          ----- search binary data
+   !<string>               ----- invoke shell
+   q                       ----- quit
+   q!                      ----- overriding quit
+   wq,wq!                  ----- write and quit
+   w <filename>            ----- write file
+@  n                       ----- search the next
+@  N                       ----- search the last
    [offset]                ----- jump to the address
+@  [offset]m[a-z]          ----- mark position
    [offset]S<string>       ----- insert string on [offset]
    [offset]s<string>       ----- overwrite string on and after [offset]
 
    [offset]R<filename>     ----- read file and insert on [offset]
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
+@  [offset] p              ----- paste yank buffer (overwrite)
+@  [offset] P              ----- paste yank buffer (overwrite)
    [offset] f <len>,<data> ----- fill with <data> (by length)
    [start,end] f <xx>      ----- fill with xx (by range)
    [offset]i<len>,<data>   ----- insert data
@@ -83,7 +94,7 @@ Overview
    [start,end]&<data>      ----- bitwise and with data
    [start,end]^<data>      ----- bitwise xor with data
    [start,end]~            ----- bitwise not with data
-   [start,end] m <dest>    ----- move data
+   [start,end] v <dest>    ----- move data
    [start,end] c <dest>    ----- copy data (data will be yanked)
    [start,end] i <dest>    ----- insert data
    [start,end] a /regexp/str                  ----- replace regexp with str
@@ -91,11 +102,6 @@ Overview
    [start,end] a //xx xx xx .../str           ----- replace data1 with str
    [start,end] a //xx xx xx ...//xx xx xx ... ----- replace data1 with data2
    <start>,<end>w<filename> ---- write data on file
-   !<string>               ----- invoke shell
-   q                       ----- quit
-   q!                      ----- overriding quit
-   wq,wq!                  ----- write and quit
-   w <filename>            ----- write file
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
 
@@ -117,13 +123,19 @@ Overview
     to the end of the data + 1, and if dest>filesize, it fills from the end of
     the file + 1 to dest with 0s, and writes the deleted data from dest.
 
-    the commands that marked with `@` are not implemented yet.
+    the functions marked with `@` are not implemented yet.
+
+Scripting function
+
+    bi has Scripting function.
+    bi sctipt is named 'file.bi'. The command line synopsis of specificaton
+    of script file is like that: 'bi [-v] -s file.bi targetfile'
 
 ★Attention
 
     It doesn't support undo command yet.
------- HISTORY -----
 
+------ HISTORY -----
 1991-12-4 A sector was lost on a floppy disk used to back up a hard disk.
 1991-12-5 Reluctantly repaired the file using DUMP and a C program.
 1991-12-6 Started creating a file editor. This is what they mean by "hastily".
@@ -159,6 +171,8 @@ w<file> commands.
 2025-04-13 version 2.5.5 change 'u' to 'y' for uniform notation
 2025-04-13 version 2.5.7 Bug fixed of shell invoke
 2025-04-13 version 2.6.0 &,^,|,~ command added. adjustment to get start,end parameters
+2025-04-13 version 2.6.9 change 'm' to 'v' for scripting notation in the future and adjust search commands
+2025-04-14 version 2.7.0 added scripting function.
 --------------------
 
       I won't owe any responsibility for the result of application of
