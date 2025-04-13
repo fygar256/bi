@@ -98,8 +98,14 @@ Overview
 ★Attention
 
     It doesn't support undo command yet.
------- HISTORY -----
 
+Future function
+
+    Scripting function will be added in the future perhaps.
+    bi sctipt is named 'file.bi'. The command line synopsis of specificaton
+    of script file is like that: 'bi -s file.bi targetfile'
+
+------ HISTORY -----
 1991-12-4 A sector was lost on a floppy disk used to back up a hard disk.
 1991-12-5 Reluctantly repaired the file using DUMP and a C program.
 1991-12-6 Started creating a file editor. This is what they mean by "hastily".
