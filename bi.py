@@ -414,6 +414,148 @@ def openot(x,x2):
         setmem(i,(~(readmem(i))&0xff))
     return
             
+def srematch(a,b):
+    global span
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    tty.setraw(fd)
+    span=0
+    f=re.match(a, b)
+    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    if f:
+        start,end=f.span()
+        span=end-start
+        return span
+    else:
+        return 0
+
+def hitre(addr):
+    global mem,remem
+    s=''
+    if not remem:
+        return True
+    for i in range(addr,len(mem)):
+        s+=chr(mem[i])
+
+    return srematch(remem,s)
+
+def hit(addr):
+    global smem,mem
+    for i in range(len(smem)):
+        if addr+i<len(mem) and mem[addr+i]==smem[i]:
+            continue
+        else:
+            return False
+    return True
+
+def searchnext(fp):
+    global smem,nff
+    curpos=fp
+    start=fp
+    if regexp==False and not smem:
+        return False
+    while True:
+        if regexp:
+            f=hitre(curpos)
+        else:
+            f=hit(curpos)
+
+        if f:
+            jump(curpos)
+            return True
+
+        curpos+=1
+
+        if curpos>=len(mem):
+            if nff:
+                stdmm("Search reached to bottom, continuing from top.")
+            curpos=0
+            esccolor(0)
+
+        if curpos==start:
+            if nff:
+                stdmm("Not found.")
+            return False
+
+def searchlast(fp):
+    curpos=fp
+    start=fp
+    if regexp==False and not smem:
+        return False
+    while True:
+        if regexp:
+            f=hitre(curpos)
+        else:
+            f=hit(curpos)
+
+        if f:
+            jump(curpos)
+            return True
+
+        curpos-=1
+        if curpos<0:
+            stdmm("Search reached to top, continuing from bottom.")
+            esccolor(0)
+            curpos=len(mem)-1
+
+        if curpos==start:
+            stdmm("Not found.")
+            return False
+
+def get_restr(s,idx):
+    m=''
+    while idx<len(s):
+        ch=s[idx]
+        if s[idx]=='\\':
+            if idx+1<len(s):
+                ch=s[idx+1]
+        if s[idx]=='/':
+            return m,idx
+        m+=ch
+        idx+=1
+    return m,idx
+
+def searchstr(s):
+    global regexp,remem
+    if s!="":
+        regexp=True
+        remem=s
+        return(searchnext(fpos()))
+    return False
+
+def searchsub(line):
+    if len(line)>2 and line[0:2]=='//':
+        sm,idx=get_hexs(line,2)
+        return searchhex(sm)
+    elif len(line)>1 and line[0]=='/':
+        m,idx=get_restr(line,1)
+        return searchstr(m)
+
+def search():
+    esclocate(0,BOTTOMLN)
+    esccolor(7)
+    print("/",end='',flush=True)
+    s="/"+getln()
+    searchsub(s)
+
+def get_hexs(s,idx):
+    m=[]
+    while idx<len(s):
+        v,idx=get_value(s,idx)
+        if v==UNKNOWN:
+            break
+        m+=[v]
+    return m,idx
+
+def searchhex(sm):
+    global smem,remem,regexp
+    remem=''
+    regexp=False
+    if sm:
+        smem=sm
+        return(searchnext(fpos()))
+    return False
+
 
 def commandline():
     global lastchange,yank
@@ -444,6 +586,9 @@ def commandline():
         if len(line)>=2:
             invoke_shell(line[1:])
             return -1
+    elif line[0]=='/':
+        searchsub(line)
+        return -1
     idx=skipspc(line,0)
 
     x,idx=get_value(line,idx)
@@ -577,7 +722,7 @@ def commandline():
         openot(x,x2)
         return -1
 
-    if idx<len(line) and (line[idx]=='f' or line[idx]=='m' or line[idx]=='c' or line[idx]=='i' or line[idx]=='&' or line[idx]=='|' or line[idx]=='^'):
+    if idx<len(line) and (line[idx]=='f' or line[idx]=='v' or line[idx]=='c' or line[idx]=='i' or line[idx]=='&' or line[idx]=='|' or line[idx]=='^'):
         ch=line[idx]
         x3,idx=get_value(line,idx+1)
         if x3==UNKNOWN:
@@ -592,7 +737,7 @@ def commandline():
             cpymem(x,x2,x3)
             jump(x3)
             return -1
-        elif ch=='m':
+        elif ch=='v':
             movmem(x,x2,x3)
             jump(x3)
             return -1
@@ -614,146 +759,6 @@ def commandline():
 
     stdmm("Unrecognized command.")
     return -1
-
-
-def srematch(a,b):
-    global span
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-    tty.setraw(fd)
-    span=0
-    f=re.match(a, b)
-    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-    if f:
-        start,end=f.span()
-        span=end-start
-        return span
-    else:
-        return 0
-
-def hitre(addr):
-    global mem,remem
-    s=''
-    if not remem:
-        return True
-    for i in range(addr,len(mem)):
-        s+=chr(mem[i])
-
-    return srematch(remem,s)
-
-def hit(addr):
-    global smem,mem
-    for i in range(len(smem)):
-        if addr+i<len(mem) and mem[addr+i]==smem[i]:
-            continue
-        else:
-            return False
-    return True
-
-def searchnext(fp):
-    global smem,nff
-    curpos=fp
-    start=fp
-    if regexp==False and not smem:
-        return False
-    while True:
-        if regexp:
-            f=hitre(curpos)
-        else:
-            f=hit(curpos)
-
-        if f:
-            jump(curpos)
-            return True
-
-        curpos+=1
-
-        if curpos>=len(mem):
-            if nff:
-                stdmm("Search reached to bottom, continuing from top.")
-            curpos=0
-            esccolor(0)
-
-        if curpos==start:
-            if nff:
-                stdmm("Not found.")
-            return False
-
-def searchlast(fp):
-    curpos=fp
-    start=fp
-    if regexp==False and not smem:
-        return False
-    while True:
-        if regexp:
-            f=hitre(curpos)
-        else:
-            f=hit(curpos)
-
-        if f:
-            jump(curpos)
-            return True
-
-        curpos-=1
-        if curpos<0:
-            stdmm("Search reached to top, continuing from bottom.")
-            esccolor(0)
-            curpos=len(mem)-1
-
-        if curpos==start:
-            stdmm("Not found.")
-            return False
-
-def get_restr(s,idx):
-    m=''
-    while idx<len(s):
-        ch=s[idx]
-        if s[idx]=='\\':
-            if idx+1<len(s):
-                ch=s[idx+1]
-        if s[idx]=='/':
-            return m,idx
-        m+=ch
-        idx+=1
-    return m,idx
-
-def searchstr(s):
-    global regexp,remem
-    if s!="":
-        regexp=True
-        remem=s
-        return(searchnext(fpos()))
-    return False
-
-def search():
-    esclocate(0,BOTTOMLN)
-    esccolor(7)
-    print("/",end='',flush=True)
-    s=getln()
-    if len(s)>1 and s[0]=='/':
-        sm,idx=get_hexs(s,1)
-        return searchhex(sm)
-    else:
-        m,idx=get_restr(s,0)
-        return searchstr(m)
-
-def get_hexs(s,idx):
-    m=[]
-    while idx<len(s):
-        v,idx=get_value(s,idx)
-        if v==UNKNOWN:
-            break
-        m+=[v]
-    return m,idx
-
-def searchhex(sm):
-    global smem,remem,regexp
-    remem=''
-    regexp=False
-    if sm:
-        smem=sm
-        return(searchnext(fpos()))
-    return False
 
 def fedit():
     global nff, yank, lastchange, lastchange, modified, insmod, homeaddr, curx, cury
