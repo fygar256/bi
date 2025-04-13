@@ -30,6 +30,7 @@ span=0
 nff=True
 verbose=False
 scriptingflag=False
+stack=[]
 
 def escup(n=1):
     print(f"{ESC}{n}A",end='')
@@ -597,9 +598,33 @@ def comment(line):
       escaped = False
   return result
 
+def scripting(scriptfile):
+    global scriptingflag,verbose
+    try:
+        f=open(scriptfile,"rt")
+    except:
+        stdmm("Script file open error.")
+        return False
+    scriptingflag=True
+    line=f.readline().strip()
+    flag=-1
+    while line:
+        flag=commandline(line)
+        if verbose:
+            print(line)
+        if flag==0:
+            f.close()
+            return 0
+        elif flag==1:
+            f.close()
+            return 1
+        line=f.readline().strip()
+    f.close()
+    return 0
+
 
 def commandline(line):
-    global lastchange,yank,filename
+    global lastchange,yank,filename,stack,verbose,scriptingflag
 
     if line=='':
         return -1
@@ -624,6 +649,26 @@ def commandline(line):
         stdmm("File written.")
         lastchange=False
         return -1
+    elif line[0]=='T' or line[0]=='t':
+        if len(line)>=2:
+            s=line[1:].lstrip()
+            stack+=[scriptingflag]
+            stack+=[verbose]
+            verbose=True if line[0]=='T' else False
+            print("")
+            scripting(s)
+            if verbose:
+                stdmm("[ Hit any key ]")
+                getch()
+            verbose=stack[len(stack)-1]
+            stack=stack[0:len(stack)-1]
+            scriptingflag=stack[len(stack)-1]
+            stack=stack[0:len(stack)-1]
+            escclear()
+            return -1
+        else:
+            stdmm("Specify script file name.")
+            return -1
     elif line[0]=='n':
         searchnext(fpos()+1)
         return -1
@@ -821,8 +866,6 @@ def commandline(line):
         elif ch=='^':
             opexor(x,x2,x3)
             return -1
-
-
     stdmm("Unrecognized command.")
     return -1
 
@@ -1008,30 +1051,6 @@ def wrtfile(start,end,fn):
         else:
             f.write(bytes([0]))
     f.close()
-
-def scripting(scriptfile):
-    global scriptingflag,verbose
-    try:
-        f=open(scriptfile,"rt")
-    except:
-        print("Script file open error.")
-        return False
-    scriptingflag=True
-    line=f.readline().strip()
-    flag=-1
-    while line:
-        flag=commandline(line)
-        if verbose:
-            print(line)
-        if flag==0:
-            f.close()
-            return 0
-        elif flag==1:
-            f.close()
-            return 1
-        line=f.readline().strip()
-    f.close()
-    return 0
 
 def main():
     global filename,verbose
