@@ -1,202 +1,192 @@
-
-.TH BI 1 "April 14, 2025" "bi 2.5.5" "User Commands"
+.TH BI 1 "April 2025" "Version 2.6.0" "User Commands"
 .SH NAME
 bi \- vi-like binary editor
 .SH SYNOPSIS
 .B bi
-.RI [ file ]
+[filename]
 .SH DESCRIPTION
-.B bi
-is a vi-like binary editor for low-level editing of binary files. It mimics the look and feel of the UNIX 'vi' editor and supports both screen-based navigation and powerful command-line editing.
+bi is a binary editor designed to resemble the UNIX editor 'vi'.
+The name "bi" stands for "Binary editor like vI". It is intended for those who enjoy working with both vi and binary files.
 
-.SH SCREEN MODE COMMANDS
+The editor operates in two modes: edit mode and command-line mode.
+
+.SH EDIT MODE COMMANDS
 .TP
-.B <hex-key>
-Set byte data at cursor location.
+<hex-key>
+Set binary data
 .TP
-.B hjkl or arrow keys
-Move cursor.
+h, j, k, l
+Move cursor (also arrow keys)
 .TP
-.B ^F, ^B
-Move by a page (256 bytes).
+Ctrl-F, Ctrl-B
+Move by a page (256 bytes)
 .TP
-.B ^D, ^U
-Move by half a page (128 bytes).
+Ctrl-D, Ctrl-U
+Move by half a page (128 bytes)
 .TP
-.B ^L
-Redraw screen.
+Ctrl-L
+Repaint screen
 .TP
-.B ^
-Jump to beginning of line.
+^
+Jump to beginning of line
 .TP
-.B $
-Jump to end of line.
+$
+Jump to end of line
 .TP
-.B m[a-z]
-Mark current position.
+m[a-z]
+Mark current position
 .TP
-.B '[a-z]
-Jump to marked point.
+'[a-z]
+Jump to a marked point
 .TP
-.B /<regexp>
-Search regular expression string.
+/<regexp>
+Search using a regular expression
 .TP
-.B //xx xx xx ...
-Search binary data.
+//xx xx xx ...
+Search for binary pattern
 .TP
-.B n
-Search next.
+n
+Search next occurrence
 .TP
-.B N
-Search previous.
+N
+Search previous occurrence
 .TP
-.B M
-Display marks.
+M
+Display all marks
 .TP
-.B p
-Paste yank buffer (overwrite).
+p
+Paste yank buffer (overwrite)
 .TP
-.B P
-Paste yank buffer (insert).
+P
+Paste yank buffer (insert)
 .TP
-.B x
-Delete a byte.
+q
+Quit
 .TP
-.B q
-Quit.
+x
+Delete one byte
 .TP
-.B Z
-Write and quit.
+Z
+Write and quit
 .TP
-.B :
-Enter command line mode.
+:
+Enter command-line mode
 
 .SH COMMAND LINE MODE
 .TP
-.B [offset]
-Jump to address.
+[offset]
+Jump to address
 .TP
-.B [offset]S<string>
-Insert string before [offset].
+[offset]S<string>
+Insert string at offset
 .TP
-.B [offset]s<string>
-Overwrite string on and after [offset].
+[offset]s<string>
+Overwrite string at and after offset
 .TP
-.B [offset]R<filename>
-Insert file before [offset].
+[offset]R<filename>
+Insert file at offset
 .TP
-.B [offset]r<filename>
-Overwrite file from [offset].
+[offset]r<filename>
+Overwrite file contents at and after offset
 .TP
-.B [offset] f <len>,<data>
-Fill with <data> by length.
+[offset] f <len>,<data>
+Fill with <data> of length <len>
 .TP
-.B <start>,<end> f <xx>
-Fill with <xx> by range.
+[start,end] f <xx>
+Fill specified range with <xx>
 .TP
-.B [offset]i<len>,<data>
-Insert data.
+[offset]i<len>,<data>
+Insert data at offset
 .TP
-.B [offset] d <len>
-Delete by length.
+[offset] d <len>
+Delete <len> bytes from offset
 .TP
-.B <start>,<end> d
-Delete by range.
+y/str
+Yank string into buffer
 .TP
-.B <start>,<end>y
-Yank to buffer.
+y//xx xx xx ...
+Yank binary data into buffer
 .TP
-.B y/str
-Yank by string.
+[start,end] d
+Delete data in range
 .TP
-.B y//xx xx ...
-Yank by binary data.
+[start,end]y
+Yank data in range
 .TP
-.B <start>,<end>m<dest>
-Move data.
+[start,end]|<data>
+Bitwise OR with <data>
 .TP
-.B <start>,<end> c <dest>
-Copy data (also yanks).
+[start,end]&<data>
+Bitwise AND with <data>
 .TP
-.B <start>,<end> i <dest>
-Insert yanked data.
+[start,end]^<data>
+Bitwise XOR with <data>
 .TP
-.B <start>,<end> a /regexp/str
-Replace regexp with string.
+[start,end]~
+Bitwise NOT in range
 .TP
-.B <start>,<end> a /regexp//xx xx ...
-Replace regexp with binary.
+[start,end] m <dest>
+Move data to destination
 .TP
-.B <start>,<end> a //xx xx/str
-Replace binary with string.
+[start,end] c <dest>
+Copy data to destination (also yanks)
 .TP
-.B <start>,<end> a //xx xx//xx xx
-Replace binary with binary.
+[start,end] i <dest>
+Insert data at destination
 .TP
-.B <start>,<end>w<filename>
-Write data to file.
+[start,end] a /regexp/str
+Replace string matching regexp with str
 .TP
-.B !<string>
-Invoke shell.
+[start,end] a /regexp//xx xx xx ...
+Replace regexp match with binary
 .TP
-.B q
-Quit.
+[start,end] a //xx xx xx .../str
+Replace binary with string
 .TP
-.B q!
-Force quit.
+[start,end] a //xx xx xx ...//xx xx xx ...
+Replace binary with binary
 .TP
-.B wq, wq!
-Write and quit.
+<start>,<end>w<filename>
+Write specified range to file
 .TP
-.B w <filename>
-Write to filename.
+!<string>
+Execute shell command
 .TP
-.B <CR> or <ESC>
-Return to screen mode.
-
-.SH SPECIAL VALUES
+q
+Quit
 .TP
-.B ^
-Top of file.
+q!
+Force quit
 .TP
-.B .
-Current position.
+wq, wq!
+Write and quit
 .TP
-.B $
-Bottom of file.
+w <filename>
+Write file
 .TP
-.B '[a-z]
-Marked position.
-.TP
-Values can be hexadecimal or prefixed with '#' for decimal.
+<Enter> or <ESC>
+Return to edit mode
 
 .SH NOTES
-The
-.B m
-command deletes data from <start> to <end> and moves it to <dest>. If dest is greater than file size, the area is padded with zeros and data is placed at dest.
+Arguments such as [offset] and [start,end] can be omitted to use the current position.
+Positions can be specified as:
+0 = start of file, . = current position, $ = end of file, [a-z] = marked position
+Values can be given in hexadecimal or decimal (prefixed with '#').
+In regular expressions, '/' can be escaped using '\\'.
+The m command deletes data from <start> to <end> and moves it to <dest>.
+If dest == filesize, the data is moved after EOF. If dest > filesize, the gap is filled with zeros.
 
 .SH LIMITATIONS
-Undo is not supported.
+Undo functionality is not yet implemented.
 
-.SH HISTORY
-.TP
-1991-12-04
-Project initiated due to floppy disk failure.
-.TP
-1992-01-18
-Renamed to bi.
-.TP
-2025-04-03
-Linux version completed (v2.0).
-.TP
-2025-04-14
-Latest version 2.5.5 released.
+.SH VERSION
+Version 2.6.0 (April 13, 2025)
 
 .SH AUTHOR
 T. Maekawa (fygar256)
 
+.SH DISCLAIMER
+The author accepts no responsibility for any outcome resulting from the use of this program.
+
 .SH SEE ALSO
-.BR vi (1),
-.BR bvi (1),
-.BR hexedit (1),
-.BR hexdump (1)
+vi(1), xxd(1), hexdump(1)
