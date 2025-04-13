@@ -22,6 +22,7 @@ man bi
 ##### Manual
 
 ```
+
                    vi like binary editor 'bi'
 
                    Programmed by T.Maekawa (fygar256)
@@ -70,17 +71,17 @@ Overview
    q!                      ----- overriding quit
    wq,wq!                  ----- write and quit
    w <filename>            ----- write file
-@  n                       ----- search the next
-@  N                       ----- search the last
+   n                       ----- search the next
+   N                       ----- search the last
    [offset]                ----- jump to the address
-@  [offset]m[a-z]          ----- mark position
+   [offset]m[a-z]          ----- mark position
    [offset]S<string>       ----- insert string on [offset]
    [offset]s<string>       ----- overwrite string on and after [offset]
 
    [offset]R<filename>     ----- read file and insert on [offset]
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
-@  [offset] p              ----- paste yank buffer (overwrite)
-@  [offset] P              ----- paste yank buffer (overwrite)
+   [offset] p              ----- paste yank buffer (overwrite)
+   [offset] P              ----- paste yank buffer (insert)
    [offset] f <len>,<data> ----- fill with <data> (by length)
    [start,end] f <xx>      ----- fill with xx (by range)
    [offset]i<len>,<data>   ----- insert data
@@ -130,7 +131,7 @@ Overview
 
 Scripting function
 
-    bi has Scripting function.
+    bi has Scripting functionality.
     bi sctipt is named 'file.bi'. The command line synopsis of specificaton
     of script file is like that: 'bi [-v] -s file.bi targetfile'
 
@@ -174,8 +175,9 @@ w<file> commands.
 2025-04-13 version 2.5.5 change 'u' to 'y' for uniform notation
 2025-04-13 version 2.5.7 Bug fixed of shell invoke
 2025-04-13 version 2.6.0 &,^,|,~ command added. adjustment to get start,end parameters
-2025-04-13 version 2.6.9 change 'm' to 'v' for scripting notation in the future and adjust search commands
+2025-04-13 version 2.6.9 change 'm' to 'v' for scripting notation in the future and adjustment of search commands
 2025-04-14 version 2.7.0 added scripting function.
+2025-04-14 version 2.7.3 a little adjustment
 --------------------
 
       I won't owe any responsibility for the result of application of
