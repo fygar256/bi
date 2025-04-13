@@ -101,11 +101,11 @@ Overview
 
     the functions marked with `@` are not implemented yet.
 
-@Scripting function
+Scripting function
 
-    Scripting function will be added in the future perhaps.
+    bi has Scripting function.
     bi sctipt is named 'file.bi'. The command line synopsis of specificaton
-    of script file is like that: 'bi -s file.bi targetfile'
+    of script file is like that: 'bi [-v] -s file.bi targetfile'
 
 ★Attention
 
@@ -148,6 +148,7 @@ w<file> commands.
 2025-04-13 version 2.5.7 Bug fixed of shell invoke
 2025-04-13 version 2.6.0 &,^,|,~ command added. adjustment to get start,end parameters
 2025-04-13 version 2.6.9 change 'm' to 'v' for scripting notation in the future and adjust search commands
+2025-04-14 version 2.7.0 added scripting function.
 --------------------
 
       I won't owe any responsibility for the result of application of

@@ -6,6 +6,7 @@ import string
 import copy
 import re
 import os
+import argparse
 ESC='\033['
 LENONSCR=(20*16)
 BOTTOMLN=23
@@ -27,6 +28,8 @@ regexp=False
 remem=''
 span=0
 nff=True
+verbose=False
+scriptingflag=False
 
 def escup(n=1):
     print(f"{ESC}{n}A",end='')
@@ -269,10 +272,14 @@ def clrmm():
     print(" "*79,end='')
 
 def stdmm(s):
-    clrmm()
-    esccolor(4)
-    esclocate(0,BOTTOMLN)
-    print(s,end='',flush=True)
+    if scriptingflag:
+        if verbose:
+            print(s)
+    else:
+        clrmm()
+        esccolor(4)
+        esclocate(0,BOTTOMLN)
+        print(s,end='',flush=True)
 
 def jump(addr):
     global homeaddr,curx,cury
@@ -557,12 +564,10 @@ def searchhex(sm):
     return False
 
 
-def commandline():
+
+def commandline(line):
     global lastchange,yank
-    esclocate(0,BOTTOMLN)
-    esccolor(7)
-    putch(':')
-    line=getln()
+
     if line=='':
         return -1
     if line=='q':
@@ -760,6 +765,13 @@ def commandline():
     stdmm("Unrecognized command.")
     return -1
 
+def commandln():
+    esclocate(0,BOTTOMLN)
+    esccolor(7)
+    putch(':')
+    line=getln()
+    return commandline(line)
+
 def fedit():
     global nff, yank, lastchange, lastchange, modified, insmod, homeaddr, curx, cury
     stroke = False
@@ -900,7 +912,7 @@ def fedit():
         elif ch == 'x':
             delmem(fpos(), fpos(), False)
         elif ch == ':':
-            f = commandline()
+            f = commandln()
             if f == 1:
                 return True
             elif f == 0:
@@ -936,18 +948,49 @@ def wrtfile(start,end,fn):
             f.write(bytes([0]))
     f.close()
 
+def scripting(scriptfile):
+    global scriptingflag,verbose
+    try:
+        f=open(scriptfile,"rt")
+    except:
+        print("Script file open error.")
+        return False
+    scriptingflag=True
+    line=f.readline().strip()
+    flag=-1
+    while line:
+        flag=commandline(line)
+        if verbose:
+            print(line)
+        if flag==0:
+            return 0
+        elif flag==1:
+            return 1
+        line=f.readline().strip()
+    f.close()
+    return flag
+
 def main():
-    global filename
-    if len(sys.argv)<=1:
-        print("Usage: bi file")
-        return
-    filename=sys.argv[1]
+    global filename,verbose
+    parser = argparse.ArgumentParser()
+    parser.add_argument('filename', help='input file name to edit')
+    parser.add_argument('-s', '--script', type=str, default='', help='bi script file')
+    parser.add_argument('-v', '--verbose', action='store_true', help='verbose when processing script')
+    args = parser.parse_args()
+    filename=args.filename
     readfile(filename)
-    escclear()
-    f=fedit()
+    script=args.script
+    verbose=args.verbose
+
+    if script:
+        f=scripting(script)
+    else:
+        escclear()
+        f=fedit()
+        esccolor(7)
+
     if f:
         writefile(filename)
-    esccolor(7)
 
 if __name__=="__main__":
     main()
