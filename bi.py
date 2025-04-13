@@ -998,7 +998,7 @@ def main():
     global filename,verbose
     parser = argparse.ArgumentParser()
     parser.add_argument('filename', help='input file name to edit')
-    parser.add_argument('-s', '--script', type=str, default='', help='bi script file')
+    parser.add_argument('-s', '--script', type=str, default='', metavar='script.bi', help='bi script file')
     parser.add_argument('-v', '--verbose', action='store_true', help='verbose when processing script')
     args = parser.parse_args()
     filename=args.filename
