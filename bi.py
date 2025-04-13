@@ -599,7 +599,7 @@ def comment(line):
 
 
 def commandline(line):
-    global lastchange,yank
+    global lastchange,yank,filename
 
     if line=='':
         return -1
@@ -619,6 +619,9 @@ def commandline(line):
         if len(line)>=2:
             s=line[1:].lstrip()
             writefile(s)
+        else:
+            writefile(filename)
+        stdmm("File written.")
         lastchange=False
         return -1
     elif line[0]=='n':
