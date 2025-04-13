@@ -101,7 +101,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 2.7.3 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 2.8.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -315,6 +315,16 @@ def invoke_shell(line):
     print("[ Hit any key to return ]",end='',flush=True)
     getch()
     escclear()
+
+def expression(s,idx):
+    x,idx=get_value(s,idx)
+    if len(s)>idx and s[idx]=='+':
+        y,idx=get_value(s,idx+1)
+        x=x+y
+    elif len(s)>idx and s[idx]=='-':
+        y,idx=get_value(s,idx+1)
+        x=x-y
+    return x,idx
 
 def get_value(s,idx):
     if idx>=len(s):
@@ -548,7 +558,7 @@ def search():
 def get_hexs(s,idx):
     m=[]
     while idx<len(s):
-        v,idx=get_value(s,idx)
+        v,idx=expression(s,idx)
         if v==UNKNOWN:
             break
         m+=[v]
@@ -627,7 +637,7 @@ def commandline(line):
         return -1
     idx=skipspc(line,0)
 
-    x,idx=get_value(line,idx)
+    x,idx=expression(line,idx)
     if x==UNKNOWN:
         x=fpos()
     x2=x
@@ -691,7 +701,7 @@ def commandline(line):
         return -1
 
     if idx<len(line) and line[idx]=='d':
-        length,idx=get_value(line,idx+1)
+        length,idx=expression(line,idx+1)
 
         if length==UNKNOWN:
             length=1
@@ -706,14 +716,14 @@ def commandline(line):
 
     if idx<len(line) and (line[idx]=='i' or line[idx]=='f'):
         ch=line[idx]
-        length,idx=get_value(line,idx+1)
+        length,idx=expression(line,idx+1)
 
         if length==UNKNOWN:
             length=1
 
         code=0x00
         if idx<len(line) and line[idx]==',':
-            code,idx=get_value(line,idx+1)
+            code,idx=expression(line,idx+1)
             if code==UNKNOWN:
                 code=0x00
 
@@ -743,7 +753,7 @@ def commandline(line):
         return -1
 
     if idx<len(line) and line[idx]==',':
-        x2,idx=get_value(line,idx+1)
+        x2,idx=expression(line,idx+1)
     else:
         x2=fpos()
 
@@ -777,14 +787,14 @@ def commandline(line):
 
     if idx<len(line) and (line[idx]=='f' or line[idx]=='v' or line[idx]=='c' or line[idx]=='i' or line[idx]=='&' or line[idx]=='|' or line[idx]=='^'):
         ch=line[idx]
-        x3,idx=get_value(line,idx+1)
+        x3,idx=expression(line,idx+1)
         if x3==UNKNOWN:
             stdmm("Invalid parameter.")
             return -1
         if ch=='f':
             data=[x3]*(x2-x+1)
             ovwmem(x,data)
-            jump(x3)
+            jump(x)
             return -1
         elif ch=='c':
             cpymem(x,x2,x3)
@@ -1041,8 +1051,6 @@ def main():
 
     if f:
         writefile(filename)
-    else:
-        stdmm("File was not written.")
 
 if __name__=="__main__":
     main()
