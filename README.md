@@ -95,10 +95,10 @@ On command line mode
    [start,end]&<data>      ----- bitwise and with data
    [start,end]^<data>      ----- bitwise xor with data
    [start,end]~            ----- bitwise not with data
-   [start,end] < [[times],[0,1]]  ----- left shift with bit 0,1 or rotate by byte
-   [start,end] > [[times],[0,1]]  ----- right shift with bit 0,1 or rotate by byte
-   [start,end] << [[times],[0,1]] ----- left shift with bit 0,1 or rotate by multibyte
-   [start,end] >> [times],[0,1]]  ----- right shift with bit 0,1 or rotate by multibyte
+   [start,end]<[[01],[times]]  -left shift with bit 0,1 or rotate by byte
+   [start,end]>[[01],[times]]  -right shift with bit 0,1 or rotate by byte
+   [start,end]<<[[01],[times]] -left shift with bit 0,1 or rotate by multibyte
+   [start,end]>>[[01],[times]] -right shift with bit 0,1 or rotate by multibyte
    [start,end] v <dest>    ----- move data
    [start,end] c <dest>    ----- copy data (data will be yanked)
    [start,end] i <dest>    ----- insert data to <dest>
