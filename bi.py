@@ -102,7 +102,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 2.8.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 2.8.3 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -636,17 +636,15 @@ def commandline(line):
         return 0
     elif line=='q!':
         return 0
-    elif line=='wq':
-        return 1
-    elif line=='wq!':
-        return 1
+    elif line=='wq' or line=='wq!':
+        writefile(filename)
+        return 0
     elif line[0]=='w':
         if len(line)>=2:
             s=line[1:].lstrip()
             writefile(s)
         else:
             writefile(filename)
-        stdmm("File written.")
         lastchange=False
         return -1
     elif line[0]=='T' or line[0]=='t':
@@ -1079,11 +1077,8 @@ def main():
         f=scripting(script)
     else:
         escclear()
-        f=fedit()
+        fedit()
         esccolor(7)
-
-    if f:
-        writefile(filename)
 
 if __name__=="__main__":
     main()
