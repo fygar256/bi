@@ -22,7 +22,6 @@ man bi
 ##### Manual
 
 ```
-
                    vi like binary editor 'bi'
 
                    Programmed by T.Maekawa (fygar256)
@@ -95,10 +94,10 @@ On command line mode
    [start,end]&<data>      ----- bitwise and with data
    [start,end]^<data>      ----- bitwise xor with data
    [start,end]~            ----- bitwise not with data
-   [start,end]<[[01],[times]]  -left shift with bit 0,1 or rotate by byte
-   [start,end]>[[01],[times]]  -right shift with bit 0,1 or rotate by byte
-   [start,end]<<[[01],[times]] -left shift with bit 0,1 or rotate by multibyte
-   [start,end]>>[[01],[times]] -right shift with bit 0,1 or rotate by multibyte
+   [start,end]<[[times],[01]]  - left shift with bit 0,1 or rotate by byte
+   [start,end]>[[times],[01]]  - right shift with bit 0,1 or rotate by byte
+   [start,end]<<[[times],[01]] - left shift with bit 0,1 or rotate by multibyte
+   [start,end]>>[[times],[01]] - right shift with bit 0,1 or rotate by multibyte
    [start,end] v <dest>    ----- move data
    [start,end] c <dest>    ----- copy data (data will be yanked)
    [start,end] i <dest>    ----- insert data to <dest>
@@ -191,6 +190,7 @@ w<file> commands.
 2025-04-14 version 2.8.0 added simple expression functionality and add a little adjustment
 2025-04-14 version 2.8.3 added '%' prefix to pass <end> value in command line parameter and added a little adjustment
 2025-04-14 version 2.8.5 added rotate and shift command.
+2025-04-15 version 2.9.1 Bug fixes of multibyte shift and rotate.
 --------------------
 
       I won't owe any responsibility for the result of application of
