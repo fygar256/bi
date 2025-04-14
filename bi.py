@@ -1,22 +1,22 @@
 #!/usr/bin/python3
-import sys
-import tty
-import termios
-import string
-import copy
-import re
-import os
-import argparse
-ESC='\033['
-LENONSCR=(20*16)
-BOTTOMLN=23
-UNKNOWN=0xffffffffffffffffffffffffffffffff
-mem=[]
-yank=[]
-coltab=[0,1,4,5,2,6,3,7]
-filename=""
-lastchange=False
-modified=False
+    import sys
+    import tty
+    import termios
+    import string
+    import copy
+    import re
+    import os
+    import argparse
+    ESC='\033['
+    LENONSCR=(20*16)
+    BOTTOMLN=23
+    UNKNOWN=0xffffffffffffffffffffffffffffffff
+    mem=[]
+    yank=[]
+    coltab=[0,1,4,5,2,6,3,7]
+    filename=""
+    lastchange=False
+    modified=False
 newfile=False
 homeaddr=0
 insmod=False
@@ -33,76 +33,76 @@ scriptingflag=False
 stack=[]
 
 def escup(n=1):
-    print(f"{ESC}{n}A",end='')
+print(f"{ESC}{n}A",end='')
 
 def escdown(n=1):
-    print(f"{ESC}{n}B",end='')
+print(f"{ESC}{n}B",end='')
 
 def escright(n=1):
-    print(f"{ESC}{n}C",end='')
+print(f"{ESC}{n}C",end='')
 
 def escleft(n=1):
-    print(f"{ESC}{n}D",end='',flush=True)
+print(f"{ESC}{n}D",end='',flush=True)
 
 def esclocate(x=0,y=0):
-    print(f"{ESC}{y+1};{x+1}H",end='',flush=True)
+print(f"{ESC}{y+1};{x+1}H",end='',flush=True)
 
 def escscrollup(n=1):
-    print(f"{ESC}{n}S",end='')
+print(f"{ESC}{n}S",end='')
 
 def escscrolldown(n=1):
-    print(f"{ESC}{n}T",end='')
+print(f"{ESC}{n}T",end='')
 
 def escclear():
-    print(f"{ESC}2J",end='',flush=True)
-    esclocate()
+print(f"{ESC}2J",end='',flush=True)
+esclocate()
 
 def esccolor(col1=7,col2=0):
-    print(f"{ESC}3{coltab[col1]}m{ESC}4{coltab[col2]}m",end='',flush=True)
+print(f"{ESC}3{coltab[col1]}m{ESC}4{coltab[col2]}m",end='',flush=True)
 
 def escresetcolor():
-    print(f"{ESC}0m",end='')
+print(f"{ESC}0m",end='')
 
 def getch():
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-    tty.setraw(sys.stdin.fileno())
-    ch = sys.stdin.read(1)
-    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-    return ch
+fd = sys.stdin.fileno()
+old_settings = termios.tcgetattr(fd)
+tty.setraw(sys.stdin.fileno())
+ch = sys.stdin.read(1)
+termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+return ch
 
 def putch(c):
-    print(c,end='',flush=True)
+print(c,end='',flush=True)
 
 def getln():
-    s = ""
-    while True:
-        ch = getch()
-        if ch == '\033':
-            return ''
-        elif ch == chr(13):
-            return s
-        elif ch == chr(0x7f):
-            if s != '':
-                escleft()
-                putch(' ')
-                escleft()
-                s = s[:len(s) - 1]
-        else:
-            putch(ch)
-            s += ch
-    return s
+s = ""
+while True:
+    ch = getch()
+    if ch == '\033':
+        return ''
+    elif ch == chr(13):
+        return s
+    elif ch == chr(0x7f):
+        if s != '':
+            escleft()
+            putch(' ')
+            escleft()
+            s = s[:len(s) - 1]
+    else:
+        putch(ch)
+        s += ch
+return s
 
 def skipspc(s,idx):
-    while idx<len(s) and s[idx]==' ':
-        idx+=1
-    return idx
+while idx<len(s) and s[idx]==' ':
+    idx+=1
+return idx
 
 def print_title():
-    global filename,modified,insmod,mem
-    esclocate(0,0)
-    esccolor(6)
-    print(f"bi version 2.9.1 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+global filename,modified,insmod,mem
+esclocate(0,0)
+esccolor(6)
+print(f"bi version 2.9.1 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -1175,9 +1175,9 @@ def main():
     parser.add_argument('-v', '--verbose', action='store_true', help='verbose when processing script')
     args = parser.parse_args()
     filename=args.file
-    readfile(filename)
     script=args.script
     verbose=args.verbose
+    readfile(filename)
 
     if script:
         f=scripting(script)
