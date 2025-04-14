@@ -609,9 +609,9 @@ def scripting(scriptfile):
     line=f.readline().strip()
     flag=-1
     while line:
-        flag=commandline(line)
         if verbose:
             print(line)
+        flag=commandline(line)
         if flag==0:
             f.close()
             return 0
