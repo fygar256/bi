@@ -102,7 +102,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 2.8.5 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 2.9.1 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -649,15 +649,14 @@ def right_rotate_byte(x,x2):
 
 def get_multibyte_value(x,x2):
     v=0
-    for i in range(x,x2+1):
+    for i in range(x2,x-1,-1):
         v=(v<<8)|readmem(i)
     return v
 
 def put_multibyte_value(x,x2,v):
-    p=0xff<<((x2-x)*8)
     for i in range(x,x2+1):
-        setmem(i,(v&p)>>((x2-i)*8))
-        p>>=8
+        setmem(i,v&0xff)
+        v>>=8
     return
     
 def left_shift_multibyte(x,x2,c):
@@ -667,18 +666,18 @@ def left_shift_multibyte(x,x2,c):
 
 def right_shift_multibyte(x,x2,c):
     v=get_multibyte_value(x,x2)
-    put_multibyte_value(x,x2,(v>>1)|(c<<((x2+1-x)*8-1)))
+    put_multibyte_value(x,x2,(v>>1)|(c<<((x2-x)*8+7)))
     return
 
 def left_rotate_multibyte(x,x2):
-    c=1 if readmem(x)&0x80 else 0
     v=get_multibyte_value(x,x2)
+    c=1 if v&(1<<((x2-x)*8+7)) else 0
     put_multibyte_value(x,x2,(v<<1)|c)
     return
 
 def right_rotate_multibyte(x,x2):
-    c=1 if readmem(x2)&0x1 else 0
     v=get_multibyte_value(x,x2)
+    c=1 if v&0x1 else 0
     put_multibyte_value(x,x2,(v>>1)|(c<<((x2-x)*8+7)))
     return
 
@@ -937,14 +936,16 @@ def commandline(line):
                 multibyte=True
             else:
                 multibyte=False
-            bit,idx=expression(line,idx)
 
-            times=UNKNOWN
-            if idx<len(line) and line[idx]==',':
-                times,idx=expression(line,idx+1)
+            times,idx=expression(line,idx)
 
             if times==UNKNOWN:
                 times=1
+
+            if idx<len(line) and line[idx]==',':
+                bit,idx=expression(line,idx+1)
+            else:
+                bit=UNKNOWN
 
             shift_rotate(x,x2,times,bit,multibyte,ch)
             return -1
