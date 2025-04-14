@@ -22,6 +22,7 @@ man bi
 ##### Manual
 
 ```
+
                    vi like binary editor 'bi'
 
                    Programmed by T.Maekawa (fygar256)
@@ -76,21 +77,19 @@ On command line mode
    N                       ----- search the last
    [offset]                ----- jump to the address
    [offset]m[a-z]          ----- mark position
-   [offset]S<string>       ----- insert string on [offset]
+   [offset]S<string>       ----- insert string at [offset]
    [offset]s<string>       ----- overwrite string on and after [offset]
 
-   [offset]R<filename>     ----- read file and insert on [offset]
+   [offset]R<filename>     ----- read file and insert at [offset]
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
    [offset] p              ----- paste yank buffer (overwrite)
    [offset] P              ----- paste yank buffer (insert)
-   [offset] f <len>,<data> ----- fill with <data> (by length)
-   [start,end] f <xx>      ----- fill with xx (by range)
-   [offset]i<len>,<data>   ----- insert data
-   [offset] d <len>        ----- delete by length
+   [offset]i<length>,<xx>  ----- insert data
 
    y/str                   ----- yank to yank buffer with string
    y//xx xx xx ...         ----- yank to yank buffer with data
    [start,end] d           ----- delete by range
+   [start,end] f <xx>      ----- fill with xx (by range)
    [start,end]y            ----- yank to yankbuffer
    [start,end]|<data>      ----- bitwise or with data
    [start,end]&<data>      ----- bitwise and with data
@@ -98,7 +97,7 @@ On command line mode
    [start,end]~            ----- bitwise not with data
    [start,end] v <dest>    ----- move data
    [start,end] c <dest>    ----- copy data (data will be yanked)
-   [start,end] i <dest>    ----- insert data
+   [start,end] i <dest>    ----- insert data to <dest>
    [start,end] a /regexp/str                  ----- replace regexp with str
    [start,end] a /regexp//xx xx xx ...        ----- replace regexp with data
    [start,end] a //xx xx xx .../str           ----- replace data1 with str
@@ -110,6 +109,7 @@ On command line mode
    <start>,<end>w<filename> ---- write data on file
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
+Remarks
 
     Regular expression can be used for string search.
     '/' can be escaped with escape character '\' in regular expression.
@@ -117,16 +117,18 @@ On command line mode
     Comment can be written in command with ';'. You have to write command
     including semicolon with escape character '\'.
 
-      The values enclosed with `[]` can be left out, when
-    these commands above take the current position as the value omitted.
+    The values enclosed with `[]` can be left out, when these commands 
+    above take the current position as the value omitted.
 
-      On command line, you've got to give values by simple expression as 
-      followings.
+    The value <end> can be passed with '%<length>' as <end>=<start>+<length>-1.
 
-      <expression> := <factor> [+|-] <factor>
+    On command line, you've got to give values by simple expression as 
+    followings.
 
-      factor is number in hexadecimal or decimal with prefix '#'. 
-      And you can also give values with '[a-z] as marked position,
+        <expression> := <factor> [+|-] <factor>
+
+    factor is a number in hexadecimal or decimal with prefix '#'. 
+    And you can also give values with '[a-z] as marked position,
     0 as the top of file, . as the current position, and $ as the bottom
     of file.
 
@@ -187,6 +189,7 @@ w<file> commands.
 2025-04-14 version 2.7.0 added scripting function.
 2025-04-14 version 2.7.3 a little adjustment
 2025-04-14 version 2.8.0 added simple expression functionality and add a little adjustment
+2025-04-14 version 2.8.2 added '%' prefix to pass <end> value in command line parameter
 --------------------
 
       I won't owe any responsibility for the result of application of
