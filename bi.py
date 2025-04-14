@@ -102,7 +102,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 2.8.3 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 2.8.5 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -262,6 +262,7 @@ def readmem(addr):
 
 def setmem(addr,data):
     global mem
+    data&=0xff
     if addr>=len(mem):
         for i in range(addr-len(mem)+1):
             mem+=[0]
@@ -622,6 +623,90 @@ def scripting(scriptfile):
     f.close()
     return 0
 
+def left_shift_byte(x,x2,c):
+    for i in range(x,x2+1):
+        setmem(i,(readmem(i)<<1)|c)
+    return
+
+def right_shift_byte(x,x2,c):
+    for i in range(x,x2+1):
+        setmem(i,(readmem(i)>>1)|c)
+    return
+
+def left_rotate_byte(x,x2):
+    for i in range(x,x2+1):
+        m=readmem(i)
+        c=(m&0x80)>>7
+        setmem(i,(m<<1)|c)
+    return
+
+def right_rotate_byte(x,x2):
+    for i in range(x,x2+1):
+        m=readmem(i)
+        c=(m&0x01)<<7
+        setmem(i,(m>>1)|c)
+    return
+
+def get_multibyte_value(x,x2):
+    v=0
+    for i in range(x,x2+1):
+        v=(v<<8)|readmem(i)
+    return v
+
+def put_multibyte_value(x,x2,v):
+    p=0xff<<((x2-x)*8)
+    for i in range(x,x2+1):
+        setmem(i,(v&p)>>((x2-i)*8))
+        p>>=8
+    return
+    
+def left_shift_multibyte(x,x2,c):
+    v=get_multibyte_value(x,x2)
+    put_multibyte_value(x,x2,(v<<1)|c)
+    return
+
+def right_shift_multibyte(x,x2,c):
+    v=get_multibyte_value(x,x2)
+    put_multibyte_value(x,x2,(v>>1)|(c<<((x2+1-x)*8-1)))
+    return
+
+def left_rotate_multibyte(x,x2):
+    c=1 if readmem(x)&0x80 else 0
+    v=get_multibyte_value(x,x2)
+    put_multibyte_value(x,x2,(v<<1)|c)
+    return
+
+def right_rotate_multibyte(x,x2):
+    c=1 if readmem(x2)&0x1 else 0
+    v=get_multibyte_value(x,x2)
+    put_multibyte_value(x,x2,(v>>1)|(c<<((x2-x)*8+7)))
+    return
+
+def shift_rotate(x,x2,x3,x4,multibyte,direction):
+    for i in range(x3):
+        if not multibyte:
+            if x4==UNKNOWN or x4==2:
+                if direction=='<':
+                    left_rotate_byte(x,x2)
+                else:
+                    right_rotate_byte(x,x2)
+            else:
+                if direction=='<':
+                    left_shift_byte(x,x2,x4&1)
+                else:
+                    right_shift_byte(x,x2,x4&1)
+        else:
+            if x4==UNKNOWN or x4==2:
+                if direction=='<':
+                    left_rotate_multibyte(x,x2)
+                else:
+                    right_rotate_multibyte(x,x2)
+            else:
+                if direction=='<':
+                    left_shift_multibyte(x,x2,x4&1)
+                else:
+                    right_shift_multibyte(x,x2,x4&1)
+    return
 
 def commandline(line):
     global lastchange,yank,filename,stack,verbose,scriptingflag
@@ -820,6 +905,7 @@ def commandline(line):
         ch=line[idx]
     else:
         ch=''
+
     if ch=='d':
         delmem(x,x2,True)
         jump(x)
@@ -842,8 +928,24 @@ def commandline(line):
         openot(x,x2)
         return -1
 
-    if idx<len(line) and (line[idx]=='f' or line[idx]=='v' or line[idx]=='c' or line[idx]=='i' or line[idx]=='&' or line[idx]=='|' or line[idx]=='^'):
+    if idx<len(line) and line[idx] in "fvci&|^<>":
         ch=line[idx]
+        idx+=1
+        if ch in '<>':
+            if idx<len(line) and line[idx]==ch:
+                idx+=1
+                multibyte=True
+            else:
+                multibyte=False
+            x3,idx=expression(line,idx)
+            if x3==UNKNOWN:
+                x3=1
+            x4=UNKNOWN
+            if idx<len(line) and line[idx]==',':
+                x4,idx=expression(line,idx+1)
+            shift_rotate(x,x2,x3,x4,multibyte,ch)
+            return -1
+
         x3,idx=expression(line,idx+1)
         if x3==UNKNOWN:
             stdmm("Invalid parameter.")
