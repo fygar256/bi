@@ -625,12 +625,12 @@ def scripting(scriptfile):
 
 def left_shift_byte(x,x2,c):
     for i in range(x,x2+1):
-        setmem(i,(readmem(i)<<1)|c)
+        setmem(i,(readmem(i)<<1)|(c&1))
     return
 
 def right_shift_byte(x,x2,c):
     for i in range(x,x2+1):
-        setmem(i,(readmem(i)>>1)|c)
+        setmem(i,(readmem(i)>>1)|((c&1)<<7))
     return
 
 def left_rotate_byte(x,x2):
@@ -682,30 +682,30 @@ def right_rotate_multibyte(x,x2):
     put_multibyte_value(x,x2,(v>>1)|(c<<((x2-x)*8+7)))
     return
 
-def shift_rotate(x,x2,x3,x4,multibyte,direction):
-    for i in range(x3):
+def shift_rotate(x,x2,times,bit,multibyte,direction):
+    for i in range(times):
         if not multibyte:
-            if x4==UNKNOWN or x4==2:
+            if bit!=0 and bit!=1:
                 if direction=='<':
                     left_rotate_byte(x,x2)
                 else:
                     right_rotate_byte(x,x2)
             else:
                 if direction=='<':
-                    left_shift_byte(x,x2,x4&1)
+                    left_shift_byte(x,x2,bit&1)
                 else:
-                    right_shift_byte(x,x2,x4&1)
+                    right_shift_byte(x,x2,bit&1)
         else:
-            if x4==UNKNOWN or x4==2:
+            if bit!=0 and bit!=1:
                 if direction=='<':
                     left_rotate_multibyte(x,x2)
                 else:
                     right_rotate_multibyte(x,x2)
             else:
                 if direction=='<':
-                    left_shift_multibyte(x,x2,x4&1)
+                    left_shift_multibyte(x,x2,bit&1)
                 else:
-                    right_shift_multibyte(x,x2,x4&1)
+                    right_shift_multibyte(x,x2,bit&1)
     return
 
 def commandline(line):
@@ -937,13 +937,16 @@ def commandline(line):
                 multibyte=True
             else:
                 multibyte=False
-            x3,idx=expression(line,idx)
-            if x3==UNKNOWN:
-                x3=1
-            x4=UNKNOWN
+            bit,idx=expression(line,idx)
+
+            times=UNKNOWN
             if idx<len(line) and line[idx]==',':
-                x4,idx=expression(line,idx+1)
-            shift_rotate(x,x2,x3,x4,multibyte,ch)
+                times,idx=expression(line,idx+1)
+
+            if times==UNKNOWN:
+                times=1
+
+            shift_rotate(x,x2,times,bit,multibyte,ch)
             return -1
 
         x3,idx=expression(line,idx+1)
