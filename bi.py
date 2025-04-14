@@ -801,9 +801,20 @@ def commandline(line):
         return -1
 
     if idx<len(line) and line[idx]==',':
-        x2,idx=expression(line,idx+1)
+        idx+=1
+        idx=skipspc(line,idx)
+        if idx<len(line) and line[idx]=='%':
+            idx+=1
+            idx=skipspc(line,idx)
+            t,idx2=expression(line,idx)
+            if idx==idx2:
+                t=1
+            idx=idx2
+            x2=x+t-1
+        else:
+            x2,idx=expression(line,idx)
     else:
-        x2=fpos()
+        x2=x
 
     idx=skipspc(line,idx)
 
