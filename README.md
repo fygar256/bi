@@ -82,12 +82,12 @@ On command line mode
    [offset]S<string>       ----- insert string at [offset]
    [offset]s<string>       ----- overwrite string on and after [offset]
    [offset]o xx xx xx ...  ----- store data and jump to end+1
-   [offset]O xx xx xx ...  ----- insert data and jump to end+1
+@  [offset]O xx xx xx ...  ----- insert data and jump to end+1
    [offset]R<filename>     ----- read file and insert at [offset]
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
    [offset] p              ----- paste yank buffer (overwrite)
    [offset] P              ----- paste yank buffer (insert)
-   [offset]i<length>,<xx>  ----- insert data repeatedly length times
+   [offset]i<length>,<xx>  ----- insert data xx repeatedly length times
 
    y/str                   ----- yank to yank buffer with string
    y//xx xx xx ...         ----- yank to yank buffer with data
@@ -198,6 +198,8 @@ w<file> commands.
 2025-04-15 version 2.9.5 Bug fixes of comment.
 2025-04-15 version 2.9.6 a little adjustment and 'o' command added.
 2025-04-15 version 2.9.7 a little adjustment and 'O' command added.
+2025-04-16 version 3.0.0 Bug fixes of flags to write file (lastchange,modified)
+           Complete
 --------------------
 
       I won't owe any responsibility for the result of application of
