@@ -102,7 +102,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 2.9.1 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 2.9.5 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -577,27 +577,34 @@ def searchhex(sm):
 
 
 def comment(line):
-  """
-  文字列 line から、'\\'でエスケープされない';'以降を無視する関数。
+    """
+    文字列 line から、'\'でエスケープされない';'以降を無視し、
+    '\'でエスケープされた';'は';'に置き換える関数。
 
-  Args:
-    line: 処理対象の文字列。
+    Args:
+        line: 処理対象の文字列。
 
-  Returns:
-    ';'以降が無視された文字列。
-  """
-  result = ""
-  escaped = False
-  for char in line:
-    if char == '\\':
-      result += char
-      escaped = not escaped
-    elif char == ';' and not escaped:
-      break
-    else:
-      result += char
-      escaped = False
-  return result
+    Returns:
+        処理後の文字列。
+    """
+    result = []
+    escaped = False
+    ignore = False
+    for char in line:
+        if ignore:
+            continue
+        if char == '\\':
+            escaped = True
+            continue
+        if char == ';' and not escaped:
+            ignore = True
+        elif char == ';' and escaped:
+            result.append(';')
+            escaped = False
+        else:
+            result.append(char)
+            escaped = False
+    return "".join(result)
 
 def scripting(scriptfile):
     global scriptingflag,verbose
