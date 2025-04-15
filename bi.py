@@ -277,6 +277,7 @@ def clrmm():
     print(" "*79,end='')
 
 def stdmm(s):
+    global scriptingflag,verbose
     if scriptingflag:
         if verbose:
             print(s)
