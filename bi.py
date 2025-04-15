@@ -736,6 +736,7 @@ def commandline(line):
         return 0
     elif line=='wq' or line=='wq!':
         writefile(filename)
+        lastchange=False
         return 0
     elif line[0]=='w':
         if len(line)>=2:
