@@ -93,6 +93,9 @@ Insert string at offset.
 \fB[offset]s<string>\fR
 Overwrite string at offset.
 .TP
+\fB[offset]o xx xx xx ...\fR
+Store data and jump to end+1.
+.TP
 \fB[offset]R<file>\fR, \fB[offset]r<file>\fR
 Insert/overwrite file at offset.
 .TP
@@ -110,6 +113,9 @@ Delete range.
 .TP
 \fB[start,end]f<xx>\fR
 Fill range with byte.
+.TP
+\fB[start,end]o<xx>\fR
+Fill range with byte. alternative of 'f' to distinguish to hexadecimal number
 .TP
 \fB[start,end]y\fR
 Yank range.
@@ -190,9 +196,6 @@ If scripts are stored in `file.bi`. Usage:
 
 .SH LIMITATIONS
 Undo is not supported yet.
-
-.SH HISTORY
-Started in 1991 after a backup disk failure. Continuously updated through 2025 with extensive vi-like and binary editing features.
 
 .SH AUTHOR
 Written by T. Maekawa (fygar256)
