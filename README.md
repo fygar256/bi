@@ -5,6 +5,8 @@ bi is a binary file editor with a user interface similar to vi. It started when 
 
 It uses ANSI terminal escape sequences, so it is for ANSI terminals. I think it will run on python and on Linux with ANSI terminals, FreeBSD, and POSIX-compliant OS. The development environment and operation verification are done on ArchLinux.
 
+This software disributed with MIT license.
+
 ```
 ##### installation
 git clone http://github.com/fygar256/bi
