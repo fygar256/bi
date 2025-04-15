@@ -105,7 +105,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 2.9.6 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.0.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -264,12 +264,14 @@ def readmem(addr):
     return mem[addr]
 
 def setmem(addr,data):
-    global mem
+    global mem,modified,lastchange
     data&=0xff
     if addr>=len(mem):
         for i in range(addr-len(mem)+1):
             mem+=[0]
     mem[addr]=data
+    modified=True
+    lastchange=True
 
 def clrmm():
     esclocate(0,BOTTOMLN)
@@ -741,7 +743,7 @@ def commandline(line):
             writefile(s)
         else:
             writefile(filename)
-        lastchange=False
+            lastchange=False
         return -1
     elif line[0]=='T' or line[0]=='t':
         if len(line)>=2:
@@ -1020,7 +1022,7 @@ def commandln():
     return commandline(line)
 
 def fedit():
-    global nff, yank, lastchange, lastchange, modified, insmod, homeaddr, curx, cury
+    global nff, yank, lastchange, modified, insmod, homeaddr, curx, cury
     stroke = False
     ch = ''
     while True:
@@ -1153,8 +1155,6 @@ def fedit():
                 stroke = (not stroke) if not curx & 1 else False
             else:
                 setmem(addr, readmem(addr) & mask | c << sh)
-                lastchange = True
-                modified = True
             inccurx()
         elif ch == 'x':
             delmem(fpos(), fpos(), False)
@@ -1211,7 +1211,7 @@ def main():
 
     if script:
         f=scripting(script)
-        if wrtflg:
+        if wrtflg and lastchange:
             writefile(filename)
     else:
         escclear()
