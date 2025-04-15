@@ -22,6 +22,7 @@ man bi
 ##### Manual
 
 ```
+
                    vi like binary editor 'bi'
 
                    Programmed by T.Maekawa (fygar256)
@@ -191,6 +192,7 @@ w<file> commands.
 2025-04-14 version 2.8.3 added '%' prefix to pass <end> value in command line parameter and added a little adjustment
 2025-04-14 version 2.8.5 added rotate and shift command.
 2025-04-15 version 2.9.1 Bug fixes of multibyte shift and rotate.
+2025-04-15 version 2.9.5 Bug fixes of comment.
 --------------------
 
       I won't owe any responsibility for the result of application of
