@@ -94,15 +94,18 @@ def getln():
     return s
 
 def skipspc(s,idx):
-    while idx<len(s) and s[idx]==' ':
-        idx+=1
+    while idx<len(s):
+        if s[idx]==' ':
+            idx+=1
+        else:
+            break
     return idx
 
 def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 2.9.5 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 2.9.6 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -320,10 +323,10 @@ def invoke_shell(line):
 
 def expression(s,idx):
     x,idx=get_value(s,idx)
-    if len(s)>idx and s[idx]=='+':
+    if len(s)>idx and x!=UNKNOWN and s[idx]=='+':
         y,idx=get_value(s,idx+1)
         x=x+y
-    elif len(s)>idx and s[idx]=='-':
+    elif len(s)>idx and x!=UNKNOWN and s[idx]=='-':
         y,idx=get_value(s,idx+1)
         x=x-y
     return x,idx
@@ -331,7 +334,6 @@ def expression(s,idx):
 def get_value(s,idx):
     if idx>=len(s):
         return UNKNOWN,idx
-    v=UNKNOWN
     idx=skipspc(s,idx)
     ch=s[idx]
     if ch=='$':
@@ -361,6 +363,8 @@ def get_value(s,idx):
             x=10*x+int(s[idx])
             idx+=1
         v=x
+    else:
+        v=UNKNOWN
     return v,idx
 
 def acommand(start,end,line,idx):
@@ -837,6 +841,13 @@ def commandline(line):
             insmem(x,l)
         return -1
 
+    if idx<len(line) and line[idx]=='o':
+        idx+=1
+        m,idx=get_hexs(line,idx)
+        ovwmem(x,m)
+        jump(x+len(m))
+        return -1
+
     if idx<len(line) and line[idx]=='d':
         length,idx=expression(line,idx+1)
 
@@ -851,7 +862,7 @@ def commandline(line):
         return -1
         
 
-    if idx<len(line) and (line[idx]=='i' or line[idx]=='f'):
+    if idx<len(line) and line[idx] in 'if':
         ch=line[idx]
         length,idx=expression(line,idx+1)
 
@@ -895,10 +906,9 @@ def commandline(line):
         if idx<len(line) and line[idx]=='%':
             idx+=1
             idx=skipspc(line,idx)
-            t,idx2=expression(line,idx)
-            if idx==idx2:
+            t,idx=expression(line,idx)
+            if t==UNKNOWN:
                 t=1
-            idx=idx2
             x2=x+t-1
         else:
             x2,idx=expression(line,idx)
@@ -957,16 +967,19 @@ def commandline(line):
             shift_rotate(x,x2,times,bit,multibyte,ch)
             return -1
 
-        x3,idx=expression(line,idx+1)
-        if x3==UNKNOWN:
-            stdmm("Invalid parameter.")
-            return -1
-        if ch=='f':
-            data=[x3]*(x2-x+1)
+        if ch in 'f':
+            m,idx=get_hexs(line,idx)
+            data=m*((x2-x+1)//len(m))+m[0:((x2-x+1)%len(m))]
             ovwmem(x,data)
             jump(x)
             return -1
-        elif ch=='c':
+
+        x3,idx=expression(line,idx)
+        if x3==UNKNOWN:
+            stdmm("Invalid parameter.")
+            return -1
+
+        if ch=='c':
             cpymem(x,x2,x3)
             jump(x3)
             return -1

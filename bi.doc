@@ -55,7 +55,7 @@ On command line mode
    [offset]m[a-z]          ----- mark position
    [offset]S<string>       ----- insert string at [offset]
    [offset]s<string>       ----- overwrite string on and after [offset]
-
+   [offset]o xx xx xx ...  ----- store data and jump to end+1
    [offset]R<filename>     ----- read file and insert at [offset]
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
    [offset] p              ----- paste yank buffer (overwrite)
@@ -64,8 +64,8 @@ On command line mode
 
    y/str                   ----- yank to yank buffer with string
    y//xx xx xx ...         ----- yank to yank buffer with data
-   [start,end] d           ----- delete by range
-   [start,end] f <xx>      ----- fill with xx (by range)
+   [start,end] d           ----- delete by range (data will be yanked)
+   [start,end] f xx xx xx ...  - fill with data (by range)
    [start,end]y            ----- yank to yankbuffer
    [start,end]|<data>      ----- bitwise or with data
    [start,end]&<data>      ----- bitwise and with data
@@ -169,6 +169,7 @@ w<file> commands.
 2025-04-14 version 2.8.5 added rotate and shift command.
 2025-04-15 version 2.9.1 Bug fixes of multibyte shift and rotate.
 2025-04-15 version 2.9.5 Bug fixes of comment.
+2025-04-15 version 2.9.6 a little adjustment and 'o' command added.
 --------------------
 
       I won't owe any responsibility for the result of application of
