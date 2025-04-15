@@ -96,6 +96,9 @@ Overwrite string at offset.
 \fB[offset]o xx xx xx ...\fR
 Store data and jump to end+1.
 .TP
+\fB[offset]O xx xx xx ...\fR
+@Insert data and jump to end+1.
+.TP
 \fB[offset]R<file>\fR, \fB[offset]r<file>\fR
 Insert/overwrite file at offset.
 .TP
@@ -103,7 +106,7 @@ Insert/overwrite file at offset.
 Paste yank buffer (overwrite/insert).
 .TP
 \fB[offset]i<length>,<xx>\fR
-Insert binary data.
+Insert binary data repeatedly length times.
 .TP
 \fBy/str\fR, \fBy//xx xx...\fR
 Yank string/data to buffer.
@@ -113,9 +116,6 @@ Delete range.
 .TP
 \fB[start,end]f<xx>\fR
 Fill range with byte.
-.TP
-\fB[start,end]o<xx>\fR
-Fill range with byte. alternative of 'f' to distinguish to hexadecimal number
 .TP
 \fB[start,end]y\fR
 Yank range.
