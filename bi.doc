@@ -56,7 +56,7 @@ On command line mode
    [offset]S<string>       ----- insert string at [offset]
    [offset]s<string>       ----- overwrite string on and after [offset]
    [offset]o xx xx xx ...  ----- store data and jump to end+1
-@  [offset]O xx xx xx ...  ----- insert data and jump to end+1
+   [offset]O xx xx xx ...  ----- insert data and jump to end+1
    [offset]R<filename>     ----- read file and insert at [offset]
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
    [offset] p              ----- paste yank buffer (overwrite)
