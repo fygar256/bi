@@ -841,6 +841,13 @@ def commandline(line):
             insmem(x,l)
         return -1
 
+    if idx<len(line) and line[idx]=='O':
+        idx+=1
+        m,idx=get_hexs(line,idx)
+        insmem(x,m)
+        jump(x+len(m))
+        return -1
+
     if idx<len(line) and line[idx]=='o':
         idx+=1
         m,idx=get_hexs(line,idx)
