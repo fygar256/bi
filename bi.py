@@ -1202,7 +1202,7 @@ def main():
     parser.add_argument('file', help='file to edit')
     parser.add_argument('-s', '--script', type=str, default='', metavar='script.bi', help='bi script file')
     parser.add_argument('-v', '--verbose', action='store_true', help='verbose when processing script')
-    parser.add_argument('-w', '--write', action='store_true', help='anyway write file when exiting script')
+    parser.add_argument('-w', '--write', action='store_true', help='write file when exiting script')
     args = parser.parse_args()
     filename=args.file
     script=args.script
