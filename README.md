@@ -13,7 +13,11 @@ This software disributed with MIT license.
 ##### installation
 git clone http://github.com/fygar256/bi
 cd bi
-make
+chmod +x bi.py
+sudo cp bi.py /usr/bin/bi
+
+sudo cp bi.1 /usr/share/man/man1/
+sudo mandb
 
 ##### execution
 bi file
