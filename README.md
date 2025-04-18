@@ -35,7 +35,7 @@ man bi
 
                    vi like binary editor 'bi'
 
-                   Programmed by T.Maekawa (fygar256)
+                   Programmed by Taisuke Maekawa (fygar256)
 
 Overview
 --------
