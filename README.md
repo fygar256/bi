@@ -95,7 +95,9 @@ On command line mode
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
    [offset] p              ----- paste yank buffer (overwrite)
    [offset] P              ----- paste yank buffer (insert)
-   [offset]i<length>,<xx>  ----- insert data xx repeatedly length times
+   [offset]i<length>,<xx>  ----- fill data xx from offset length times
+   [offset]I<length>,<xx>  ----- insert data xx repeatedly length times
+   [start,end] I <dest>    ----- insert data to <dest>
 
    y/str                   ----- yank to yank buffer with string
    y//xx xx xx ...         ----- yank to yank buffer with data
@@ -116,7 +118,6 @@ On command line mode
    [start,end]<<[[times],[01]] - left shift with bit 0,1 or rotate by multibyte
    [start,end]>>[[times],[01]] - right shift with bit 0,1 or rotate by multibyte
    [start,end] v <dest>    ----- move data
-   [start,end] i <dest>    ----- insert data to <dest>
    <start>,<end>w<filename> ---- write data on file
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
