@@ -105,7 +105,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.0.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.0.3 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -1191,7 +1191,7 @@ def readfile(fn):
         f.close()
 
 def writefile(fn):
-    global mem,newfile
+    global mem
     try:
         f=open(fn,"wb")
         f.write(bytes(mem))
@@ -1236,7 +1236,8 @@ def main():
         if wrtflg and lastchange:
             writefile(filename)
     else:
-        escclear()
+        if not newfile:
+            escclear()
         fedit()
         esccolor(7)
 
