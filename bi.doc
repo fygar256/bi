@@ -67,8 +67,12 @@ On command line mode
    y//xx xx xx ...         ----- yank to yank buffer with data
    <start>,<end> d         ----- delete by range (data will be yanked)
    <start>,<end> f xx xx xx ...  - fill with data (by range)
-   <start>,<end> y         ----- yank to yankbuffer
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
+   <start>,<end> a /regexp/str            ----- replace regexp with str
+   <start>,<end> a /regexp//xx xx xx ...  ----- replace regexp with data
+   <start>,<end> a //xx xx xx .../str     ----- replace data1 with str
+   <start>,<end> a //xx xx ...//xx xx ... ----- replace data1 with data2
+   [start],[end] y         ----- yank to yankbuffer
    [start,end]|<data>      ----- bitwise or with data
    [start,end]&<data>      ----- bitwise and with data
    [start,end]^<data>      ----- bitwise xor with data
@@ -79,10 +83,6 @@ On command line mode
    [start,end]>>[[times],[01]] - right shift with bit 0,1 or rotate by multibyte
    [start,end] v <dest>    ----- move data
    [start,end] i <dest>    ----- insert data to <dest>
-   [start,end] a /regexp/str                  ----- replace regexp with str
-   [start,end] a /regexp//xx xx xx ...        ----- replace regexp with data
-   [start,end] a //xx xx xx .../str           ----- replace data1 with str
-   [start,end] a //xx xx xx ...//xx xx xx ... ----- replace data1 with data2
    <start>,<end>w<filename> ---- write data on file
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
