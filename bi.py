@@ -153,9 +153,8 @@ def insmem(start,mem2):
 def delmem(start,end,yf):
     global yank,mem,modified,lastchange
     length=end-start+1
-    if length<=0:
-        return
-    if start>=len(mem):
+    if length<=0 or start>=len(mem):
+        stdmm("Invalid range.")
         return
     if yf:
         yankmem(start,end)
@@ -173,9 +172,8 @@ def delmem(start,end,yf):
 def yankmem(start,end):
     global yank,mem
     length=end-start+1
-    if length<=0:
-        return
-    if start>=len(mem):
+    if length<=0 or start>=len(mem):
+        stdmm("Invalid range.")
         return
     yank=[]
     cnt=0
@@ -879,6 +877,7 @@ def commandline(line):
             ovwmem(x,l)
         elif ch=='S':
             insmem(x,l)
+        jump(x+len(l))
         return -1
 
     if idx<len(line) and line[idx]=='O':
@@ -911,24 +910,29 @@ def commandline(line):
 
     if idx<len(line) and line[idx] in 'if':
         ch=line[idx]
-        length,idx=expression(line,idx+1)
+        xp,idx=expression(line,idx+1)
 
-        if length==UNKNOWN:
-            length=1
-
-        code=0x00
+        x3=UNKNOWN
         if idx<len(line) and line[idx]==',':
-            code,idx=expression(line,idx+1)
-            if code==UNKNOWN:
-                code=0x00
-
-        data=[code]*length
+            x3,idx=expression(line,idx+1)
 
         if ch=='i':
-            insmem(x,data)
+            if x3!=UNKNOWN and xp!=UNKNOWN:
+                data=[x3]*xp
+                insmem(x,data)
+                jump(x+len(data))
+            else:
+                m=redmem(x,x2)
+                insmem(xp,m)
+                jump(xp+len(m))
         elif ch=='f':
+            if x3==UNKNOWN:
+                x3=0x00
+            if xp==UNKNOWN:
+                xp=1
+            data=[x3]*xp
             ovwmem(x,data)
-        jump(x)
+            jump(x+len(data))
         return -1
 
     if idx<len(line):
@@ -955,7 +959,7 @@ def commandline(line):
         openot(x,x2)
         return -1
 
-    if idx<len(line) and line[idx] in "fvci&|^<>":
+    if idx<len(line) and line[idx] in "fvc&|^<>":
         ch=line[idx]
         idx+=1
         if ch in '<>':
@@ -996,11 +1000,6 @@ def commandline(line):
             return -1
         elif ch=='v':
             movmem(x,x2,x3)
-            jump(x3)
-            return -1
-        elif ch=='i':
-            m=redmem(x,x2)
-            insmem(x3,m)
             jump(x3)
             return -1
         elif ch=='&':
