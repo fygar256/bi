@@ -1,206 +1,157 @@
-.TH BI 1 "April 14, 2025" "Version 2.8.5" "User Commands"
+
+." Manpage for bi
+.TH BI 1 "April 2025" "Version 3.0.0" "User Commands"
 .SH NAME
 bi \- vi-like binary editor
 .SH SYNOPSIS
 .B bi
-[\-v] [\-s \fIscriptfile\fR] \fItargetfile\fR
+.RI [ options ] " file"
+.br
+.B bi
+.RI [ -s " scriptfile ] [ targetfile ]
 .SH DESCRIPTION
-\fBbi\fR is a binary editor designed to mimic the interface of the UNIX text editor \fIvi\fR. The name 'bi' stands for 'Binary editor like vI'. It provides both screen-based editing and command-line editing, including support for scripting.
+.B bi
+is a binary editor designed to mimic the interface of the UNIX editor
+.B vi.
+The name "BI" stands for "Binary editor like vI". It is tailored for vi and binary enthusiasts.
 
-.SH COMMANDS
-.SS Edit Mode
+.SH EDIT MODE COMMANDS
 .TP
-\fB<hex-key>\fR
-Set data at cursor.
+<hex-key>
+Set data.
 .TP
-\fBh j k l\fR or arrow keys
-Move cursor left, down, up, or right.
+hjkl or arrow keys
+Move cursor.
 .TP
-\fB^F\fR, \fB^B\fR
-Move forward/backward by one page (256 bytes).
+^F ^B
+Move by a page (256 bytes).
 .TP
-\fB^D\fR, \fB^U\fR
-Move forward/backward by half a page (128 bytes).
+^D ^U
+Move by half a page (128 bytes).
 .TP
-\fB^L\fR
-Repaint the screen.
+^L
+Repaint screen.
 .TP
-\fB^\fR, \fB$\fR
-Jump to beginning/end of line.
+^
+Jump to the left end of line.
 .TP
-\fBm\fI[a-z]\fR
+$
+Jump to the right end of line.
+.TP
+m[a-z]
 Mark current position.
 .TP
-\fB'\fI[a-z]\fR
+'[a-z]
 Jump to marked point.
 .TP
-\fBn\fR, \fBN\fR
-Search next/previous match.
+n / N
+Search next / previous.
 .TP
-\fBM\fR
-Display all marks.
+M
+Display marks.
 .TP
-\fBp\fR, \fBP\fR
-Paste yank buffer (overwrite/insert).
+p / P
+Paste yank buffer (overwrite / insert).
 .TP
-\fBx\fR
+x
 Delete a byte.
 .TP
-\fBZ\fR
+q / Z
+Quit / Write and quit.
+.TP
+/ / :
+Enter search / command mode.
+
+.SH COMMAND LINE MODE
+.TP
+; 
+Comment. Everything after ';' is ignored.
+.TP
+/regexp
+Search regular expression string.
+.TP
+//xx xx xx ...
+Search binary data.
+.TP
+!string
+Invoke shell.
+.TP
+q / q!
+Quit / Force quit.
+.TP
+wq / wq!
 Write and quit.
 .TP
-\fB/\fR, \fB:\fR
-Enter search or command-line mode.
-
-.SS Command Line Mode
+w <filename>
+Write file.
 .TP
-\fB;\fR
-Comment. Ignored.
+t <filename> / T <filename>
+Scripting with filename (silent / verbose).
 .TP
-\fB/<regexp>\fR
-Search regular expression.
+[addr]m[a-z]
+Mark position.
 .TP
-\fB//xx xx...\fR
-Search for binary data.
+[addr]S<string> / s<string>
+Insert / Overwrite string.
 .TP
-\fB!\fIstring\fR
-Invoke shell command.
+[addr]o ... / O ...
+Store / Insert binary data and jump.
 .TP
-\fBq\fR, \fBq!\fR
-Quit (force quit with !).
+[addr]R<file> / r<file>
+Insert / Overwrite binary from file.
 .TP
-\fBwq\fR, \fBwq!\fR
-Write and quit.
+[addr] p / P
+Paste yank buffer (overwrite / insert).
 .TP
-\fBw \fIfilename\fR\fR
-Write to specified file.
+[addr]i<len>,<xx>
+Insert data xx repeated length times.
 .TP
-\fBt \fIfilename\fR\fR
-Run script silently.
+y/str / y//xx ...
+Yank string / binary data.
 .TP
-\fBT \fIfilename\fR\fR
-Run script verbosely.
+<start>,<end> d / f ... / c <dest>
+Delete / Fill / Copy.
 .TP
-\fB[offset]\fR
-Jump to address.
+<start>,<end> a ... / y / | & ^ ~
+Replace, yank, and bitwise operations.
 .TP
-\fB[offset]m[a-z]\fR
-Mark address.
+<start>,<end> << >> < [[times],[01]]
+Shift / Rotate operations (byte / multibyte).
 .TP
-\fB[offset]S<string>\fR
-Insert string at offset.
+<start>,<end> v / i <dest>
+Move / Insert data to destination.
 .TP
-\fB[offset]s<string>\fR
-Overwrite string at offset.
-.TP
-\fB[offset]o xx xx xx ...\fR
-Store data and jump to end+1.
-.TP
-\fB[offset]O xx xx xx ...\fR
-Insert data and jump to end+1.
-.TP
-\fB[offset]R<file>\fR, \fB[offset]r<file>\fR
-Insert/overwrite file at offset.
-.TP
-\fB[offset]p\fR, \fB[offset]P\fR
-Paste yank buffer (overwrite/insert).
-.TP
-\fB[offset]i<length>,<xx>\fR
-Insert binary data repeatedly length times.
-.TP
-\fBy/str\fR, \fBy//xx xx...\fR
-Yank string/data to buffer.
-.TP
-\fB[start,end]d\fR
-Delete range.
-.TP
-\fB[start,end]f<xx>\fR
-Fill range with byte.
-.TP
-\fB[start,end]y\fR
-Yank range.
-.TP
-\fB[start,end]|<data>\fR
-Bitwise OR.
-.TP
-\fB[start,end]&<data>\fR
-Bitwise AND.
-.TP
-\fB[start,end]^<data>\fR
-Bitwise XOR.
-.TP
-\fB[start,end]~\fR
-Bitwise NOT.
-.TP
-\fB[start,end] < [[times],[01]]\fR
-Left shift or rotate.
-.TP
-\fB[start,end] > [[times],[01]]\fR
-Right shift or rotate.
-.TP
-\fB[start,end] << [[times],[01]]\fR
-Multibyte left shift/rotate.
-.TP
-\fB[start,end] >> [[times],[01]]\fR
-Multibyte right shift/rotate.
-.TP
-\fB[start,end]v<dest>\fR
-Move data.
-.TP
-\fB[start,end]c<dest>\fR
-Copy data.
-.TP
-\fB[start,end]i<dest>\fR
-Insert data.
-.TP
-\fB[start,end]a/regexp/str\fR
-Replace regexp with string.
-.TP
-\fB[start,end]a/regexp//xx xx...\fR
-Replace regexp with binary data.
-.TP
-\fB[start,end]a//xx.../str\fR
-Replace binary with string.
-.TP
-\fB[start,end]a//xx...//yy...\fR
-Replace binary with binary.
-.TP
-\fB<start>,<end>w<filename>\fR
-Write data range to file.
-.TP
-\fB<CR>\fR or \fB<ESC>\fR
-Return to screen mode.
-
-.SH EXPRESSIONS
-Offsets and lengths can be given using simple expressions:
-.TP
-\fB<expression>\fR ::= \fB<factor> [+|-] <factor>\fR
-.TP
-\fB<factor>\fR
-Decimal (\fB#\fInum\fR) or hexadecimal. Can include:
-- '[a-z]: mark
-- 0: top of file
-- .: current position
-- $: end of file
+<start>,<end> w<filename>
+Write selected range to file.
 
 .SH REMARKS
-- Regular expressions supported. Escape `/` with `\\`.
-- Use `\\;` to include a semicolon in commands.
-- `[]` values may be omitted and default to current position.
-- `%<length>` means `<end> = <start> + <length> - 1`.
-- Some advanced commands marked with `@` are not yet implemented.
+.PP
+Regular expressions are supported and '/' can be escaped using '\\'.
+.br
+Expressions like `mark`, 0, ., and $ represent positions (mark, top, current, bottom).
+.br
+Value placeholders like <end> can be specified as %<length>.
+.br
+Expressions: <expression> := <factor> [+|-] <factor>.
 
 .SH SCRIPTING
-If scripts are stored in `file.bi`. Usage:
+Scripting files can be specified like:
+.PP
 .B bi [-v] -s file.bi targetfile
 
 .SH LIMITATIONS
-Undo is not supported yet.
+.TP
+Undo is not supported.
+.TP
+Some features marked with `@` are not implemented yet.
+
+.SH HISTORY
+.TP
+1991-12-04 to 2025-04-16
+Progressed from a data recovery tool to a full-featured binary editor with scripting, regex, and more. Current version: 3.0.0.
 
 .SH AUTHOR
-Written by T. Maekawa (fygar256)
+T.Maekawa (fygar256)
 
 .SH DISCLAIMER
-Use at your own risk. The author is not responsible for data loss or other issues.
-
-
+The author assumes no responsibility for any results from using this program.
