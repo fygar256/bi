@@ -908,7 +908,7 @@ def commandline(line):
         return -1
         
 
-    if idx<len(line) and line[idx] in 'if':
+    if idx<len(line) and line[idx] in 'iI':
         ch=line[idx]
         xp,idx=expression(line,idx+1)
         if xp==UNKNOWN:
@@ -919,7 +919,7 @@ def commandline(line):
         if idx<len(line) and line[idx]==',':
             x3,idx=expression(line,idx+1)
 
-        if ch=='i':
+        if ch=='I':
             if x3!=UNKNOWN and xp!=UNKNOWN:
                 data=[x3]*xp
                 insmem(x,data)
@@ -928,7 +928,7 @@ def commandline(line):
                 m=redmem(x,x2)
                 insmem(xp,m)
                 jump(xp+len(m))
-        elif ch=='f':
+        elif ch=='i':
             if x3==UNKNOWN:
                 x3=0x00
             if xp==UNKNOWN:
