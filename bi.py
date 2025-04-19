@@ -987,9 +987,12 @@ def commandline(line):
 
         if ch in 'f':
             m,idx=get_hexs(line,idx)
-            data=m*((x2-x+1)//len(m))+m[0:((x2-x+1)%len(m))]
-            ovwmem(x,data)
-            jump(x)
+            if len(m):
+                data=m*((x2-x+1)//len(m))+m[0:((x2-x+1)%len(m))]
+                ovwmem(x,data)
+                jump(x)
+            else:
+                stdmm("Invalid syntax.")
             return -1
 
         x3,idx=expression(line,idx)
