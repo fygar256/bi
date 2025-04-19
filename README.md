@@ -207,7 +207,7 @@ w<file> commands.
 2025-04-15 version 2.9.6 a little adjustment and 'o' command added.
 2025-04-15 version 2.9.7 a little adjustment and 'O' command added.
 2025-04-16 version 3.0.0 Bug fixes of flags to write file (lastchange,modified)
-           Complete
+           Completed
 --------------------
 
       I won't owe any responsibility for the result of application of
