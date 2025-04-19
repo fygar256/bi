@@ -84,7 +84,7 @@ Comment (text after ';' will be ignored).
 .BI /<regexp>
 Search using a regular expression.
 .TP
-.BI //xx xx ...
+.BI "//xx xx ..."
 Search binary data.
 .TP
 .BI !<string>
@@ -117,10 +117,10 @@ Insert string.
 .BI [offset]s<string>
 Overwrite string.
 .TP
-.BI [offset]o xx xx ...
+.BI "[offset]o xx xx ..."
 Store data.
 .TP
-.BI [offset]O xx xx ...
+.BI "[offset]O xx xx ..."
 Insert data.
 .TP
 .BI [offset]R<filename>
@@ -144,16 +144,16 @@ Insert range to destination.
 .BI y/str
 Yank string.
 .TP
-.BI y//xx xx ...
+.BI "y//xx xx ..."
 Yank binary data.
 .TP
-.BI <start>,<end> d
+.BI "<start>,<end> d"
 Delete (yank).
 .TP
-.BI <start>,<end> f xx xx ...
+.BI "<start>,<end> f xx xx ..."
 Fill range with data.
 .TP
-.BI <start>,<end> c <dest>
+.BI "<start>,<end> c <dest>"
 Copy data.
 .TP
 Various
@@ -175,7 +175,7 @@ Bitwise XOR.
 .BI [start,end]~
 Bitwise NOT.
 .TP
-.BI [start,end]<<... >>...
+.BI [start,end]<<[[times],[01]] >>[[times],[01]]
 Bit shifts and rotates (byte/multibyte).
 .TP
 .BI [start,end] v <dest>
@@ -197,7 +197,7 @@ Expressions in commands can include:
 Factors can be:
 .RS
 .nf
-\- Hex numbers (e.g., 0x1F)
+\- Hex numbers (e.g., 1F)
 \- Decimal numbers with '#' prefix (e.g., #123)
 \- Marks ('[a-z])
 \- Special symbols:
