@@ -788,11 +788,47 @@ def commandline(line):
     x2=x
 
     idx=skipspc(line,idx)
+    if idx<len(line) and line[idx]==',':
+        idx+=1
+        idx=skipspc(line,idx)
+        if idx<len(line) and line[idx]=='%':
+            idx+=1
+            idx=skipspc(line,idx)
+            t,idx=expression(line,idx)
+            if t==UNKNOWN:
+                t=1
+            x2=x+t-1
+        else:
+            t,idx=expression(line,idx)
+            if t==UNKNOWN:
+                t=x
+            x2=t
+    else:
+        x2=x
 
-    if idx==len(line) and not x==UNKNOWN:
+    idx=skipspc(line,idx)
+
+    if idx==len(line):
         jump(x)
         return -1
     
+    if idx<len(line) and line[idx]=='y':
+        idx+=1
+        idx=skipspc(line,idx)
+        if idx<len(line) and line[idx]=='/':
+            idx+=1
+            if idx<len(line) and line[idx]=='/':
+                yank,idx=get_hexs(line,idx+1)
+            else:
+                s,idx=get_restr(line,idx)
+                yank=[ ord(c) for c in s ]
+                
+            stdmm(f"{len(yank)} bytes yanked.")
+            return -1
+        else:
+            yankmem(x,x2)
+            return -1
+
     if idx<len(line) and line[idx] == 'p':
         y = list(yank)
         ovwmem(x, y)
@@ -895,39 +931,6 @@ def commandline(line):
         jump(x)
         return -1
 
-    if idx<len(line) and line[idx]=='y':
-        idx+=1
-        idx=skipspc(line,idx)
-        if idx<len(line) and line[idx]=='/':
-            idx+=1
-            if idx<len(line) and line[idx]=='/':
-                yank,idx=get_hexs(line,idx+1)
-            else:
-                s,idx=get_restr(line,idx)
-                yank=[ ord(c) for c in s ]
-                
-            stdmm(f"{len(yank)} bytes yanked.")
-            return -1
-        stdmm("Unrecognized command.")
-        return -1
-
-    if idx<len(line) and line[idx]==',':
-        idx+=1
-        idx=skipspc(line,idx)
-        if idx<len(line) and line[idx]=='%':
-            idx+=1
-            idx=skipspc(line,idx)
-            t,idx=expression(line,idx)
-            if t==UNKNOWN:
-                t=1
-            x2=x+t-1
-        else:
-            x2,idx=expression(line,idx)
-    else:
-        x2=x
-
-    idx=skipspc(line,idx)
-
     if idx<len(line):
         ch=line[idx]
     else:
@@ -936,9 +939,6 @@ def commandline(line):
     if ch=='d':
         delmem(x,x2,True)
         jump(x)
-        return -1
-    elif ch=='y':
-        yankmem(x,x2)
         return -1
     elif ch=='w':
         idx+=1
@@ -1043,6 +1043,8 @@ def fedit():
                 ch = 'l'
             elif c3 == 'D':
                 ch = 'h'
+            elif c2==chr(91) and c3==chr(50):
+                ch='i'
 
         clrmm()  # ここでメッセージ領域をクリア
         if ch == 'n':
