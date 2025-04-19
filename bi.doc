@@ -176,6 +176,7 @@ w<file> commands.
 2025-04-16 version 3.0.0 Bug fixes of flags to write file (lastchange,modified)
 2025-04-19 version 3.0.1 Bug fixes of commandline parsing and a little adjustment.
 2025-04-19 version 3.0.2 Bug fixes of 'i' command.
+2025-04-20 version 3.0.3 added permission check when writing file.
 --------------------
 
       I won't owe any responsibility for the result of application of

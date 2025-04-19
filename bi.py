@@ -733,9 +733,12 @@ def commandline(line):
     elif line=='q!':
         return 0
     elif line=='wq' or line=='wq!':
-        writefile(filename)
-        lastchange=False
-        return 0
+        f=writefile(filename)
+        if f:
+            lastchange=False
+            return 0
+        else:
+            return -1
     elif line[0]=='w':
         if len(line)>=2:
             s=line[1:].lstrip()
@@ -920,7 +923,7 @@ def commandline(line):
             x3,idx=expression(line,idx+1)
 
         if ch=='I':
-            if x3!=UNKNOWN and xp!=UNKNOWN:
+            if x3!=UNKNOWN:
                 data=[x3]*xp
                 insmem(x,data)
                 jump(x+len(data))
@@ -931,8 +934,6 @@ def commandline(line):
         elif ch=='i':
             if x3==UNKNOWN:
                 x3=0x00
-            if xp==UNKNOWN:
-                xp=1
             data=[x3]*xp
             ovwmem(x,data)
             jump(x+len(data))
@@ -1114,12 +1115,15 @@ def fedit():
             repaint()
             continue
         elif ch == 'Z':
-            return (True)
+            if writefile(filename):
+                return True
+            else:
+                continue
         elif ch == 'q':
             if lastchange:
                 stdmm("No write since last change. To overriding quit, use 'q!'.")
                 continue
-            return (False)
+            return False
         elif ch == 'M':
             disp_marks()
             continue
@@ -1188,20 +1192,30 @@ def readfile(fn):
 
 def writefile(fn):
     global mem,newfile
-    f=open(fn,"wb")
-    f.write(bytes(mem))
-    f.close()
-    stdmm("File written.")
+    try:
+        f=open(fn,"wb")
+        f.write(bytes(mem))
+        f.close()
+        stdmm("File written.")
+        return True
+    except:
+        stdmm("Permission denied.")
+        return False
 
 def wrtfile(start,end,fn):
     global mem
-    f=open(fn,"wb")
-    for i in range(start,end+1):
-        if i<len(mem):
-            f.write(bytes([mem[i]]))
-        else:
-            f.write(bytes([0]))
-    f.close()
+    try:
+        f=open(fn,"wb")
+        for i in range(start,end+1):
+            if i<len(mem):
+                f.write(bytes([mem[i]]))
+            else:
+                f.write(bytes([0]))
+        f.close()
+        return True
+    except:
+        stdmm("Permission denied.")
+        return False
 
 def main():
     global filename,verbose
