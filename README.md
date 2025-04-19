@@ -35,7 +35,7 @@ man bi
 
                    vi like binary editor 'bi'
 
-                   Programmed by Taisuke Maekawa (fygar256)
+                   Programmed by T.Maekawa (fygar256)
 
 Overview
 --------
@@ -99,9 +99,10 @@ On command line mode
 
    y/str                   ----- yank to yank buffer with string
    y//xx xx xx ...         ----- yank to yank buffer with data
-   [start,end] d           ----- delete by range (data will be yanked)
-   [start,end] f xx xx xx ...  - fill with data (by range)
-   [start,end]y            ----- yank to yankbuffer
+   <start>,<end> d         ----- delete by range (data will be yanked)
+   <start>,<end> f xx xx xx ...  - fill with data (by range)
+   <start>,<end> y         ----- yank to yankbuffer
+   <start>,<end> c <dest>  ----- copy data (data will be yanked)
    [start,end]|<data>      ----- bitwise or with data
    [start,end]&<data>      ----- bitwise and with data
    [start,end]^<data>      ----- bitwise xor with data
@@ -111,7 +112,6 @@ On command line mode
    [start,end]<<[[times],[01]] - left shift with bit 0,1 or rotate by multibyte
    [start,end]>>[[times],[01]] - right shift with bit 0,1 or rotate by multibyte
    [start,end] v <dest>    ----- move data
-   [start,end] c <dest>    ----- copy data (data will be yanked)
    [start,end] i <dest>    ----- insert data to <dest>
    [start,end] a /regexp/str                  ----- replace regexp with str
    [start,end] a /regexp//xx xx xx ...        ----- replace regexp with data
@@ -207,7 +207,7 @@ w<file> commands.
 2025-04-15 version 2.9.6 a little adjustment and 'o' command added.
 2025-04-15 version 2.9.7 a little adjustment and 'O' command added.
 2025-04-16 version 3.0.0 Bug fixes of flags to write file (lastchange,modified)
-           Completed
+           Complete
 --------------------
 
       I won't owe any responsibility for the result of application of
