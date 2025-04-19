@@ -911,6 +911,9 @@ def commandline(line):
     if idx<len(line) and line[idx] in 'if':
         ch=line[idx]
         xp,idx=expression(line,idx+1)
+        if xp==UNKNOWN:
+            stdmm("Invalid syntax")
+            return -1
 
         x3=UNKNOWN
         if idx<len(line) and line[idx]==',':
