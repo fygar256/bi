@@ -32,12 +32,6 @@ man bi
 ##### Manual
 
 ```
-vi風バイナリエディタ 'bi'
-
-開発者：T.Maekawa (fygar256)
-
-概要
---------
 
                    vi like binary editor 'bi'
 
@@ -93,8 +87,8 @@ On command line mode
    N                       ----- search the last
    [offset]                ----- jump to the address
    [offset]m[a-z]          ----- mark position
-   [offset]S<string>       ----- insert string at [offset]
-   [offset]s<string>       ----- overwrite string on and after [offset]
+   [offset]S<string>       ----- insert string and jump to end of string+1
+   [offset]s<string>       ----- overwrite string and jump to end of str+1
    [offset]o xx xx xx ...  ----- store data and jump to end+1
    [offset]O xx xx xx ...  ----- insert data and jump to end+1
    [offset]R<filename>     ----- read file and insert at [offset]
@@ -213,7 +207,8 @@ w<file> commands.
 2025-04-15 version 2.9.6 a little adjustment and 'o' command added.
 2025-04-15 version 2.9.7 a little adjustment and 'O' command added.
 2025-04-16 version 3.0.0 Bug fixes of flags to write file (lastchange,modified)
-           Complete
+2025-04-19 version 3.0.1 Bug fixes of commandline parsing and a little adjustment.
+2025-04-19 version 3.0.2 Bug fixes of 'i' command.
 --------------------
 
       I won't owe any responsibility for the result of application of
