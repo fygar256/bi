@@ -533,6 +533,9 @@ def get_restr(s, idx):
         if idx+1<len(s) and s[idx:idx+2]=="\\\\":
             m+='\\\\'
             idx+=2
+        elif s[idx]=="\\":
+            m+='\\\\'
+            idx+=1
         elif idx+1<len(s) and s[idx:idx+2]==chr(0x5c)+'/':
             m+='/'
             idx+=2
