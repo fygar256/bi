@@ -132,7 +132,6 @@ def repaint():
 
 def insmem(start,mem2):
     global mem,lastchange,modified
-    regulate_mem()
     if start>=len(mem):
         for i in range(start-len(mem)):
             mem+=[0]
@@ -144,16 +143,15 @@ def insmem(start,mem2):
     mem1=[]
     mem3=[]
     for j in range(start):
-        mem1+=[mem[j]]
+        mem1+=[mem[j]&0xff]
     for j in range(len(mem)-start):
-        mem3+=[mem[start+j]]
+        mem3+=[mem[start+j]&0xff]
     mem=mem1+mem2+mem3
     modified=True
     lastchange=True
 
 def delmem(start,end,yf):
     global yank,mem,modified,lastchange
-    regulate_mem()
     length=end-start+1
     if length<=0 or start>=len(mem):
         stdmm("Invalid range.")
@@ -164,16 +162,15 @@ def delmem(start,end,yf):
     mem1=[]
     mem2=[]
     for j in range(start):
-        mem1+=[mem[j]]
+        mem1+=[mem[j]&0xff]
     for j in range(end+1,len(mem)):
-        mem2+=[mem[j]]
+        mem2+=[mem[j]&0xff]
     mem=mem1+mem2
     lastchange=True
     modified=True
 
 def yankmem(start,end):
     global yank,mem
-    regulate_mem()
     length=end-start+1
     if length<=0 or start>=len(mem):
         stdmm("Invalid range.")
@@ -183,14 +180,13 @@ def yankmem(start,end):
     for j in range(start,end+1):
         if j<len(mem):
             cnt+=1
-            yank+=[mem[j]]
+            yank+=[mem[j]&0xff]
 
     stdmm(f"{cnt} bytes yanked.")
 
 def ovwmem(start,mem0):
     global mem,modified,lastchange
 
-    regulate_mem()
     if mem0==[]:
         return
 
@@ -200,9 +196,9 @@ def ovwmem(start,mem0):
 
     for j in range(len(mem0)):
         if j>=len(mem):
-            mem+=[mem0[j]]
+            mem+=[mem0[j]&0xff]
         else:
-            mem[start+j]=mem0[j]
+            mem[start+j]=mem0[j]&0xff
     lastchange=True
     modified=True
 
@@ -217,13 +213,11 @@ def redmem(start,end):
     return m
 
 def cpymem(start,end,dest):
-    regulate_mem()
     m=redmem(start,end)
     ovwmem(dest,m)
 
 def movmem(start,end,dest):
     global mem
-    regulate_mem()
     m=redmem(start,end)
     if start<=dest<=end:
         return
