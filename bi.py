@@ -130,7 +130,9 @@ def repaint():
         print("")
     esccolor(0)
 
-def insmem(start,mem2): global mem,lastchange,modified if start>=len(mem):
+def insmem(start,mem2):
+    global mem,lastchange,modified
+    if start>=len(mem):
         for i in range(start-len(mem)):
             mem+=[0]
         mem=mem+mem2
