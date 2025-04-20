@@ -208,6 +208,7 @@ w<file> commands.
 2025-04-20 version 3.0.3 added permission check when writing file.
 2025-04-20 version 3.0.4 change command name 'a' to 's' and Store/Insert data commans renamed to 'o' and 'O'
 2025-04-20 version 3.0.5 Bug fixes.
+2025-04-21 version 3.0.6 regexp bug fixes.
 --------------------
 
       I won't owe any responsibility for the result of application of
