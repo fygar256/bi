@@ -132,6 +132,7 @@ def repaint():
 
 def insmem(start,mem2):
     global mem,lastchange,modified
+    regulate_mem()
     if start>=len(mem):
         for i in range(start-len(mem)):
             mem+=[0]
@@ -152,6 +153,7 @@ def insmem(start,mem2):
 
 def delmem(start,end,yf):
     global yank,mem,modified,lastchange
+    regulate_mem()
     length=end-start+1
     if length<=0 or start>=len(mem):
         stdmm("Invalid range.")
@@ -171,6 +173,7 @@ def delmem(start,end,yf):
 
 def yankmem(start,end):
     global yank,mem
+    regulate_mem()
     length=end-start+1
     if length<=0 or start>=len(mem):
         stdmm("Invalid range.")
@@ -187,6 +190,7 @@ def yankmem(start,end):
 def ovwmem(start,mem0):
     global mem,modified,lastchange
 
+    regulate_mem()
     if mem0==[]:
         return
 
@@ -207,17 +211,19 @@ def redmem(start,end):
     m=[]
     for i in range(start,end+1):
         if len(mem)>i:
-            m+=[mem[i]]
+            m+=[mem[i]&0xff]
         else:
             m+=[0]
     return m
 
 def cpymem(start,end,dest):
+    regulate_mem()
     m=redmem(start,end)
     ovwmem(dest,m)
 
 def movmem(start,end,dest):
     global mem
+    regulate_mem()
     m=redmem(start,end)
     if start<=dest<=end:
         return
@@ -259,7 +265,7 @@ def readmem(addr):
     global mem
     if addr>=len(mem):
         return 0
-    return mem[addr]
+    return (mem[addr]&0xff)
 
 def setmem(addr,data):
     global mem,modified,lastchange
