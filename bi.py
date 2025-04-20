@@ -81,7 +81,7 @@ def getln():
         if ch == '\033':
             return ''
         elif ch == chr(13):
-            return s
+            break
         elif ch == chr(0x7f):
             if s != '':
                 escleft()
@@ -105,7 +105,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.0.3 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.0.6 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -126,7 +126,7 @@ def repaint():
         esccolor(6)
         for i in range(16):
             a=y*16+i+addr
-            print("~" if a>=len(mem) else (chr(mem[a]&0xff) if 0x20<=mem[a]<=0x7f else "."),end='')
+            print("~" if a>=len(mem) else (chr(mem[a]&0xff) if 0x20<=mem[a]<=0x7e else (' ' if mem[a]==0x7f else ".")),end='')
         print("")
     esccolor(0)
 
@@ -394,10 +394,6 @@ def scommand(start,end,line,idx):
             re_=False
 
     n,idx=get_str_or_hexs(line,idx)
-    if not n:
-        stdmm("Unrecognized command.")
-        jump(orgpos)
-        return
 
     i=start
     while True:
@@ -531,21 +527,19 @@ def searchlast(fp):
 def get_restr(s, idx):
     m = ''
     while idx < len(s):
-        ch = s[idx]
-        idx += 1
+        if s[idx] == '/':
+            break
 
-        if ch == '/':
-            return m, idx -1
+        if idx+1<len(s) and s[idx:idx+2]=="\\\\":
+            m+='\\\\'
+            idx+=2
+        elif idx+1<len(s) and s[idx:idx+2]==chr(0x5c)+'/':
+            m+='/'
+            idx+=2
+        else:
+            m+=s[idx]
+            idx+=1
 
-        if ch == chr(0x5c):  # \\
-            if idx < len(s) and s[idx] == '/':
-                m += '/'
-                idx += 1  # エスケープされた '/' を読み飛ばす
-            else:
-                m += ch  # 単独のバックスラッシュはそのまま追加
-            continue
-
-        m += ch
     return m, idx
 
 def searchstr(s):
@@ -590,25 +584,21 @@ def searchhex(sm):
     return False
 
 
-def comment(line):
-    result = ''
-    escaped = False
-    for char in line:
-        if escaped:
-            if char == ';':
-                result += ';'
-            elif char == '\\':
-                result += '\\'
-            else:
-                result += '\\' + char  # エスケープシーケンスとして認識されない場合はそのまま残す
-            escaped = False
-        elif char == '\\':
-            escaped = True
-        elif char == ';':
-            break  # エスケープされていない ';' 以降は無視する
+def comment(s):
+    idx=0
+    m = ''
+    while idx < len(s):
+        if s[idx] == ';':
+            break
+
+        if idx+1<len(s) and s[idx:idx+2]==chr(0x5c)+';':
+            m+=';'
+            idx+=2
         else:
-            result += char
-    return result
+            m+=s[idx]
+            idx+=1
+
+    return m
 
 def scripting(scriptfile):
     global scriptingflag,verbose
