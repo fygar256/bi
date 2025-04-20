@@ -122,17 +122,15 @@ def repaint():
         esccolor(7)
         for i in range(16):
             a=y*16+i+addr
-            print(f"~~ " if a>=len(mem) else f"{mem[a]:02X} ",end='')
+            print(f"~~ " if a>=len(mem) else f"{mem[a]&0xff:02X} ",end='')
         esccolor(6)
         for i in range(16):
             a=y*16+i+addr
-            print("~" if a>=len(mem) else (chr(mem[a]) if 0x20<=mem[a]<=0x7f else "."),end='')
+            print("~" if a>=len(mem) else (chr(mem[a]&0xff) if 0x20<=mem[a]<=0x7f else "."),end='')
         print("")
     esccolor(0)
 
-def insmem(start,mem2):
-    global mem,lastchange,modified
-    if start>=len(mem):
+def insmem(start,mem2): global mem,lastchange,modified if start>=len(mem):
         for i in range(start-len(mem)):
             mem+=[0]
         mem=mem+mem2
@@ -389,7 +387,7 @@ def scommand(start,end,line,idx):
 
     n,idx=get_str_or_hexs(line,idx)
     if not n:
-        stdm("Unrecognized command.")
+        stdmm("Unrecognized command.")
         jump(orgpos)
         return
 
@@ -522,18 +520,25 @@ def searchlast(fp):
             stdmm("Not found.")
             return False
 
-def get_restr(s,idx):
-    m=''
-    while idx<len(s):
-        ch=s[idx]
-        if s[idx]=='\\':
-            if idx+1<len(s):
-                ch=s[idx+1]
-        if s[idx]=='/':
-            return m,idx
-        m+=ch
-        idx+=1
-    return m,idx
+def get_restr(s, idx):
+    m = ''
+    while idx < len(s):
+        ch = s[idx]
+        idx += 1
+
+        if ch == '/':
+            return m, idx -1
+
+        if ch == chr(0x5c):  # \\
+            if idx < len(s) and s[idx] == '/':
+                m += '/'
+                idx += 1  # エスケープされた '/' を読み飛ばす
+            else:
+                m += ch  # 単独のバックスラッシュはそのまま追加
+            continue
+
+        m += ch
+    return m, idx
 
 def searchstr(s):
     global regexp,remem
@@ -578,34 +583,24 @@ def searchhex(sm):
 
 
 def comment(line):
-    """
-    文字列 line から、'\'でエスケープされない';'以降を無視し、
-    '\'でエスケープされた';'は';'に置き換える関数。
-
-    Args:
-        line: 処理対象の文字列。
-
-    Returns:
-        処理後の文字列。
-    """
-    result = []
+    result = ''
     escaped = False
-    ignore = False
     for char in line:
-        if ignore:
-            continue
-        if char == '\\':
+        if escaped:
+            if char == ';':
+                result += ';'
+            elif char == '\\':
+                result += '\\'
+            else:
+                result += '\\' + char  # エスケープシーケンスとして認識されない場合はそのまま残す
+            escaped = False
+        elif char == '\\':
             escaped = True
-            continue
-        if char == ';' and not escaped:
-            ignore = True
-        elif char == ';' and escaped:
-            result.append(';')
-            escaped = False
+        elif char == ';':
+            break  # エスケープされていない ';' 以降は無視する
         else:
-            result.append(char)
-            escaped = False
-    return "".join(result)
+            result += char
+    return result
 
 def scripting(scriptfile):
     global scriptingflag,verbose
@@ -1230,4 +1225,5 @@ def main():
         esccolor(7)
 
 if __name__=="__main__":
+
     main()
