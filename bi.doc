@@ -53,15 +53,15 @@ On command line mode
    N                       ----- search the last
    [offset]                ----- jump to the address
    [offset]m[a-z]          ----- mark position
-   [offset]S<string>       ----- insert string and jump to end of string+1
-   [offset]s<string>       ----- overwrite string and jump to end of str+1
-   [offset]o xx xx xx ...  ----- store data and jump to end+1
-   [offset]O xx xx xx ...  ----- insert data and jump to end+1
+   [offset]O/string        ----- insert string and jump to end of string+1
+   [offset]o/string        ----- overwrite string and jump to end of str+1
+   [offset]O//xx xx xx ... ----- insert data and jump to end+1
+   [offset]o//xx xx xx ... ----- overwrite data and jump to end+1
    [offset]R<filename>     ----- read file and insert at [offset]
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
    [offset] p              ----- paste yank buffer (overwrite)
    [offset] P              ----- paste yank buffer (insert)
-   [offset]i<length>,<xx>  ----- fill data xx from offset length times
+   [offset]i<length>,<xx>  ----- overwrite data xx repeatedly length times
    [offset]I<length>,<xx>  ----- insert data xx repeatedly length times
    [start,end] I <dest>    ----- insert data to <dest>
 
@@ -70,10 +70,10 @@ On command line mode
    <start>,<end> d         ----- delete by range (data will be yanked)
    <start>,<end> f xx xx xx ...  - fill with data (by range)
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
-   <start>,<end> a /regexp/str            ----- replace regexp with str
-   <start>,<end> a /regexp//xx xx xx ...  ----- replace regexp with data
-   <start>,<end> a //xx xx xx .../str     ----- replace data1 with str
-   <start>,<end> a //xx xx ...//xx xx ... ----- replace data1 with data2
+   <start>,<end> s /regexp/str            ----- replace regexp with str
+   <start>,<end> s /regexp//xx xx xx ...  ----- replace regexp with data
+   <start>,<end> s //xx xx xx .../str     ----- replace data1 with str
+   <start>,<end> s //xx xx ...//xx xx ... ----- replace data1 with data2
    [start],[end] y         ----- yank to yankbuffer
    [start,end]|<data>      ----- bitwise or with data
    [start,end]&<data>      ----- bitwise and with data
@@ -177,6 +177,7 @@ w<file> commands.
 2025-04-19 version 3.0.1 Bug fixes of commandline parsing and a little adjustment.
 2025-04-19 version 3.0.2 Bug fixes of 'i' command.
 2025-04-20 version 3.0.3 added permission check when writing file.
+2025-04-20 version 3.0.4 change command name 'a' to 's' and Store/Insert data commans renamed to 'o' and 'O'
 --------------------
 
       I won't owe any responsibility for the result of application of

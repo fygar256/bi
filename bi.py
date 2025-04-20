@@ -368,12 +368,13 @@ def get_value(s,idx):
         v=UNKNOWN
     return v,idx
 
-def acommand(start,end,line,idx):
+def scommand(start,end,line,idx):
     global span,nff
     nff=False
     idx=skipspc(line,idx)
     f=False
 
+    orgpos=fpos()
     m=''
     hs=[]
     if idx<len(line) and line[idx]=='/':
@@ -386,37 +387,32 @@ def acommand(start,end,line,idx):
             hs,idx=get_hexs(line,idx+1)
             re_=False
 
-    if idx<len(line) and line[idx]=='/' and f==True:
-        idx+=1
-        if idx<len(line) and line[idx]!='/':
-            str_,idx=get_restr(line,idx)
-            n=[ ord(c) for c in str_]
-        elif idx<len(line) and line[idx]=='/':
-            idx+=1
-            n,idx=get_hexs(line,idx)
+    n,idx=get_str_or_hexs(line,idx)
+    if not n:
+        stdm("Unrecognized command.")
+        jump(orgpos)
+        return
+
+    i=start
+    while True:
+        jump(i)
+        if re_==True:
+            f=searchstr(m)
+            i=fpos()
         else:
-            stdmm("Unrecognized command.")
-    else:
-        stdmm("Unrecognized command.")
+            f=searchhex(hs)
+            span=len(hs)
+            i=fpos()
 
-    orgpos=fpos()
-    jump(start)
-    if re_==True:
-        f=searchstr(m)
-        i=fpos()
-    else:
-        f=searchhex(hs)
-        span=len(hs)
-        i=fpos()
-
-    while i<=end and f:
-        delmem(i,i+span-1,False)
-        insmem(i,n)
-        i=i-span+len(n)
-        f=searchnext(i)
-        i=fpos()
-
-    jump(orgpos)
+        if i<=end and f:
+            delmem(i,i+span-1,False)
+            insmem(i,n)
+            i=i-span+len(n)
+            f=searchnext(i)
+            i=fpos()
+        else:
+            jump(orgpos)
+            return
 
 def opeand(x,x2,x3):
     for i in range(x,x2+1):
@@ -719,6 +715,19 @@ def shift_rotate(x,x2,times,bit,multibyte,direction):
                     right_shift_multibyte(x,x2,bit&1)
     return
 
+def get_str_or_hexs(line,idx):
+    idx=skipspc(line,idx)
+    if idx<len(line) and line[idx]=='/':
+        idx+=1
+        if idx<len(line) and line[idx]=='/':
+            m,idx=get_hexs(line,idx+1)
+        else:
+            s,idx=get_restr(line,idx)
+            m=[ ord(c) for c in s ]
+    else:
+        m=[]
+    return m,idx
+                
 def commandline(line):
     global lastchange,yank,filename,stack,verbose,scriptingflag
 
@@ -815,15 +824,8 @@ def commandline(line):
     
     if idx<len(line) and line[idx]=='y':
         idx+=1
-        idx=skipspc(line,idx)
-        if idx<len(line) and line[idx]=='/':
-            idx+=1
-            if idx<len(line) and line[idx]=='/':
-                yank,idx=get_hexs(line,idx+1)
-            else:
-                s,idx=get_restr(line,idx)
-                yank=[ ord(c) for c in s ]
-                
+        m,idx=get_str_or_hexs(line,idx)
+        if m:
             stdmm(f"{len(yank)} bytes yanked.")
             return -1
         else:
@@ -872,29 +874,15 @@ def commandline(line):
 
         return -1
 
-    if idx<len(line) and (line[idx]=='s' or line[idx]=='S'):
+    if idx<len(line) and line[idx] in 'oO':
         ch=line[idx]
         idx+=1
-        l=[ord(c) for c in line[idx:]]
-        if ch=='s':
+        l,idx=get_str_or_hexs(line,idx)
+        if ch=='o':
             ovwmem(x,l)
-        elif ch=='S':
+        elif ch=='O':
             insmem(x,l)
         jump(x+len(l))
-        return -1
-
-    if idx<len(line) and line[idx]=='O':
-        idx+=1
-        m,idx=get_hexs(line,idx)
-        insmem(x,m)
-        jump(x+len(m))
-        return -1
-
-    if idx<len(line) and line[idx]=='o':
-        idx+=1
-        m,idx=get_hexs(line,idx)
-        ovwmem(x,m)
-        jump(x+len(m))
         return -1
 
     if idx<len(line) and line[idx]=='d':
@@ -953,8 +941,8 @@ def commandline(line):
         fn=line[idx:].lstrip()
         wrtfile(x,x2,fn)
         return -1
-    elif ch=='a':
-        acommand(x,x2,line,idx+1)
+    elif ch=='s':
+        scommand(x,x2,line,idx+1)
         return -1
 
     if idx<len(line) and line[idx]=='~':
