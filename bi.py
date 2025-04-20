@@ -1175,8 +1175,14 @@ def readfile(fn):
         mem=list(f.read())
         f.close()
 
+def regulate_mem():
+    global mem
+    for i in range(len(mem)):
+        mem[i]=mem[i]&0xff
+
 def writefile(fn):
     global mem
+    regulate_mem()
     try:
         f=open(fn,"wb")
         f.write(bytes(mem))
@@ -1189,6 +1195,7 @@ def writefile(fn):
 
 def wrtfile(start,end,fn):
     global mem
+    regulate_mem()
     try:
         f=open(fn,"wb")
         for i in range(start,end+1):
