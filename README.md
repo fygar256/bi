@@ -30,7 +30,7 @@ man bi
 
                    vi like binary editor 'bi'
 
-                   Programmed by T.Maekawa (fygar256)
+                   Programmed by Taisuke Maekawa (fygar256)
 
 Overview
 --------
@@ -209,6 +209,7 @@ w<file> commands.
 2025-04-20 version 3.0.4 change command name 'a' to 's' and Store/Insert data commans renamed to 'o' and 'O'
 2025-04-20 version 3.0.5 Bug fixes.
 2025-04-21 version 3.0.6 regexp bug fixes.
+2025-04-21 version 3.0.8 get regexp search high-speed.
 --------------------
 
       I won't owe any responsibility for the result of application of
