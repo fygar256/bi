@@ -10,6 +10,7 @@ import argparse
 ESC='\033['
 LENONSCR=(20*16)
 BOTTOMLN=23
+RELEN=128
 UNKNOWN=0xffffffffffffffffffffffffffffffff
 mem=[]
 yank=[]
@@ -430,13 +431,21 @@ def openot(x,x2):
         setmem(i,(~(readmem(i))&0xff))
     return
             
-def srematch(a,b):
-    global span
+def srematch(addr):
+    global span,remem
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     tty.setraw(fd)
     span=0
-    f=re.match(a, b)
+    m=[]
+    if (addr<len(mem)-RELEN):
+        for i in range(RELEN):
+            m+=[mem[addr+i]&0xff]
+    else:
+        m=mem[addr:]
+
+    mem_bytes=bytes(m)
+    f=remem.match(mem_bytes)
     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     if f:
         start,end=f.span()
@@ -446,14 +455,11 @@ def srematch(a,b):
         return 0
 
 def hitre(addr):
-    global mem,remem
-    s=''
+    global remem
     if not remem:
         return True
-    for i in range(addr,len(mem)):
-        s+=chr(mem[i])
 
-    return srematch(remem,s)
+    return srematch(addr)
 
 def hit(addr):
     global smem,mem
@@ -543,7 +549,8 @@ def searchstr(s):
     global regexp,remem
     if s!="":
         regexp=True
-        remem=s
+        sb=s.encode('ascii')
+        remem=re.compile(sb)
         return(searchnext(fpos()))
     return False
 
