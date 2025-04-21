@@ -438,7 +438,7 @@ def srematch(addr):
     tty.setraw(fd)
     span=0
     m=[]
-    if (addr<len(mem)-RELEN):
+    if addr<len(mem)-RELEN:
         m=mem[addr:addr+RELEN]
     else:
         m=mem[addr:]
@@ -535,15 +535,10 @@ def get_restr(s, idx):
         elif idx+1<len(s) and s[idx:idx+2]==chr(0x5c)+'/':
             m+='/'
             idx+=2
-        elif s[idx]=="\\":
-            m+='\\\\'
-            idx+=1
         else:
             m+=s[idx]
             idx+=1
 
-    print(m)
-    getch()
     return m, idx
 
 def searchstr(s):
