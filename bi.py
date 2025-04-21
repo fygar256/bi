@@ -106,7 +106,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.0.6 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.0.8 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -439,8 +439,7 @@ def srematch(addr):
     span=0
     m=[]
     if (addr<len(mem)-RELEN):
-        for i in range(RELEN):
-            m+=[mem[addr+i]&0xff]
+        m=mem[addr:addr+RELEN]
     else:
         m=mem[addr:]
 
@@ -533,16 +532,18 @@ def get_restr(s, idx):
         if idx+1<len(s) and s[idx:idx+2]=="\\\\":
             m+='\\\\'
             idx+=2
-        elif s[idx]=="\\":
-            m+='\\\\'
-            idx+=1
         elif idx+1<len(s) and s[idx:idx+2]==chr(0x5c)+'/':
             m+='/'
             idx+=2
+        elif s[idx]=="\\":
+            m+='\\\\'
+            idx+=1
         else:
             m+=s[idx]
             idx+=1
 
+    print(m)
+    getch()
     return m, idx
 
 def searchstr(s):
