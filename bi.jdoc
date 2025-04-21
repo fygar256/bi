@@ -68,10 +68,10 @@ y//xx xx xx ... ----- ヤンクバッファにデータをヤンク
 <start>,<end> d ----- 範囲指定で削除（データはヤンクされます）
 <start>,<end> f xx xx xx ... - データで埋める（範囲指定）
 <start>,<end> c <dest> ----- データをコピー（データはヤンクされます）
-<start>,<end> s /regexp/str ----- 正規表現をstrで置換
-<start>,<end> s /regexp//xx xx xx ... ----- 正規表現をデータで置換
-<start>,<end> s //xx xx xx .../str ----- data1 を str に置換
-<start>,<end> s //xx xx xx ...//xx xx xx ... ----- data1 を data2 に置換
+[start,end] s /regexp/str ----- 正規表現をstrで置換
+[start,end] s /regexp//xx xx xx ... ----- 正規表現をデータで置換
+[start,end] s //xx xx xx .../str ----- data1 を str に置換
+[start,end] s //xx xx xx ...//xx xx xx ... ----- data1 を data2 に置換
 [start],[end] y ----- ヤンクバッファにヤンク
 [start,end]|<data> ----- データとのビット単位論理和
 [start,end]&<data> ----- データとのビット単位論理積
@@ -94,6 +94,7 @@ y//xx xx xx ... ----- ヤンクバッファにデータをヤンク
 エスケープ文字 '\' を使って記述する必要があります。
 
 上記のコマンドで現在位置を省略値とする場合は、`[]` で囲まれた値は省略できます。
+'s'コマンドは例外で、<start>,<end>を省略すると、ファイル全体に作用します。
 
 値 <end> は、'%<length>' を使って、<end>=<start>+<length>-1 のように渡すことができます。
 

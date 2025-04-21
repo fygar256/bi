@@ -70,10 +70,10 @@ On command line mode
    <start>,<end> d         ----- delete by range (data will be yanked)
    <start>,<end> f xx xx xx ...  - fill with data (by range)
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
-   <start>,<end> s /regexp/str            ----- replace regexp with str
-   <start>,<end> s /regexp//xx xx xx ...  ----- replace regexp with data
-   <start>,<end> s //xx xx xx .../str     ----- replace data1 with str
-   <start>,<end> s //xx xx ...//xx xx ... ----- replace data1 with data2
+   [start,end] s /regexp/str            ----- replace regexp with str
+   [start,end] s /regexp//xx xx xx ...  ----- replace regexp with data
+   [start,end] s //xx xx xx .../str     ----- replace data1 with str
+   [start,end] s //xx xx ...//xx xx ... ----- replace data1 with data2
    [start],[end] y         ----- yank to yankbuffer
    [start,end]|<data>      ----- bitwise or with data
    [start,end]&<data>      ----- bitwise and with data
@@ -97,6 +97,8 @@ Remarks
 
     The values enclosed with `[]` can be left out, when these commands 
     above take the current position as the value omitted.
+    But when the values such as start and end are omitted in 's' command,
+    's' command will affect entire file.
 
     The value <end> can be passed with '%<length>' as <end>=<start>+<length>-1.
 

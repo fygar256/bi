@@ -372,10 +372,17 @@ def get_value(s,idx):
 def scommand(start,end,line,idx):
     global span,nff
     nff=False
+    orgpos=fpos()
+
+    idx2=skipspc(line,0)
     idx=skipspc(line,idx)
+    if idx2<len(line) and line[idx2]=='s':
+        idx2=skipspc(line,idx2+1)
+        if idx==idx2:
+            start=0
+            end=len(mem)-1
     f=False
 
-    orgpos=fpos()
     m=''
     hs=[]
     if idx<len(line) and line[idx]=='/':
