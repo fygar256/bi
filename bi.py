@@ -106,7 +106,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.0.8 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.0.9 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -440,9 +440,6 @@ def openot(x,x2):
             
 def srematch(addr):
     global span,remem
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-    tty.setraw(fd)
     span=0
     m=[]
     if addr<len(mem)-RELEN:
@@ -452,7 +449,6 @@ def srematch(addr):
 
     mem_bytes=bytes(m)
     f=remem.match(mem_bytes)
-    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     if f:
         start,end=f.span()
         span=end-start
@@ -802,11 +798,9 @@ def commandline(line):
 
     idx=skipspc(line,idx)
     if idx<len(line) and line[idx]==',':
-        idx+=1
-        idx=skipspc(line,idx)
+        idx=skipspc(line,idx+1)
         if idx<len(line) and line[idx]=='%':
-            idx+=1
-            idx=skipspc(line,idx)
+            idx=skipspc(line,idx+1)
             t,idx=expression(line,idx)
             if t==UNKNOWN:
                 t=1
@@ -814,8 +808,9 @@ def commandline(line):
         else:
             t,idx=expression(line,idx)
             if t==UNKNOWN:
-                t=x
-            x2=t
+                x2=x
+            else:
+                x2=t
     else:
         x2=x
 
@@ -889,16 +884,7 @@ def commandline(line):
         return -1
 
     if idx<len(line) and line[idx]=='d':
-        length,idx=expression(line,idx+1)
-
-        if length==UNKNOWN:
-            length=1
-
-        idx=skipspc(line,idx)
-
-        delmem(x,x+length-1,True)
-        return -1
-        stdmm("Unrecognized command.")
+        delmem(x,x2,True)
         return -1
         
 
