@@ -211,6 +211,7 @@ w<file> commands.
 2025-04-20 version 3.0.5 Bug fixes.
 2025-04-21 version 3.0.6 regexp bug fixes.
 2025-04-21 version 3.0.8 get regexp search high-speed.
+2025-04-23 version 3.0.9 'd' command bug fix.
 --------------------
 
       I won't owe any responsibility for the result of application of
