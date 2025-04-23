@@ -106,7 +106,7 @@ def print_title():
     global filename,modified,insmod,mem
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.0.9 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.1.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -1011,12 +1011,30 @@ def commandln():
     line=getln().lstrip()
     return commandline(line)
 
+def printdata():
+    addr=fpos()
+    a=readmem(addr)
+    esclocate(0,24)
+    esccolor(6)
+    s='.'
+    if a<0x20:
+        s='^'+chr(a+ord('@'))
+    elif a>=0x7e:
+        s='.'
+    else:
+        s='\''+chr(a)+'\''
+    if addr<len(mem):
+        print(f"{addr:012X} : 0x{a:02X} 0b{a:08b} 0o{a:03o} {a} {s}      ",end='',flush=True)
+    else:
+        print(f"{addr:012X} : ~~                                                   ",end='',flush=True)
+
 def fedit():
     global nff, yank, lastchange, modified, insmod, homeaddr, curx, cury
     stroke = False
     ch = ''
     while True:
         repaint()
+        printdata()
         esclocate(curx // 2 * 3 + 13 + (curx & 1), cury + 3)
         ch = getch()
         nff = True
