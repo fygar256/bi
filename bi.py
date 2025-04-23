@@ -442,6 +442,7 @@ def srematch(addr):
     global span,remem
     span=0
     m=[]
+    regulate_mem()
     if addr<len(mem)-RELEN:
         m=mem[addr:addr+RELEN]
     else:
