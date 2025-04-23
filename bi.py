@@ -898,20 +898,14 @@ def commandline(line):
         x3=UNKNOWN
         if idx<len(line) and line[idx]==',':
             x3,idx=expression(line,idx+1)
+        if x3==UNKNOWN:
+            x3=0x00
+        data=[x3]*xp
 
         if ch=='I':
-            if x3!=UNKNOWN:
-                data=[x3]*xp
-                insmem(x,data)
-                jump(x+len(data))
-            else:
-                m=redmem(x,x2)
-                insmem(xp,m)
-                jump(xp+len(m))
+            insmem(x,data)
+            jump(x+len(data))
         elif ch=='i':
-            if x3==UNKNOWN:
-                x3=0x00
-            data=[x3]*xp
             ovwmem(x,data)
             jump(x+len(data))
         return -1
@@ -940,7 +934,7 @@ def commandline(line):
         openot(x,x2)
         return -1
 
-    if idx<len(line) and line[idx] in "fvc&|^<>":
+    if idx<len(line) and line[idx] in "fvCc&|^<>":
         ch=line[idx]
         idx+=1
         if ch in '<>':
@@ -981,6 +975,12 @@ def commandline(line):
         if ch=='c':
             cpymem(x,x2,x3)
             jump(x3)
+            return -1
+        elif ch=='C':
+            m=redmem(x,x2)
+            yankmem(x,x2)
+            insmem(x3,m)
+            jump(x3+len(m))
             return -1
         elif ch=='v':
             movmem(x,x2,x3)

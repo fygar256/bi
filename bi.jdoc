@@ -61,12 +61,12 @@ N ----- 最後の文字列を検索
 [offset] P ----- ヤンクバッファを貼り付け（挿入）
 [offset]i<length>,<xx> ----- データ xx を length 回繰り返しオーバーライト
 [offset]I<length>,<xx> ----- データ xx を length 回繰り返し挿入
-[start,end] I <dest> ----- <dest>にデータを挿入
 
 y/str ----- ヤンクバッファに文字列をヤンク
 y//xx xx xx ... ----- ヤンクバッファにデータをヤンク
 <start>,<end> d ----- 範囲指定で削除（データはヤンクされます）
 <start>,<end> f xx xx xx ... - データで埋める（範囲指定）
+<start>,<end> C <dest> ----- <dest>にデータを挿入 (データはヤンクされます)
 <start>,<end> c <dest> ----- データをコピー（データはヤンクされます）
 [start,end] s /regexp/str ----- 正規表現をstrで置換
 [start,end] s /regexp//xx xx xx ... ----- 正規表現をデータで置換

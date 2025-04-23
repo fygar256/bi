@@ -1,4 +1,4 @@
-.TH BI 1 "April 20, 2025" "Version 3.0.4" "Binary Editor like vi"
+.TH BI 1 "April 20, 2025" "Version 3.0.9" "Binary Editor like vi"
 .SH NAME
 bi \- vi-like binary editor
 .SH SYNOPSIS
@@ -109,9 +109,6 @@ Paste yank buffer.
 \fB[offset]i<length>,<xx>\fR \fB[offset]I<length>,<xx>\fR
 Overwrite/insert repeated byte.
 .TP
-\fB[start,end]I<dest>\fR
-Insert data to destination.
-.TP
 \fBy/str\fR \fBy//xx xx xx ...\fR
 Yank to buffer.
 .TP
@@ -123,6 +120,9 @@ Fill data.
 .TP
 \fB<start>,<end>c<dest>\fR
 Copy data (also yanked).
+.TP
+\fB<start>,<end>C<dest>\fR
+Insert data (also yanked).
 .TP
 \fB<start>,<end>s /regexp/str\fR
 Replace regexp with string.
@@ -159,6 +159,12 @@ Return to screen mode.
 
 .SH ESCAPE CHARACTER
 Escape character in command line is '\\'. use before ';' and '/'.
+.SH v COMMAND
+The v command has a bit of a quirk. It deletes data from <start> to <end>
+and moves it to <dest>, but if dest==filesize, the deleted data is moved
+to the end of the data + 1, and if dest>filesize, it fills from the end of
+the file + 1 to dest with 0s, and writes the deleted data from dest.
+
 .SH EXPRESSIONS
 Expressions support:
 .TP
