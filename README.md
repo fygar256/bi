@@ -91,12 +91,12 @@ On command line mode
    [offset] P              ----- paste yank buffer (insert)
    [offset]i<length>,<xx>  ----- overwrite data xx repeatedly length times
    [offset]I<length>,<xx>  ----- insert data xx repeatedly length times
-   [start,end] I <dest>    ----- insert data to <dest>
 
    y/str                   ----- yank to yank buffer with string
    y//xx xx xx ...         ----- yank to yank buffer with data
    <start>,<end> d         ----- delete by range (data will be yanked)
    <start>,<end> f xx xx xx ...  - fill with data (by range)
+   <start>,<end> C <dest>  ----- insert data to <dest> (data will be yanked)
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
    [start,end] s /regexp/str            ----- replace regexp with str
    [start,end] s /regexp//xx xx xx ...  ----- replace regexp with data
