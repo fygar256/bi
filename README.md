@@ -140,7 +140,7 @@ Remarks
     0 as the top of file, . as the current position, and $ as the bottom
     of file.
 
-    The m command has a bit of a quirk. It deletes data from <start> to <end>
+    The v command has a bit of a quirk. It deletes data from <start> to <end>
     and moves it to <dest>, but if dest==filesize, the deleted data is moved
     to the end of the data + 1, and if dest>filesize, it fills from the end of
     the file + 1 to dest with 0s, and writes the deleted data from dest.
