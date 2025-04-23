@@ -878,15 +878,12 @@ def commandline(line):
         l,idx=get_str_or_hexs(line,idx)
         if ch=='o':
             ovwmem(x,l)
+            stdmm(f"{len(l)} bytes stored.")
         elif ch=='O':
             insmem(x,l)
+            stdmm(f"{len(l)} bytes inserted.")
         jump(x+len(l))
         return -1
-
-    if idx<len(line) and line[idx]=='d':
-        delmem(x,x2,True)
-        return -1
-        
 
     if idx<len(line) and line[idx] in 'iI':
         ch=line[idx]
@@ -904,9 +901,11 @@ def commandline(line):
 
         if ch=='I':
             insmem(x,data)
+            stdmm(f"{len(data)} bytes inserted.")
             jump(x+len(data))
         elif ch=='i':
             ovwmem(x,data)
+            stdmm(f"{len(data)} bytes overwritten.")
             jump(x+len(data))
         return -1
 
@@ -917,6 +916,7 @@ def commandline(line):
 
     if ch=='d':
         delmem(x,x2,True)
+        stdmm(f"{x2-x+1} bytes deleted.")
         jump(x)
         return -1
     elif ch=='w':
@@ -962,6 +962,7 @@ def commandline(line):
             if len(m):
                 data=m*((x2-x+1)//len(m))+m[0:((x2-x+1)%len(m))]
                 ovwmem(x,data)
+                stdmm(f"{len(data)} bytes filled.")
                 jump(x)
             else:
                 stdmm("Invalid syntax.")
@@ -975,16 +976,19 @@ def commandline(line):
         if ch=='c':
             yankmem(x,x2)
             cpymem(x,x2,x3)
+            stdmm(f"{x2-x+1} bytes copied.")
             jump(x3+(x2-x+1))
             return -1
         elif ch=='C':
             m=redmem(x,x2)
             yankmem(x,x2)
             insmem(x3,m)
+            stdmm(f"{x2-x+1} bytes inserted.")
             jump(x3+len(m))
             return -1
         elif ch=='v':
             movmem(x,x2,x3)
+            stdmm(f"{x2-x+1} bytes moved.")
             jump(x3)
             return -1
         elif ch=='&':
