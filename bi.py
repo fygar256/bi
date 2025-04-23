@@ -973,8 +973,9 @@ def commandline(line):
             return -1
 
         if ch=='c':
+            yankmem(x,x2)
             cpymem(x,x2,x3)
-            jump(x3)
+            jump(x3+(x2-x+1))
             return -1
         elif ch=='C':
             m=redmem(x,x2)
