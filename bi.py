@@ -95,13 +95,8 @@ def getln():
                 escleft()
                 s = s[:len(s) - 1]
         elif ord(ch)>=0x80:
-            utf8_bytes=ch.encode('utf-8')
-            u=''
-            for i in utf8_bytes:
-                u+=chr(i)
+            print(f"{ch}",end='',flush=True)
             s+=ch
-            sys.stdout.buffer.write(utf8_bytes)
-            sys.stdout.buffer.flush()
         else:
             putch(ch)
             s += ch
@@ -481,13 +476,18 @@ def openot(x,x2):
     return
             
 def srematch(addr):
-    global span,remem
+    global span,remem,mem
     span=0
     m=[]
     if addr<len(mem)-RELEN:
         m=mem[addr:addr+RELEN]
     else:
         m=mem[addr:]
+
+    """
+    for i in range(len(m)):
+        m[i]=m[i]&0xff
+    """
 
     mem_bytes=bytes(m)
     f=remem.match(mem_bytes)
@@ -763,7 +763,8 @@ def get_str_or_hexs(line,idx):
             m,idx=get_hexs(line,idx+1)
         else:
             s,idx=get_restr(line,idx)
-            m=[ ord(c) for c in s ]
+            bseq=s.encode('utf-8')
+            m=list(bseq)
     else:
         m=[]
     return m,idx
@@ -1294,3 +1295,4 @@ def main():
 if __name__=="__main__":
 
     main()
+
