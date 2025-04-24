@@ -81,26 +81,7 @@ def putch(c):
     print(c,end='',flush=True)
 
 def getln():
-    s = ""
-    while True:
-        ch = getch()
-        if ch == '\033':
-            return ''
-        elif ch == chr(13):
-            break
-        elif ch == chr(0x7f):
-            if s != '':
-                escleft()
-                putch(' ')
-                escleft()
-                s = s[:len(s) - 1]
-        elif ord(ch)>=0x80:
-            print(f"{ch}",end='',flush=True)
-            s+=ch
-        else:
-            putch(ch)
-            s += ch
-    return s
+    return input("")
 
 def skipspc(s,idx):
     while idx<len(s):
@@ -422,6 +403,7 @@ def scommand(start,end,line,idx):
 
     m=''
     hs=[]
+    re_=False
     if idx<len(line) and line[idx]=='/':
         idx+=1
         f=True
@@ -580,7 +562,7 @@ def get_restr(s, idx):
         elif idx+1<len(s) and s[idx:idx+2]==chr(0x5c)+'/':
             m+='/'
             idx+=2
-        elif s[idx]=='\\':
+        elif s[idx]=='\\' and len(s)-1==idx:
             idx+=1
             break
         else:
