@@ -119,7 +119,7 @@ def print_title():
     global filename,modified,insmod,mem,repsw
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.1.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.2.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -484,7 +484,6 @@ def srematch(addr):
     global span,remem
     span=0
     m=[]
-    regulate_mem()
     if addr<len(mem)-RELEN:
         m=mem[addr:addr+RELEN]
     else:
@@ -619,7 +618,7 @@ def get_hexs(s,idx):
         v,idx=expression(s,idx)
         if v==UNKNOWN:
             break
-        m+=[v]
+        m+=[v&0xff]
     return m,idx
 
 def searchhex(sm):
@@ -939,7 +938,7 @@ def commandline(line):
             x3,idx=expression(line,idx+1)
         if x3==UNKNOWN:
             x3=0x00
-        data=[x3]*xp
+        data=[x3&0xff]*xp
 
         if ch=='I':
             insmem(x,data)
