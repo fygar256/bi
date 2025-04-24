@@ -34,6 +34,10 @@ verbose=False
 scriptingflag=False
 stack=[]
 
+def printhexs(s):
+    for i,b in enumerate(s):
+        print(f"s[{i}]: {ord(b):02x} ",end='',flush=True)
+
 def escup(n=1):
     print(f"{ESC}{n}A",end='')
 
@@ -92,8 +96,10 @@ def getln():
                 s = s[:len(s) - 1]
         elif ord(ch)>=0x80:
             utf8_bytes=ch.encode('utf-8')
+            u=''
             for i in utf8_bytes:
-                s+=chr(i)
+                u+=chr(i)
+            s+=ch
             sys.stdout.buffer.write(utf8_bytes)
             sys.stdout.buffer.flush()
         else:
@@ -581,14 +587,13 @@ def get_restr(s, idx):
         else:
             m+=s[idx]
             idx+=1
-
     return m, idx
 
 def searchstr(s):
     global regexp,remem
     if s!="":
         regexp=True
-        sb=s.encode('ascii')
+        sb=s.encode('utf-8')
         remem=re.compile(sb)
         return(searchnext(fpos()))
     return False
