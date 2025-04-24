@@ -47,6 +47,7 @@ Command Reference
    ^F ^B                   ----- move by a page ( 256 bytes )
    ^D ^U                   ----- move by half a page ( 128 bytes )
    ^L                      ----- repaint screen.
+   ^Y                      ----- toggle utf-8 display enable/disable
    ^                       ----- jump to the left end of line
    $                       ----- jump to the right end of line
    m[a-z]                  ----- mark currrent position
@@ -147,6 +148,9 @@ Remarks
 
     ^L switches multi-byte boundary from 0 to 2. if utf-8 multi-byte characters
     are not seen, press ^L several times.
+
+    ^Y toggles utf-8 display mode. Initial value is disable. when the screen
+    is disturbed by utf-8 encode error, you can disable it with pressing ^Y.
 
     The functions marked with `@` are not implemented yet.
 
