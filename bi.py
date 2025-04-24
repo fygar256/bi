@@ -6,6 +6,7 @@ import string
 import copy
 import re
 import os
+import io
 import argparse
 ESC='\033['
 LENONSCR=(20*16)
@@ -81,7 +82,8 @@ def putch(c):
     print(c,end='',flush=True)
 
 def getln():
-    return input("")
+    raw_bytes = sys.stdin.buffer.readline().rstrip(b'\n')
+    return raw_bytes.decode('utf-8', errors='replace')  # または errors='ignore'
 
 def skipspc(s,idx):
     while idx<len(s):
@@ -458,25 +460,31 @@ def openot(x,x2):
     return
             
 def srematch(addr):
-    global span,remem,mem
-    span=0
-    m=[]
-    if addr<len(mem)-RELEN:
-        m=mem[addr:addr+RELEN]
+    global span, remem, mem
+    span = 0
+    m = []
+
+    if addr < len(mem) - RELEN:
+        m = mem[addr:addr + RELEN]
     else:
-        m=mem[addr:]
+        m = mem[addr:]
 
-    """
-    for i in range(len(m)):
-        m[i]=m[i]&0xff
-    """
+    byte_data = bytes(m)
+    ms = byte_data.decode('utf-8', errors='replace')
 
-    mem_bytes=bytes(m)
-    f=remem.match(mem_bytes)
+    try:
+        f = re.match(remem, ms)
+    except:
+        stdmm("Bad regular expression.")
+        return 0
+
     if f:
-        start,end=f.span()
-        span=end-start
-        return span
+        start, end = f.span()
+        span = end - start
+        matched_str = ms[start:end]
+        matched_bytes = matched_str.encode('utf-8')
+        span=len(matched_bytes)
+        return 1
     else:
         return 0
 
@@ -574,13 +582,7 @@ def searchstr(s):
     global regexp,remem
     if s!="":
         regexp=True
-        sb=s.encode('utf-8')
-        try:
-            remem=re.compile(sb)
-        except:
-            stdmm("Bad regular expression.")
-            return False
-
+        remem=s
         return(searchnext(fpos()))
     return False
 
