@@ -21,6 +21,7 @@ lastchange=False
 modified=False
 newfile=False
 homeaddr=0
+utf8=False
 insmod=False
 curx=0
 cury=0
@@ -102,30 +103,35 @@ def print_title():
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
 def printchar(a):
+    global utf8
     if a>=len(mem):
         print("~",end='',flush=True)
         return 1
-    if mem[a]<0x80 or 0x80<=mem[a]<=0xbf or 0xf0<=mem[a]<=0xff:
+    if utf8:
+        if mem[a]<0x80 or 0x80<=mem[a]<=0xbf or 0xf0<=mem[a]<=0xff:
+            print(chr(mem[a]&0xff) if 0x20<=mem[a]<=0x7e else '.',end='')
+            return 1
+        elif 0xc0<=mem[a]<=0xdf:
+            m=[readmem(a+repsw),readmem(a+1+repsw)]
+            try:
+                ch=bytes(m).decode('utf-8')
+                print(f"{ch}",end='',flush=True)
+                return 2 
+            except UnicodeDecodeError:
+                print(".",end='')
+                return 1
+        elif 0xe0<=mem[a]<=0xef:
+            m=[readmem(a+repsw),readmem(a+1+repsw),readmem(a+2+repsw)]
+            try:
+                ch=bytes(m).decode('utf-8')
+                print(f"{ch} ",end='',flush=True)
+                return 3
+            except UnicodeDecodeError:
+                print(".",end='')
+                return 1
+    else:
         print(chr(mem[a]&0xff) if 0x20<=mem[a]<=0x7e else '.',end='')
         return 1
-    elif 0xc0<=mem[a]<=0xdf:
-        m=[readmem(a+repsw),readmem(a+1+repsw)]
-        try:
-            ch=bytes(m).decode('utf-8')
-            print(f"{ch}",end='',flush=True)
-            return 2 
-        except UnicodeDecodeError:
-            print(".",end='')
-            return 1
-    elif 0xe0<=mem[a]<=0xef:
-        m=[readmem(a+repsw),readmem(a+1+repsw),readmem(a+2+repsw)]
-        try:
-            ch=bytes(m).decode('utf-8')
-            print(f"{ch} ",end='',flush=True)
-            return 3
-        except UnicodeDecodeError:
-            print(".",end='')
-            return 1
 
 def repaint():
     print_title()
@@ -1059,7 +1065,7 @@ def printdata():
         print(f"{addr:010X} : ~~                                                   ",end='',flush=True)
 
 def fedit():
-    global nff, yank, lastchange, modified, insmod, homeaddr, curx, cury,repsw
+    global nff,yank,lastchange,modified,insmod,homeaddr,curx,cury,repsw,utf8
     stroke = False
     ch = ''
     repsw=0
@@ -1142,9 +1148,14 @@ def fedit():
         elif ch == 'l':
             inccurx()
             continue
+        elif ch==chr(25):
+            utf8=not utf8
+            escclear()
+            repaint()
+            continue
         elif ch == chr(12):
             escclear()
-            repsw=(repsw+1)%3
+            repsw=(repsw+(1 if utf8 else 0))%3
             repaint()
             continue
         elif ch == 'Z':
