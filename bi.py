@@ -593,7 +593,12 @@ def searchstr(s):
     if s!="":
         regexp=True
         sb=s.encode('utf-8')
-        remem=re.compile(sb)
+        try:
+            remem=re.compile(sb)
+        except:
+            stdmm("Bad regular expression.")
+            return False
+
         return(searchnext(fpos()))
     return False
 
