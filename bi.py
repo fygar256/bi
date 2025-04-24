@@ -26,6 +26,7 @@ cury=0
 mark=[UNKNOWN] * 26
 smem=[]
 regexp=False
+repsw=0
 remem=''
 span=0
 nff=True
@@ -89,6 +90,12 @@ def getln():
                 putch(' ')
                 escleft()
                 s = s[:len(s) - 1]
+        elif ord(ch)>=0x80:
+            utf8_bytes=ch.encode('utf-8')
+            for i in utf8_bytes:
+                s+=chr(i)
+            sys.stdout.buffer.write(utf8_bytes)
+            sys.stdout.buffer.flush()
         else:
             putch(ch)
             s += ch
@@ -103,31 +110,60 @@ def skipspc(s,idx):
     return idx
 
 def print_title():
-    global filename,modified,insmod,mem
+    global filename,modified,insmod,mem,repsw
     esclocate(0,0)
     esccolor(6)
     print(f"bi version 3.1.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
+def printchar(a):
+    if a>=len(mem):
+        print("~",end='',flush=True)
+        return 1
+    if mem[a]<0x80 or 0x80<=mem[a]<=0xbf or 0xf0<=mem[a]<=0xff:
+        print(chr(mem[a]&0xff) if 0x20<=mem[a]<=0x7e else '.',end='')
+        return 1
+    elif 0xc0<=mem[a]<=0xdf:
+        m=[readmem(a+repsw),readmem(a+1+repsw)]
+        try:
+            ch=bytes(m).decode('utf-8')
+            print(f"{ch}",end='',flush=True)
+            return 2 
+        except UnicodeDecodeError:
+            print(".",end='')
+            return 1
+    elif 0xe0<=mem[a]<=0xef:
+        m=[readmem(a+repsw),readmem(a+1+repsw),readmem(a+2+repsw)]
+        try:
+            ch=bytes(m).decode('utf-8')
+            print(f"{ch} ",end='',flush=True)
+            return 3
+        except UnicodeDecodeError:
+            print(".",end='')
+            return 1
+
 def repaint():
     print_title()
     esclocate(0,2)
     esccolor(4)
-    print("OFFSET       +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF  ")
+    print("OFFSET     +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF  ")
     esccolor(7)
     addr=homeaddr
     for y in range(0x14):
         esccolor(5)
-        print(f"{(addr+y*16)&0xffffffffffff:012X} ",end='')
+        print(f"{(addr+y*16)&0xffffffffffff:010X} ",end='')
         esccolor(7)
         for i in range(16):
             a=y*16+i+addr
             print(f"~~ " if a>=len(mem) else f"{mem[a]&0xff:02X} ",end='')
         esccolor(6)
-        for i in range(16):
-            a=y*16+i+addr
-            print("~" if a>=len(mem) else (chr(mem[a]&0xff) if 0x20<=mem[a]<=0x7e else (' ' if mem[a]==0x7f else ".")),end='')
+        a=y*16+addr
+        by=0
+        while by<16:
+            c=printchar(a)
+            a+=c
+            by+=c
         print("")
     esccolor(0)
 
@@ -1024,18 +1060,19 @@ def printdata():
     else:
         s='\''+chr(a)+'\''
     if addr<len(mem):
-        print(f"{addr:012X} : 0x{a:02X} 0b{a:08b} 0o{a:03o} {a} {s}      ",end='',flush=True)
+        print(f"{addr:010X} : 0x{a:02X} 0b{a:08b} 0o{a:03o} {a} {s}      ",end='',flush=True)
     else:
-        print(f"{addr:012X} : ~~                                                   ",end='',flush=True)
+        print(f"{addr:010X} : ~~                                                   ",end='',flush=True)
 
 def fedit():
-    global nff, yank, lastchange, modified, insmod, homeaddr, curx, cury
+    global nff, yank, lastchange, modified, insmod, homeaddr, curx, cury,repsw
     stroke = False
     ch = ''
+    repsw=0
     while True:
         repaint()
         printdata()
-        esclocate(curx // 2 * 3 + 13 + (curx & 1), cury + 3)
+        esclocate(curx // 2 * 3 + 11 + (curx & 1), cury + 3)
         ch = getch()
         nff = True
 
@@ -1113,6 +1150,7 @@ def fedit():
             continue
         elif ch == chr(12):
             escclear()
+            repsw=(repsw+1)%3
             repaint()
             continue
         elif ch == 'Z':
