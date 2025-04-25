@@ -40,6 +40,12 @@ def printhexs(s):
     for i,b in enumerate(s):
         print(f"s[{i}]: {ord(b):02x} ",end='',flush=True)
 
+def escnocursor():
+    return
+
+def escdispcursor():
+    return
+
 def escup(n=1):
     print(f"{ESC}{n}A",end='')
 
@@ -135,6 +141,7 @@ def printchar(a):
 
 def repaint():
     print_title()
+    escnocursor()
     esclocate(0,2)
     esccolor(4)
     print("OFFSET     +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF  ")
@@ -156,6 +163,7 @@ def repaint():
             by+=c
         print("")
     esccolor(0)
+    escdispcursor()
 
 def insmem(start,mem2):
     global mem,lastchange,modified
@@ -1284,6 +1292,8 @@ def main():
     args = parser.parse_args()
     filename=args.file
     script=args.script
+    if not script:
+        escclear()
     verbose=args.verbose
     wrtflg=args.write
     readfile(filename)
@@ -1293,8 +1303,6 @@ def main():
         if wrtflg and lastchange:
             writefile(filename)
     else:
-        if not newfile:
-            escclear()
         fedit()
         esccolor(7)
 
