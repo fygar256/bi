@@ -829,8 +829,12 @@ def commandline(line):
     idx=skipspc(line,0)
 
     x,idx=expression(line,idx)
+    xf=False
+    xf2=False
     if x==UNKNOWN:
         x=fpos()
+    else:
+        xf=True
     x2=x
 
     idx=skipspc(line,idx)
@@ -848,6 +852,7 @@ def commandline(line):
                 x2=x
             else:
                 x2=t
+                xf2=True
     else:
         x2=x
 
@@ -859,13 +864,14 @@ def commandline(line):
     
     if idx<len(line) and line[idx]=='y':
         idx+=1
-        m,idx=get_str_or_hexs(line,idx)
-        if m:
-            stdmm(f"{len(yank)} bytes yanked.")
-            return -1
+        if not xf and not xf2:
+            m,idx=get_str_or_hexs(line,idx)
+            yank=list(m)
         else:
             yankmem(x,x2)
-            return -1
+
+        stdmm(f"{len(yank)} bytes yanked.")
+        return -1
 
     if idx<len(line) and line[idx] == 'p':
         y = list(yank)
