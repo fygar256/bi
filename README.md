@@ -27,7 +27,6 @@ bi file
 ##### reference of man
 man bi
 
-
                    vi like binary editor 'bi'
 
                    Programmed by Taisuke Maekawa (fygar256)
@@ -125,19 +124,19 @@ Remarks
     Comment can be written in command with ';'. You have to write command
     including semicolon with escape character '\'.
 
-    The values enclosed with `[]` can be left out, when these commands 
+    The values enclosed with `[]` can be left out, when these commands
     above take the current position as the value omitted.
     But when the values such as start and end are omitted in 's' command,
     's' command will affect entire file.
 
     The value <end> can be passed with '%<length>' as <end>=<start>+<length>-1.
 
-    On command line, you've got to give values by simple expression as 
+    On command line, you've got to give values by simple expression as
     followings.
 
         <expression> := <factor> [+|-] <factor>
 
-    factor is a number in hexadecimal or decimal with prefix '#'. 
+    factor is a number in hexadecimal or decimal with prefix '#'.
     And you can also give values with '[a-z] as marked position,
     0 as the top of file, . as the current position, and $ as the bottom
     of file.
@@ -227,6 +226,7 @@ w<file> commands.
 2025-04-24 version 3.1.0 added data print functionality on bottom line.
 2025-04-24 version 3.2.0 utf-8 multi-byte (up to 3) manipulation added for Japanese.
 2025-04-26 version 3.3.0 added checking memory overflow error.
+2025-04-26 version 3.3.1 separated message into error message and standard message.
 --------------------
 
       I don't take any responsibility for the result of application of
