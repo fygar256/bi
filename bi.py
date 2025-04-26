@@ -398,7 +398,13 @@ def get_value(s,idx):
         else:
             stdmm("Invalid eval expression.")
             return UNKNOWN,idx
-        v=eval(u)
+
+        try:
+            v=eval(u)
+        except SyntaxError:
+            stdmm("Invalid eval expression.")
+            return UNKNOWN,idx
+
     elif ch=='.':
         idx+=1
         v=fpos()
