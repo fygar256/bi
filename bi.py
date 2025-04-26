@@ -104,7 +104,7 @@ def print_title():
     global filename,modified,insmod,mem,repsw
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.3.1 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.4.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -386,6 +386,19 @@ def get_value(s,idx):
     if ch=='$':
         idx+=1
         v=len(mem)-1
+    elif ch=='{':
+        idx+=1
+        u=''
+        while idx<len(s):
+            if s[idx]=='}':
+                idx+=1
+                break
+            u+=s[idx]
+            idx+=1
+        else:
+            stdmm("Invalid eval expression.")
+            return UNKNOWN,idx
+        v=eval(u)
     elif ch=='.':
         idx+=1
         v=fpos()
