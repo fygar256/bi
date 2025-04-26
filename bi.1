@@ -1,4 +1,4 @@
-.TH BI 1 "April 20, 2025" "Version 3.0.9" "Binary Editor like vi"
+.TH BI 1 "April 27, 2025" "Version 3.4.1" "Binary Editor like vi"
 .SH NAME
 bi \- vi-like binary editor
 .SH SYNOPSIS
@@ -72,6 +72,9 @@ Search with regular expression.
 .TP
 \fB//xx xx xx ...\fR
 Search binary data.
+.TP
+\fB?<value>\fR
+print value in decimal,hexadecimal,octal,binary,ASCII
 .TP
 \fB!string\fR
 Invoke shell.
@@ -168,11 +171,12 @@ the file + 1 to dest with 0s, and writes the deleted data from dest.
 .SH EXPRESSIONS
 Expressions support:
 .TP
-\fB<expression> := <factor> [+|-] <factor>\fR
+\fB<expression> := <factor> | <factor> [+|-] <factor>\fR
 Where <factor> is:
 - Hex (e.g., \fB1F\fR)  
 - Decimal prefixed with \fB#\fR (e.g., \fB#16\fR)  
 - Marks (\fB[a-z]\fR), top (0), current (.), end ($)
+- python eval() expression can be passed enclosed with '{}'
 
 .SH PERCENT-LENGTH
 \fB%<length>\fR can be used to define end offset:
