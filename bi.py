@@ -104,7 +104,7 @@ def print_title():
     global filename,modified,insmod,mem,repsw
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.4.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.4.1 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -803,9 +803,8 @@ def get_str_or_hexs(line,idx):
     return m,idx
 
 def printvalue(s):
+    global scriptingflag,verbose
     v,idx=expression(s,0)
-    esccolor(6)
-    esclocate(0,BOTTOMLN)
     s=' . '
     if v<0x20:
         s='^'+chr(v+ord('@'))+' '
@@ -813,11 +812,20 @@ def printvalue(s):
         s=' . '
     else:
         s='\''+chr(v)+'\''
-    print(f"{v:>10} 0X{v:016X} 0o{v:024o} {s}")
-    print(f"0b{v:064b}",end='',flush=True)
-    getch()
-    esclocate(0,BOTTOMLN+1)
-    print(" "*79,end='',flush=True)
+
+    msg=f"{v:>10} 0X{v:016X} 0o{v:024o} {s}\n0b{v:064b}"
+
+    if scriptingflag:
+        if verbose:
+            print(msg)
+    else:
+        clrmm()
+        esccolor(6)
+        esclocate(0,BOTTOMLN)
+        print(msg,end='',flush=True)
+        getch()
+        esclocate(0,BOTTOMLN+1)
+        print(" "*79,end='',flush=True)
                 
 def commandline_(line):
     global lastchange,yank,filename,stack,verbose,scriptingflag
