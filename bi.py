@@ -1076,7 +1076,7 @@ def commandln():
     esccolor(7)
     putch(':')
     line=getln().lstrip()
-    return commandline_(line)
+    return commandline(line)
 
 def printdata():
     addr=fpos()
