@@ -28,7 +28,6 @@ bi file
 man bi
 
 
-
                    vi like binary editor 'bi'
 
                    Programmed by Taisuke Maekawa (fygar256)
