@@ -1067,7 +1067,7 @@ def commandline_(line):
 
 def commandline(line):
     try:
-        commandline_(line)
+        return commandline_(line)
     except MemoryError:
         stderr("Memory overflow.")
 
@@ -1262,8 +1262,15 @@ def readfile(fn):
         mem=[]
     else:
         newfile=False
-        mem=list(f.read())
-        f.close()
+        try:
+            mem=list(f.read())
+            f.close()
+            return True
+        except MemoryError:
+            stderr("Memory overflow.")
+            f.close()
+            return False
+    return True
 
 def regulate_mem():
     global mem
@@ -1313,7 +1320,8 @@ def main():
         escclear()
     verbose=args.verbose
     wrtflg=args.write
-    readfile(filename)
+    if not readfile(filename):
+        return
 
     if script:
         f=scripting(script)
