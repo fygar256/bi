@@ -801,6 +801,23 @@ def get_str_or_hexs(line,idx):
     else:
         m=[]
     return m,idx
+
+def printvalue(s):
+    v,idx=expression(s,0)
+    esccolor(6)
+    esclocate(0,BOTTOMLN)
+    s=' . '
+    if v<0x20:
+        s='^'+chr(v+ord('@'))+' '
+    elif v>=0x7e:
+        s=' . '
+    else:
+        s='\''+chr(v)+'\''
+    print(f"{v:>10} 0X{v:016X} 0o{v:024o} {s}")
+    print(f"0b{v:064b}",end='',flush=True)
+    getch()
+    esclocate(0,BOTTOMLN+1)
+    print(" "*79,end='',flush=True)
                 
 def commandline_(line):
     global lastchange,yank,filename,stack,verbose,scriptingflag
@@ -860,6 +877,9 @@ def commandline_(line):
         if len(line)>=2:
             invoke_shell(line[1:])
             return -1
+        return -1
+    elif line[0]=='?':
+        printvalue(line[1:])
         return -1
     elif line[0]=='/':
         searchsub(line)
