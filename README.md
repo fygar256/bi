@@ -27,6 +27,8 @@ bi file
 ##### reference of man
 man bi
 
+
+
                    vi like binary editor 'bi'
 
                    Programmed by Taisuke Maekawa (fygar256)
@@ -159,6 +161,10 @@ Scripting functionality
     bi has Scripting functionality.
     bi sctipt is named 'file.bi'. The command line synopsis of specificaton
     of script file is like that: 'bi [-v] -s file.bi targetfile'
+
+Speed up
+    If you need for bi to be higher speed, you can compile bi.py with
+    pyinstaller like this: pyinstaller --onefile bi.py
 
 ★Attention
 
