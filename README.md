@@ -26,6 +26,7 @@ bi file
 
 ##### reference of man
 man bi
+
                    vi like binary editor 'bi'
 
            Designed and Programmed by Taisuke Maekawa (fygar256)
@@ -72,6 +73,7 @@ On command line mode
    /<regexp>               ----- search regular expression string
    //xx xx xx ...          ----- search binary data
    !<string>               ----- invoke shell
+   ?<value>                ----- print value in decimal,hex,octal,ASCII,binary
    q                       ----- quit
    q!                      ----- overriding quit
    wq,wq!                  ----- write and quit
@@ -229,6 +231,7 @@ w<file> commands.
 2025-04-26 version 3.3.0 added checking memory overflow error.
 2025-04-26 version 3.3.1 separated message into error message and standard message.
 2025-04-26 version 3.4.0 make it can give a factor python eval() expression.
+2025-04-26 version 3.4.1 added functionality of print a value.
 --------------------
 
       I don't take any responsibility for the result of application of
