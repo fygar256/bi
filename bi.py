@@ -813,7 +813,14 @@ def printvalue(s):
     else:
         s='\''+chr(v)+'\''
 
-    msg=f"{v:>10} 0X{v:016X} 0o{v:024o} {s}\n0b{v:064b}"
+    x=f"{v:016X}"
+    spaced_hex = ' '.join([x[i:i+4] for i in range(0, 16, 4)])
+    o=f"{v:024o}"
+    spaced_oct = ' '.join([o[i:i+4] for i in range(0, 24, 4)])
+    b=f"{v:064b}"
+    spaced_bin = ' '.join([b[i:i+4] for i in range(0, 64, 4)])
+    
+    msg=f"d{v:>10}  x{spaced_hex}  o{spaced_oct} {s}\nb{spaced_bin}"
 
     if scriptingflag:
         if verbose:
