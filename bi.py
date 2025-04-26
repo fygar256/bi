@@ -104,7 +104,7 @@ def print_title():
     global filename,modified,insmod,mem,repsw
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.2.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.3.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -321,6 +321,17 @@ def stdmm(s):
         esccolor(4)
         esclocate(0,BOTTOMLN)
         print(s,end='',flush=True)
+
+def memory_error():
+    global scriptingflag,verbose
+    if scriptingflag:
+        print("Memory overflow.")
+    else:
+        clrmm()
+        esccolor(3)
+        esclocate(0,BOTTOMLN)
+        print("Memory overflow.")
+
 
 def jump(addr):
     global homeaddr,curx,cury
@@ -772,7 +783,7 @@ def get_str_or_hexs(line,idx):
         m=[]
     return m,idx
                 
-def commandline(line):
+def commandline_(line):
     global lastchange,yank,filename,stack,verbose,scriptingflag
 
     if line=='':
@@ -1053,6 +1064,12 @@ def commandline(line):
             return -1
     stdmm("Unrecognized command.")
     return -1
+
+def commandline_(line):
+    try:
+        commandline(line)
+    except MemoryError:
+        memory_error()
 
 def commandln():
     esclocate(0,BOTTOMLN)

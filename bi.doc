@@ -121,7 +121,7 @@ Remarks
     ^L switches multi-byte boundary from 0 to 2. if utf-8 multi-byte characters
     are not seen, press ^L several times.
 
-    ^Y toggles utf-8 display mode. Initial value is disable. when the screen
+    ^Y toggles utf-8 display mode. Initial value is disable. When the screen
     is disturbed by utf-8 encode error, you can disable it with pressing ^Y.
 
     The functions marked with `@` are not implemented yet.
@@ -193,7 +193,8 @@ w<file> commands.
 2025-04-23 version 3.0.9 'd' command bug fix.
 2025-04-24 version 3.1.0 added data print functionality on bottom line.
 2025-04-24 version 3.2.0 utf-8 multi-byte (up to 3) manipulation added for Japanese.
+2025-04-26 version 3.3.0 added checking memory overflow error.
 --------------------
 
-      I won't owe any responsibility for the result of application of
+      I don't take any responsibility for the result of application of
     this program.
