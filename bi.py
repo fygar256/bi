@@ -104,7 +104,7 @@ def print_title():
     global filename,modified,insmod,mem,repsw
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.3.0 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.3.1 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -322,15 +322,15 @@ def stdmm(s):
         esclocate(0,BOTTOMLN)
         print(s,end='',flush=True)
 
-def memory_error():
+def stderr(s):
     global scriptingflag,verbose
     if scriptingflag:
-        print("Memory overflow.")
+        print(s)
     else:
         clrmm()
         esccolor(3)
         esclocate(0,BOTTOMLN)
-        print("Memory overflow.")
+        print(s)
 
 
 def jump(addr):
@@ -666,7 +666,7 @@ def scripting(scriptfile):
     try:
         f=open(scriptfile,"rt")
     except:
-        stdmm("Script file open error.")
+        stderr("Script file open error.")
         return False
     scriptingflag=True
     line=f.readline().strip()
@@ -913,11 +913,11 @@ def commandline_(line):
         ch=line[idx]
         idx+=1 
         if idx>=len(line):
-            stdmm("File name not specified.")
+            stderr("File name not specified.")
             return -1
         fn=line[idx:].lstrip()
         if fn=="":
-            stdmm("File name not specified.")
+            stderr("File name not specified.")
         else:
             try:
                 f=open(fn,"rb")
@@ -925,7 +925,7 @@ def commandline_(line):
                 f.close()
             except:
                 data=[]
-                stdmm("File read error.")
+                stderr("File read error.")
 
         if ch=='r':
             ovwmem(x,data)
@@ -1065,18 +1065,18 @@ def commandline_(line):
     stdmm("Unrecognized command.")
     return -1
 
-def commandline_(line):
+def commandline(line):
     try:
-        commandline(line)
+        commandline_(line)
     except MemoryError:
-        memory_error()
+        stderr("Memory overflow.")
 
 def commandln():
     esclocate(0,BOTTOMLN)
     esccolor(7)
     putch(':')
     line=getln().lstrip()
-    return commandline(line)
+    return commandline_(line)
 
 def printdata():
     addr=fpos()
@@ -1280,7 +1280,7 @@ def writefile(fn):
         stdmm("File written.")
         return True
     except:
-        stdmm("Permission denied.")
+        stderr("Permission denied.")
         return False
 
 def wrtfile(start,end,fn):
@@ -1296,7 +1296,7 @@ def wrtfile(start,end,fn):
         f.close()
         return True
     except:
-        stdmm("Permission denied.")
+        stderr("Permission denied.")
         return False
 
 def main():
