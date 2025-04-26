@@ -26,10 +26,10 @@ bi file
 
 ##### reference of man
 man bi
-
                    vi like binary editor 'bi'
 
-                   Designed and Programmed by Taisuke Maekawa (fygar256)
+           Designed and Programmed by Taisuke Maekawa (fygar256)
+                   
 
 Overview
 --------
@@ -134,12 +134,13 @@ Remarks
     On command line, you've got to give values by simple expression as
     followings.
 
-        <expression> := <factor> [+|-] <factor>
+        <expression> := <factor> | <factor> [+|-] <factor>
 
     factor is a number in hexadecimal or decimal with prefix '#'.
     And you can also give values with '[a-z] as marked position,
     0 as the top of file, . as the current position, and $ as the bottom
-    of file.
+    of file. Python eval() expression is what is enclosed with '{}'.
+    You can give values like this {0xff^0x55}.
 
     The v command has a bit of a quirk. It deletes data from <start> to <end>
     and moves it to <dest>, but if dest==filesize, the deleted data is moved
@@ -227,6 +228,7 @@ w<file> commands.
 2025-04-24 version 3.2.0 utf-8 multi-byte (up to 3) manipulation added for Japanese.
 2025-04-26 version 3.3.0 added checking memory overflow error.
 2025-04-26 version 3.3.1 separated message into error message and standard message.
+2025-04-26 version 3.4.0 make it can give a factor python eval() expression.
 --------------------
 
       I don't take any responsibility for the result of application of
