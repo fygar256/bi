@@ -643,7 +643,7 @@ def search():
     esccolor(7)
     print("/",end='',flush=True)
     s="/"+getln()
-    searchsub(s)
+    searchsub(comment(s))
 
 def get_hexs(s,idx):
     m=[]
