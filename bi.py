@@ -834,7 +834,7 @@ def printvalue(s):
         print(msg,end='',flush=True)
         getch()
         esclocate(0,BOTTOMLN+1)
-        print(" "*79,end='',flush=True)
+        print(" "*80,end='',flush=True)
                 
 def commandline_(line):
     global lastchange,yank,filename,stack,verbose,scriptingflag
