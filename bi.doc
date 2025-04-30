@@ -45,6 +45,7 @@ On command line mode
    /<regexp>               ----- search regular expression string
    //xx xx xx ...          ----- search binary data
    !<string>               ----- invoke shell
+   @<string>               ----- call python exec()
    ?<value>                ----- print value in decimal,hex,octal,ASCII,binary
    q                       ----- quit
    q!                      ----- overriding quit
@@ -129,8 +130,6 @@ Remarks
     ^Y toggles utf-8 display mode. Initial value is disable. When the screen
     is disturbed by utf-8 encode error, you can disable it with pressing ^Y.
 
-    The functions marked with `@` are not implemented yet.
-
 Scripting functionality
 
     bi has Scripting functionality.
@@ -206,7 +205,7 @@ w<file> commands.
 2025-04-26 version 3.3.1 separated message into error message and standard message.
 2025-04-26 version 3.4.0 make it can give a factor python eval() expression.
 2025-04-26 version 3.4.1 added functionality of print a value.
-2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file.
+2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file and '@' command.
 --------------------
 
       I don't take any responsibility for the result of application of

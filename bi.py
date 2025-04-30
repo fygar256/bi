@@ -74,6 +74,9 @@ def escclear():
     print(f"{ESC}2J",end='',flush=True)
     esclocate()
 
+def escclrline():
+    print(f"{ESC}2K",end='',flush=True)
+
 def esccolor(col1=7,col2=0):
     print(f"{ESC}3{coltab[col1]}m{ESC}4{coltab[col2]}m",end='',flush=True)
 
@@ -367,7 +370,7 @@ def setmem(addr,data):
 def clrmm():
     esclocate(0,BOTTOMLN)
     esccolor(6)
-    print(" "*79,end='')
+    escclrline()
 
 def stdmm(s):
     global scriptingflag,verbose
@@ -894,7 +897,33 @@ def printvalue(s):
         getch()
         esclocate(0,BOTTOMLN+1)
         print(" "*80,end='',flush=True)
-                
+
+def call_exec(line):
+    global scriptingflag
+    if len(line)<=1:
+        return
+    line=line[1:]
+    try:
+        if scriptingflag:
+            exec(line)
+        else:
+            clrmm()
+            esccolor(7)
+            esclocate(0,BOTTOMLN)
+            exec(line)
+            esccolor(4)
+            escclrline()
+            print("[ Hit any key ]",end='',flush=True)
+            getch()
+            escclear()
+            repaint()
+
+    except:
+        stdmm("python exec() error.")
+
+    finally:
+        return
+
 def commandline_(line):
     global lastchange,yank,filename,stack,verbose,scriptingflag,cp
 
@@ -949,6 +978,9 @@ def commandline_(line):
         return -1
     elif line[0]=='N':
         searchlast(fpos()-1)
+        return -1
+    elif line[0]=='@':
+        call_exec(line)
         return -1
     elif line[0]=='!':
         if len(line)>=2:
@@ -1222,6 +1254,7 @@ def fedit():
         printdata()
         esclocate(curx // 2 * 3 + 11 + (curx & 1), cury + 3)
         ch = getch()
+        clrmm()
         nff = True
 
         if ch == chr(27):
@@ -1238,7 +1271,6 @@ def fedit():
             elif c2==chr(91) and c3==chr(50):
                 ch='i'
 
-        clrmm()  # ここでメッセージ領域をクリア
         if ch == 'n':
             searchnext(fpos()+1)
             continue
