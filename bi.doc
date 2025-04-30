@@ -115,6 +115,8 @@ Remarks
     0 as the top of file, . as the current position, and $ as the bottom
     of file. Python eval() expression is what is enclosed with '{}'.
     You can give values like this {0xff^0x55}.
+    Also, you can give the value of file as mem[x] in {}, x can be specified
+    to current position 'cp'.
 
     The v command has a bit of a quirk. It deletes data from <start> to <end>
     and moves it to <dest>, but if dest==filesize, the deleted data is moved
@@ -204,6 +206,7 @@ w<file> commands.
 2025-04-26 version 3.3.1 separated message into error message and standard message.
 2025-04-26 version 3.4.0 make it can give a factor python eval() expression.
 2025-04-26 version 3.4.1 added functionality of print a value.
+2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file.
 --------------------
 
       I don't take any responsibility for the result of application of

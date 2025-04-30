@@ -35,6 +35,7 @@ nff=True
 verbose=False
 scriptingflag=False
 stack=[]
+cp=0
 
 def printhexs(s):
     for i,b in enumerate(s):
@@ -895,8 +896,9 @@ def printvalue(s):
         print(" "*80,end='',flush=True)
                 
 def commandline_(line):
-    global lastchange,yank,filename,stack,verbose,scriptingflag
+    global lastchange,yank,filename,stack,verbose,scriptingflag,cp
 
+    cp=fpos()
     if line=='':
         return -1
     line=comment(line)
@@ -1210,11 +1212,12 @@ def printdata():
         print(f"{addr:010X} : ~~                                                   ",end='',flush=True)
 
 def fedit():
-    global nff,yank,lastchange,modified,insmod,homeaddr,curx,cury,repsw,utf8
+    global nff,yank,lastchange,modified,insmod,homeaddr,curx,cury,repsw,utf8,cp
     stroke = False
     ch = ''
     repsw=0
     while True:
+        cp=fpos()
         repaint()
         printdata()
         esclocate(curx // 2 * 3 + 11 + (curx & 1), cury + 3)

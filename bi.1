@@ -1,4 +1,4 @@
-.TH BI 1 "April 27, 2025" "Version 3.4.1" "Binary Editor like vi"
+.TH BI 1 "May 1, 2025" "Version 3.4.3" "Binary Editor like vi"
 .SH NAME
 bi \- vi-like binary editor
 .SH SYNOPSIS
@@ -177,6 +177,7 @@ Where <factor> is:
 - Decimal prefixed with \fB#\fR (e.g., \fB#16\fR)  
 - Marks (\fB[a-z]\fR), top (0), current (.), end ($)
 - python eval() expression can be passed enclosed with '{}'
+- In {},'mem[x]' represents editing file address x,'cp' represents current position.
 
 .SH PERCENT-LENGTH
 \fB%<length>\fR can be used to define end offset:
