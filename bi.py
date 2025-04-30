@@ -807,6 +807,10 @@ def get_str_or_hexs(line,idx):
 def printvalue(s):
     global scriptingflag,verbose
     v,idx=expression(s,0)
+    if v==UNKNOWN:
+        stdmm("Specify a value.")
+        return
+        
     s=' . '
     if v<0x20:
         s='^'+chr(v+ord('@'))+' '
