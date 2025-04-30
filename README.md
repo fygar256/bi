@@ -236,7 +236,7 @@ w<file> commands.
 2025-04-26 version 3.3.1 separated message into error message and standard message.
 2025-04-26 version 3.4.0 make it can give a factor python eval() expression.
 2025-04-26 version 3.4.1 added functionality of print a value.
-2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file and '@' command.
+2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file and '@' command added.
 --------------------
 
       I don't take any responsibility for the result of application of
