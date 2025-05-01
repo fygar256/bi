@@ -129,11 +129,14 @@ v コマンドには少し癖があります。<start> から <end> までのデ
 bi にはスクリプト機能があります。
 bi スクリプトの名前は 'file.bi' です。スクリプトファイルの指定のコマンドライン構文は、'bi [-v] -s file.bi targetfile' のようになります。
 
-Pythonリスト内包表記
-    Pythonのリスト内包表記はチューリング完全なので、全てのリスト処理が'@'
+Python exec()
+    Pythonのexec()はチューリング完全なので、全ての処理が'@'
     コマンドで書けます。
     例：0~255の値を持つ1024バイトのファイルは次のようにして生成できます。
+
     @f=open("test","wb")\;f.write(bytes([i%256 for i in range(1024)]))\;f.close()
+    または：
+    @f=open("test","wb")\nfor i in range(1024):\n    f.write(bytes([i%256]))\nf.close()
 
 高速化
 

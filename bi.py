@@ -735,6 +735,10 @@ def comment(s):
         if idx+1<len(s) and s[idx:idx+2]==chr(0x5c)+';':
             m+=';'
             idx+=2
+
+        if idx+1<len(s) and s[idx:idx+2]==chr(0x5c)+'n':
+            m+='\n'
+            idx+=2
         else:
             m+=s[idx]
             idx+=1
