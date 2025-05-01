@@ -439,6 +439,8 @@ def expression(s,idx):
     elif len(s)>idx and x!=UNKNOWN and s[idx]=='-':
         y,idx=get_value(s,idx+1)
         x=x-y
+        if x<0:
+            x=0
     return x,idx
 
 def get_value(s,idx):
@@ -497,6 +499,8 @@ def get_value(s,idx):
         v=x
     else:
         v=UNKNOWN
+    if v<0:
+        v=0
     return v,idx
 
 def scommand(start,end,line,idx):
