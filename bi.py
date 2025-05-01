@@ -112,7 +112,11 @@ def getln():
                 if cursor > 0:
                     cursor -= 1
                     buf.pop(cursor)
-                    sys.stdout.write('\b \b')  # move back, overwrite, move back again
+                    # redraw the rest of the line from cursor
+                    sys.stdout.write('\x1b[D')  # move cursor left
+                    sys.stdout.write('\x1b[s')  # save cursor position
+                    sys.stdout.write(''.join(buf[cursor:]) + ' ')  # print rest + blank
+                    sys.stdout.write('\x1b[u')  # restore cursor
                     sys.stdout.flush()
             elif ch == '\x1b':  # Escape sequence
                 next1 = sys.stdin.read(1)
@@ -128,23 +132,20 @@ def getln():
                             cursor += 1
                             sys.stdout.write('\x1b[C')
                             sys.stdout.flush()
-                    elif next2 == '3':  # Delete key sequence begins
+                    elif next2 == '3':  # Delete key
                         if sys.stdin.read(1) == '~':
                             if cursor < len(buf):
                                 buf.pop(cursor)
-                                # redraw the rest of the line from cursor position
                                 sys.stdout.write('\x1b[s')  # save cursor
-                                sys.stdout.write(''.join(buf[cursor:]) + ' ')  # print rest + blank
+                                sys.stdout.write(''.join(buf[cursor:]) + ' ')
                                 sys.stdout.write('\x1b[u')  # restore cursor
                                 sys.stdout.flush()
             else:
                 buf.insert(cursor, ch)
-                sys.stdout.write('\x1b[s')  # save cursor position
-                sys.stdout.write(ch)
-                sys.stdout.write(''.join(buf[cursor+1:]))  # redraw rest of line
-                sys.stdout.write(' ')  # clear leftover char
+                sys.stdout.write('\x1b[s')  # save cursor
+                sys.stdout.write(''.join(buf[cursor:]) + ' ')  # insert new char + redraw rest
                 sys.stdout.write('\x1b[u')  # restore cursor
-                sys.stdout.write('\x1b[C')  # move cursor right
+                sys.stdout.write('\x1b[C')  # move right
                 sys.stdout.flush()
                 cursor += 1
 
@@ -152,6 +153,7 @@ def getln():
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
     return ''.join(buf)
+
 
 def skipspc(s,idx):
     while idx<len(s):
@@ -165,7 +167,7 @@ def print_title():
     global filename,modified,insmod,mem,repsw
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.4.2 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.4.3 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -446,7 +448,10 @@ def get_value(s,idx):
     ch=s[idx]
     if ch=='$':
         idx+=1
-        v=len(mem)-1
+        if len(mem)!=0:
+            v=len(mem)-1
+        else:
+            v=0
     elif ch=='{':
         idx+=1
         u=''
