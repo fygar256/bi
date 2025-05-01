@@ -169,12 +169,16 @@ Scripting functionality
     bi sctipt is named 'file.bi'. The command line synopsis of specificaton
     of script file is like that: 'bi [-v] -s file.bi targetfile'
 
-Python list comprehension
-    The list comprehension of Python is Turing complete therefore, with '@'
-    command, everything of list processing is able to be written.
+Python exec
+    The python exec() is Turing complete therefore, with '@'
+    command, everything is able to be written.
     For example, production for the file including 0~255 repeated 4times of 
     1024 bytes can be written like this:
+
     @f=open("test","wb")\;f.write(bytes([i%256 for i in range(1024)]))\;f.close()
+    Or otherwise,you can write it as follows:
+
+    @f=open("test","wb")\nfor i in range(1024):\n    f.write(bytes([i%256]))\nf.close()
 
 Speed up
     If you need for bi to be higher speed, you can compile bi.py with
