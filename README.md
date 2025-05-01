@@ -81,7 +81,9 @@ On command line mode
    q                       ----- quit
    q!                      ----- overriding quit
    wq,wq!                  ----- write and quit
-   w <filename>            ----- write file
+   r                       ----- read original file
+   w                       ----- write data to original file
+   w <filename>            ----- write data to filename
    t <filename>            ----- scripting with filename in silence mode
    T <filename>            ----- scripting with filename in verbose mode
    n                       ----- search the next
@@ -243,11 +245,12 @@ w<file> commands.
 2025-04-26 version 3.3.1 separated message into error message and standard message.
 2025-04-26 version 3.4.0 make it can give a factor python eval() expression.
 2025-04-26 version 3.4.1 added functionality of print a value.
-2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file and '@' command added.
+2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file and '@' command.
 --------------------
 
       I don't take any responsibility for the result of application of
     this program.
+
 ```
 
 #### Debug cooperation
