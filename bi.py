@@ -1492,14 +1492,21 @@ def main():
         return
 
     if script:
-        f=scripting(script)
-        if wrtflg and lastchange:
-            writefile(filename)
+        try:
+            f=scripting(script)
+            if wrtflg and lastchange:
+                writefile(filename)
+        except:
+            writefile("file.save")
+            stdmm("Some error occured. memory saved to file.save.")
     else:
-        fedit()
+        try:
+            fedit()
+        except:
+            writefile("file.save")
+            stdmm("Some error occured. memory saved to file.save.")
         esccolor(7)
 
 if __name__=="__main__":
-
     main()
 
