@@ -184,6 +184,12 @@ Speed up
 
     It doesn't support undo command yet.
 
+Danger
+    With '@' command, if you rewrite global variable of bi with 'global <var>'
+    and '<var>=<some value>', it might destroy bi system and cause python
+    system error. file edit stops at that time and exit. so be careful, when
+    you rewrite global variable of bi.
+
 ------ HISTORY -----
 1991-12-4 A sector was lost on a floppy disk used to back up a hard disk.
 1991-12-5 Reluctantly repaired the file using DUMP and a C program.
