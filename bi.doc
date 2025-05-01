@@ -50,7 +50,9 @@ On command line mode
    q                       ----- quit
    q!                      ----- overriding quit
    wq,wq!                  ----- write and quit
-   w <filename>            ----- write file
+   r                       ----- read original file
+   w                       ----- write data to original file
+   w <filename>            ----- write data to filename
    t <filename>            ----- scripting with filename in silence mode
    T <filename>            ----- scripting with filename in verbose mode
    n                       ----- search the next

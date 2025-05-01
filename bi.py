@@ -953,6 +953,12 @@ def commandline_(line):
             writefile(filename)
             lastchange=False
         return -1
+    elif line[0]=='r':
+        if len(line)<2:
+            readfile(filename)
+            jump(0)
+            stdmm("Original file read.")
+            return -1
     elif line[0]=='T' or line[0]=='t':
         if len(line)>=2:
             s=line[1:].lstrip()
