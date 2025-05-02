@@ -132,11 +132,10 @@ bi スクリプトの名前は 'file.bi' です。スクリプトファイルの
 Python exec()
     Pythonのexec()はチューリング完全なので、全ての処理が'@'
     コマンドで書けます。
-    例：0~255の値を持つ1024バイトのファイルは次のようにして生成できます。
+    例：0~255の値を持つ1024バイトは次のようにして生成できます。
 
-    @f=open("test","wb")\;f.write(bytes([i%256 for i in range(1024)]))\;f.close()
-    または：
-    @f=open("test","wb")\nfor i in range(1024):\n    f.write(bytes([i%256]))\nf.close()
+    :0i#1024,0 ; 1024バイトの領域確保
+    :@for i in range(1024):\n    mem[i]=i%256 ; 0~255 4回繰り返し
 
 高速化
 

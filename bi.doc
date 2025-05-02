@@ -141,13 +141,12 @@ Scripting functionality
 Python exec
     The python exec() is Turing complete therefore, with '@'
     command, everything is able to be written.
-    For example, production for the file including 0~255 repeated 4times of 
-    1024 bytes can be written like this:
 
-    @f=open("test","wb")\;f.write(bytes([i%256 for i in range(1024)]))\;f.close()
-    Or otherwise,you can write it as follows:
+    For example, in new file situation, production for the file including
+    0~255 repeated 4times of 1024 bytes can be written like this:
 
-    @f=open("test","wb")\nfor i in range(1024):\n    f.write(bytes([i%256]))\nf.close()
+    :0i#1024,0 ; area reservation with the length of 1024 bytes filling with 0
+    :@for i in range(1024):\n    mem[i]=i%256 ; 0~255 repeat 4 times
 
 Speed up
     If you need for bi to be higher speed, you can compile bi.py with
