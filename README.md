@@ -273,4 +273,4 @@ Pasific Software Development
 
 ##### Mascot character
 
-<img alt="image" src="https://github.com/fygar256/bi/blob/main/bigirl.png">
+<img alt="image" width="200px" height="200px" src="https://github.com/fygar256/bi/blob/main/bigirl.png">
