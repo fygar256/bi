@@ -207,11 +207,12 @@ def repaint():
     escnocursor()
     esclocate(0,2)
     esccolor(4)
-    print("OFFSET       +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF  ")
+    print("OFFSET       +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF ")
     esccolor(7)
     addr=homeaddr
     for y in range(0x14):
         esccolor(5)
+        esclocate(0,3+y)
         print(f"{(addr+y*16)&0xffffffffffff:012X} ",end='')
         esccolor(7)
         for i in range(16):
@@ -224,7 +225,7 @@ def repaint():
             c=printchar(a)
             a+=c
             by+=c
-        print("")
+        print(" ",end='',flush=True)
     esccolor(0)
     escdispcursor()
 
