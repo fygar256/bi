@@ -270,3 +270,7 @@ Pasific Software Development
 ##### Screenshot
 
 <img alt="image" src="https://github.com/fygar256/bi/blob/main/screenshot.png">
+
+##### Mascot character
+
+<img alt="image" src="https://github.com/fygar256/bi/blob/main/bigirl.png">
