@@ -8,6 +8,7 @@ import re
 import os
 import io
 import argparse
+import readline
 ESC='\033['
 LENONSCR=(20*16)
 BOTTOMLN=23
