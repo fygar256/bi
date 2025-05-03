@@ -64,7 +64,7 @@ Enter command-line mode.
 
 .SH COMMAND LINE MODE
 .TP
-\fB;\fR
+\fB#\fR
 Comment.
 .TP
 \fB/<regexp>\fR
@@ -118,7 +118,7 @@ Read file (insert/overwrite) at offset.
 \fB[offset]p\fR \fB[offset]P\fR
 Paste yank buffer.
 .TP
-\fB[offset]i<length>,<xx>\fR \fB[offset]I<length>,<xx>\fR
+\fB[offset]i<xx>[*<length>]\fR \fB[offset]I<xx>[*<length>]\fR
 Overwrite/insert repeated byte.
 .TP
 \fBy/str\fR \fBy//xx xx xx ...\fR
@@ -170,7 +170,7 @@ Write data to file.
 Return to screen mode.
 
 .SH ESCAPE CHARACTER
-Escape character in command line is '\\'. use before ';' and '/'.
+Escape character in command line is '\\'. use before '#' and '/'.
 .SH v COMMAND
 The v command has a bit of a quirk. It deletes data from <start> to <end>
 and moves it to <dest>, but if dest==filesize, the deleted data is moved
@@ -189,7 +189,7 @@ Where <factor> is:
 - In {},'mem[x]' represents editing file address x,'cp' represents current position.
 
 .SH PERCENT-LENGTH
-\fB%<length>\fR can be used to define end offset:
+\fB*<length>\fR can be used to define end offset:
 .RS
 \fB<end> = <start> + <length> - 1\fR
 .RE
@@ -212,6 +212,7 @@ Linux version:
 2025-04-14  v2.7.3 scripting support
 2025-04-15  v2.9.7 shift/rotate support
 2025-04-20  v3.0.4 write permission check
+2025-05-04  v3.4.3.5 adjustment
 .fi
 
 .SH BUGS

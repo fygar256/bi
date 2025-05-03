@@ -443,7 +443,7 @@ def get_value(s,idx):
             x=16*x+int("0x"+s[idx],16)
             idx+=1
         v=x
-    elif ch=='#':
+    elif ch=='%':
         x=0
         idx+=1
         while idx<len(s) and s[idx] in '0123456789':
@@ -700,11 +700,11 @@ def comment(s):
     idx=0
     m = ''
     while idx < len(s):
-        if s[idx] == ';':
+        if s[idx] == '#':
             break
 
-        if idx+1<len(s) and s[idx:idx+2]==chr(0x5c)+';':
-            m+=';'
+        if idx+1<len(s) and s[idx:idx+2]==chr(0x5c)+'#':
+            m+='#'
             idx+=2
 
         if idx+1<len(s) and s[idx:idx+2]==chr(0x5c)+'n':
@@ -907,9 +907,9 @@ def commandline_(line):
     global lastchange,yank,filename,stack,verbose,scriptingflag,cp
 
     cp=fpos()
+    line=comment(line)
     if line=='':
         return -1
-    line=comment(line)
     if line=='q':
         if lastchange:
             stdmm("No write since last change. To overriding quit, use 'q!'.")
@@ -992,7 +992,7 @@ def commandline_(line):
     idx=skipspc(line,idx)
     if idx<len(line) and line[idx]==',':
         idx=skipspc(line,idx+1)
-        if idx<len(line) and line[idx]=='%':
+        if idx<len(line) and line[idx]=='*':
             idx=skipspc(line,idx+1)
             t,idx=expression(line,idx)
             if t==UNKNOWN:
@@ -1082,16 +1082,17 @@ def commandline_(line):
 
     if idx<len(line) and line[idx] in 'iI':
         ch=line[idx]
-        xp,idx=expression(line,idx+1)
-        if xp==UNKNOWN:
+        x3,idx=expression(line,idx+1)
+        if x3==UNKNOWN:
             stdmm("Invalid syntax")
             return -1
 
-        x3=UNKNOWN
-        if idx<len(line) and line[idx]==',':
-            x3,idx=expression(line,idx+1)
-        if x3==UNKNOWN:
-            x3=0x00
+        xp=UNKNOWN
+        if idx<len(line) and line[idx]=='*':
+            xp,idx=expression(line,idx+1)
+
+        if xp==UNKNOWN:
+            xp=1
         data=[x3&0xff]*xp
 
         if ch=='I':

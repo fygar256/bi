@@ -41,7 +41,7 @@ Command Reference
 
 On command line mode
 
-   ;                       ----- comment. will be ignored after ';'
+   #                       ----- comment. will be ignored after '#'
    /<regexp>               ----- search regular expression string
    //xx xx xx ...          ----- search binary data
    !<string>               ----- invoke shell
@@ -67,8 +67,8 @@ On command line mode
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
    [offset] p              ----- paste yank buffer (overwrite)
    [offset] P              ----- paste yank buffer (insert)
-   [offset]i<length>,<xx>  ----- overwrite data xx repeatedly length times
-   [offset]I<length>,<xx>  ----- insert data xx repeatedly length times
+   [offset]i<xx>*<length>  ----- overwrite data xx repeatedly length times
+   [offset]I<xx>*<length>  ----- insert data xx repeatedly length times
 
    y/str                   ----- yank to yank buffer with string
    y//xx xx xx ...         ----- yank to yank buffer with data
@@ -98,7 +98,7 @@ Remarks
     Regular expression can be used for string search.
     '/' can be escaped with escape character '\' in regular expression.
 
-    Comment can be written in command with ';'. You have to write command
+    Comment can be written in command with '#'. You have to write command
     including semicolon with escape character '\'.
 
     The values enclosed with `[]` can be left out, when these commands
@@ -106,7 +106,7 @@ Remarks
     But when the values such as start and end are omitted in 's' command,
     's' command will affect entire file.
 
-    The value <end> can be passed with '%<length>' as <end>=<start>+<length>-1.
+    The value <end> can be passed with '*<length>' as <end>=<start>+<length>-1.
 
     On command line, you've got to give values by simple expression as
     followings.
@@ -145,7 +145,7 @@ Python exec
     For example, in new file situation, production for the file including
     0~255 repeated 4times of 1024 bytes can be written like this:
 
-    :@for i in range(1024):\n    setmem(i,i%256) ; 0~255 repeat 4 times
+    :@for i in range(1024):\n    setmem(i,i%256) # 0~255 repeat 4 times
 
     If you import modules, they will be located bi's global space.
 
@@ -224,7 +224,7 @@ w<file> commands.
 2025-04-26 version 3.4.0 make it can give a factor python eval() expression.
 2025-04-26 version 3.4.1 added functionality of print a value.
 2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file and '@' command.
-2025-05-04 version 3.4.3.5 adjustment. stable.
+2025-05-04 version 3.4.3.5 adjustment to uniform notation to python. stable.
 --------------------
 
       I don't take any responsibility for the result of application of
