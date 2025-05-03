@@ -76,6 +76,7 @@ On command line mode
    <start>,<end> f xx xx xx ...  - fill with data (by range)
    <start>,<end> C <dest>  ----- insert data to <dest> (data will be yanked)
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
+   [start,end] v <dest>    ----- move data
    [start,end] s /regexp/str            ----- replace regexp with str
    [start,end] s /regexp//xx xx xx ...  ----- replace regexp with data
    [start,end] s //xx xx xx .../str     ----- replace data1 with str
@@ -89,7 +90,6 @@ On command line mode
    [start,end]>[[times],[01]]  - right shift with bit 0,1 or rotate by byte
    [start,end]<<[[times],[01]] - left shift with bit 0,1 or rotate by multibyte
    [start,end]>>[[times],[01]] - right shift with bit 0,1 or rotate by multibyte
-   [start,end] v <dest>    ----- move data
    <start>,<end>w<filename> ---- write data on file
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
@@ -145,8 +145,7 @@ Python exec
     For example, in new file situation, production for the file including
     0~255 repeated 4times of 1024 bytes can be written like this:
 
-    :0i#1024,0 ; area reservation with the length of 1024 bytes filling with 0
-    :@for i in range(1024):\n    mem[i]=i%256 ; 0~255 repeat 4 times
+    :@for i in range(1024):\n    setmem(i,i%256) ; 0~255 repeat 4 times
 
     If you import modules, they will be located bi's global space.
 
@@ -225,6 +224,7 @@ w<file> commands.
 2025-04-26 version 3.4.0 make it can give a factor python eval() expression.
 2025-04-26 version 3.4.1 added functionality of print a value.
 2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file and '@' command.
+2025-05-04 version 3.4.3.5 adjustment. stable.
 --------------------
 
       I don't take any responsibility for the result of application of

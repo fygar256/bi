@@ -309,11 +309,16 @@ def readmem(addr):
 
 def setmem(addr,data):
     global mem,modified,lastchange
-    data&=0xff
+
     if addr>=len(mem):
         for i in range(addr-len(mem)+1):
             mem+=[0]
-    mem[addr]=data
+
+    if isinstance(data,int) and 0<=data<=255:
+        mem[addr]=data
+    else:
+        mem[addr]=0
+
     modified=True
     lastchange=True
 
