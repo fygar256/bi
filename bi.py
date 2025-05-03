@@ -1508,8 +1508,9 @@ def main():
         except:
             writefile("file.save")
             stdmm("Some error occured. memory saved to file.save.")
-        esccolor(7)
+            esccolor(7)
 
+    escdispcursor()
 if __name__=="__main__":
     main()
 
