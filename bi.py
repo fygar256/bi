@@ -918,12 +918,12 @@ def call_exec(line):
     line=line[1:]
     try:
         if scriptingflag:
-            exec(line)
+            exec(line,globals())
         else:
             clrmm()
             esccolor(7)
             esclocate(0,BOTTOMLN)
-            exec(line)
+            exec(line,globals())
             esccolor(4)
             escclrline()
             print("[ Hit any key ]",end='',flush=True)
