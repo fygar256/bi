@@ -95,7 +95,10 @@ def putch(c):
     print(c,end='',flush=True)
 
 def getln():
-    s=input("")
+    try:
+        s=input("")
+    except:
+        s=""
     return s
 
 def skipspc(s,idx):
@@ -129,7 +132,7 @@ def printchar(a):
                 ch=bytes(m).decode('utf-8')
                 print(f"{ch}",end='',flush=True)
                 return 2 
-            except UnicodeDecodeError:
+            except:
                 print(".",end='')
                 return 1
         elif 0xe0<=mem[a]<=0xef:
@@ -138,7 +141,7 @@ def printchar(a):
                 ch=bytes(m).decode('utf-8')
                 print(f"{ch} ",end='',flush=True)
                 return 3
-            except UnicodeDecodeError:
+            except:
                 print(".",end='')
                 return 1
     else:
@@ -1465,8 +1468,8 @@ def main():
         except:
             writefile("file.save")
             stdmm("Some error occured. memory saved to file.save.")
-            esccolor(7)
 
+    esccolor(7)
     escdispcursor()
 if __name__=="__main__":
     main()
