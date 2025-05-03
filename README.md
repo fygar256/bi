@@ -107,6 +107,7 @@ On command line mode
    <start>,<end> f xx xx xx ...  - fill with data (by range)
    <start>,<end> C <dest>  ----- insert data to <dest> (data will be yanked)
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
+   [start,end] v <dest>    ----- move data
    [start,end] s /regexp/str            ----- replace regexp with str
    [start,end] s /regexp//xx xx xx ...  ----- replace regexp with data
    [start,end] s //xx xx xx .../str     ----- replace data1 with str
@@ -120,7 +121,6 @@ On command line mode
    [start,end]>[[times],[01]]  - right shift with bit 0,1 or rotate by byte
    [start,end]<<[[times],[01]] - left shift with bit 0,1 or rotate by multibyte
    [start,end]>>[[times],[01]] - right shift with bit 0,1 or rotate by multibyte
-   [start,end] v <dest>    ----- move data
    <start>,<end>w<filename> ---- write data on file
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
