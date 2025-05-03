@@ -148,6 +148,8 @@ Python exec
     :0i#1024,0 ; area reservation with the length of 1024 bytes filling with 0
     :@for i in range(1024):\n    mem[i]=i%256 ; 0~255 repeat 4 times
 
+    If you import modules, they will be located bi's global space.
+
 Speed up
     If you need for bi to be higher speed, you can compile bi.py with
     pyinstaller like this: pyinstaller --onefile bi.py
