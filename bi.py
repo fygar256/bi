@@ -528,7 +528,11 @@ def srematch(addr):
         m = mem[addr:]
 
     byte_data = bytes(m)
-    ms = byte_data.decode('utf-8', errors='replace')
+    try:
+        ms = byte_data.decode('utf-8', errors='replace')
+    except:
+        stdmm("Unicode decode error")
+        return 0
 
     try:
         f = re.match(remem, ms)
@@ -540,7 +544,12 @@ def srematch(addr):
         start, end = f.span()
         span = end - start
         matched_str = ms[start:end]
-        matched_bytes = matched_str.encode('utf-8')
+        try:
+            matched_bytes = matched_str.encode('utf-8')
+        except:
+            stdmm("Unicode encode error.")
+            return 0
+
         span=len(matched_bytes)
         return 1
     else:
@@ -814,7 +823,11 @@ def get_str_or_hexs(line,idx):
             m,idx=get_hexs(line,idx+1)
         else:
             s,idx=get_restr(line,idx)
-            bseq=s.encode('utf-8')
+            try:
+                bseq=s.encode('utf-8')
+            except:
+                stdmm("Unicode encode error.")
+                return [],idx
             m=list(bseq)
     else:
         m=[]
