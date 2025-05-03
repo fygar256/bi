@@ -207,12 +207,12 @@ def repaint():
     escnocursor()
     esclocate(0,2)
     esccolor(4)
-    print("OFFSET     +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF  ")
+    print("OFFSET       +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF  ")
     esccolor(7)
     addr=homeaddr
     for y in range(0x14):
         esccolor(5)
-        print(f"{(addr+y*16)&0xffffffffffff:010X} ",end='')
+        print(f"{(addr+y*16)&0xffffffffffff:012X} ",end='')
         esccolor(7)
         for i in range(16):
             a=y*16+i+addr
@@ -1258,9 +1258,9 @@ def printdata():
     else:
         s='\''+chr(a)+'\''
     if addr<len(mem):
-        print(f"{addr:010X} : 0x{a:02X} 0b{a:08b} 0o{a:03o} {a} {s}      ",end='',flush=True)
+        print(f"{addr:012X} : 0x{a:02X} 0b{a:08b} 0o{a:03o} {a} {s}      ",end='',flush=True)
     else:
-        print(f"{addr:010X} : ~~                                                   ",end='',flush=True)
+        print(f"{addr:012X} : ~~                                                   ",end='',flush=True)
 
 def fedit():
     global nff,yank,lastchange,modified,insmod,homeaddr,curx,cury,repsw,utf8,cp
@@ -1271,7 +1271,7 @@ def fedit():
         cp=fpos()
         repaint()
         printdata()
-        esclocate(curx // 2 * 3 + 11 + (curx & 1), cury + 3)
+        esclocate(curx // 2 * 3 + 13 + (curx & 1), cury + 3)
         ch = getch()
         clrmm()
         nff = True
@@ -1443,7 +1443,10 @@ def readfile(fn):
 def regulate_mem():
     global mem
     for i in range(len(mem)):
-        mem[i]=mem[i]&0xff
+        try:
+            mem[i]=mem[i]&0xff
+        except:
+            mem[i]=0
 
 def writefile(fn):
     global mem
