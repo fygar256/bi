@@ -176,8 +176,7 @@ Python exec
     For example, in new file situation, production for the file including
     0~255 repeated 4times of 1024 bytes can be written like this:
 
-    :0i#1024,0 ; area reservation with the length of 1024 bytes filling with 0
-    :@for i in range(1024):\n    mem[i]=i%256 ; 0~255 repeat 4 times
+    :@for i in range(1024):\n    setmem(i,i%256) ; 0~255 repeat 4 times
 
     If you import modules, they will be located bi's global space.
 
@@ -256,6 +255,7 @@ w<file> commands.
 2025-04-26 version 3.4.0 make it can give a factor python eval() expression.
 2025-04-26 version 3.4.1 added functionality of print a value.
 2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file and '@' command.
+2025-05-04 version 3.4.3.5 adjustment. stable.
 --------------------
 
       I don't take any responsibility for the result of application of
