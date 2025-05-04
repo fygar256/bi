@@ -842,6 +842,16 @@ def get_str_or_hexs(line,idx):
         m=[]
     return m,idx
 
+def get_str(line,idx):
+    s,idx=get_restr(line,idx)
+    try:
+        bseq=s.encode('utf-8')
+    except:
+        stdmm("Unicode encode error.")
+        return [],idx
+    m=list(bseq)
+    return m,idx
+
 def printvalue(s):
     global scriptingflag,verbose
     v,idx=expression(s,0)
@@ -1008,6 +1018,9 @@ def commandline_(line):
     else:
         x2=x
 
+    if x2<x:
+        x2=x
+
     idx=skipspc(line,idx)
 
     if idx==len(line):
@@ -1070,7 +1083,7 @@ def commandline_(line):
     if idx<len(line) and line[idx] in 'oO':
         ch=line[idx]
         idx+=1
-        l,idx=get_str_or_hexs(line,idx)
+        l,idx=get_str(line,idx)
         if ch=='o':
             ovwmem(x,l)
             stdmm(f"{len(l)} bytes stored.")
@@ -1078,31 +1091,6 @@ def commandline_(line):
             insmem(x,l)
             stdmm(f"{len(l)} bytes inserted.")
         jump(x+len(l))
-        return -1
-
-    if idx<len(line) and line[idx] in 'iI':
-        ch=line[idx]
-        x3,idx=expression(line,idx+1)
-        if x3==UNKNOWN:
-            stdmm("Invalid syntax")
-            return -1
-
-        xp=UNKNOWN
-        if idx<len(line) and line[idx]=='*':
-            xp,idx=expression(line,idx+1)
-
-        if xp==UNKNOWN:
-            xp=1
-        data=[x3&0xff]*xp
-
-        if ch=='I':
-            insmem(x,data)
-            stdmm(f"{len(data)} bytes inserted.")
-            jump(x+len(data))
-        elif ch=='i':
-            ovwmem(x,data)
-            stdmm(f"{len(data)} bytes overwritten.")
-            jump(x+len(data))
         return -1
 
     if idx<len(line):
@@ -1130,7 +1118,7 @@ def commandline_(line):
         openot(x,x2)
         return -1
 
-    if idx<len(line) and line[idx] in "fvCc&|^<>":
+    if idx<len(line) and line[idx] in "fIivCc&|^<>":
         ch=line[idx]
         idx+=1
         if ch in '<>':
@@ -1159,9 +1147,46 @@ def commandline_(line):
                 data=m*((x2-x+1)//len(m))+m[0:((x2-x+1)%len(m))]
                 ovwmem(x,data)
                 stdmm(f"{len(data)} bytes filled.")
-                jump(x)
+                jump(x+len(data))
             else:
                 stdmm("Invalid syntax.")
+            return -1
+
+        if ch=='i':
+            m,idx=get_hexs(line,idx)
+            if idx<len(line) and line[idx]=='*':
+                idx+=1
+                length,idx=expression(line,idx)
+            else:
+                length=1
+
+            if xf2:
+                stdmm("Invalid syntax.")
+                return -1
+
+            data=m*length
+            ovwmem(x,data)
+            stdmm(f"{len(data)} bytes overwritten.")
+            jump(x+len(data))
+
+            return -1
+
+        if ch=='I':
+            m,idx=get_hexs(line,idx)
+            if idx<len(line) and line[idx]=='*':
+                idx+=1
+                length,idx=expression(line,idx)
+            else:
+                length=1
+
+            if xf2:
+                stdmm("Invalid syntax.")
+                return -1
+
+            data=m*length
+            insmem(x,data)
+            stdmm(f"{len(data)} bytes inserted.")
+            jump(x+len(data))
             return -1
 
         x3,idx=expression(line,idx)

@@ -56,21 +56,18 @@ n ----- 次の文字列を検索
 N ----- 最後の文字列を検索
 [offset] ----- アドレスへジャンプ
 [offset]m[a-z] ----- 位置をマーク
-[offset]o/<文字列> ----- [オフセット] 以降の文字列を上書き
-[offset]o//xx xx xx ... ----- データを保存して end+1 へジャンプ
-[offset]O/<文字列> ----- [オフセット] の位置に文字列を挿入
-[offset]O//xx xx xx ... ----- データを挿入して end+1 へジャンプ
+[offset]o<文字列> ----- [オフセット] 以降の文字列を上書き
+[offset]O<文字列> ----- [オフセット] の位置に文字列を挿入
 [offset]R<ファイル名> ----- ファイルを読み込み [オフセット] の位置に挿入
 [offset]r<ファイル名> ----- [オフセット] 以降のファイルを読み込み（上書き）
 [offset] p ----- ヤンクバッファを貼り付け（上書き）
 [offset] P ----- ヤンクバッファを貼り付け（挿入）
-[offset]i<xx>[*<length>] ----- データ xx を length 回繰り返しオーバーライト
-[offset]I<xx>[*<length>] ----- データ xx を length 回繰り返し挿入
+[offset]I xx xx xx ... [*<length>] ----- データを length 回繰り返し挿入
+[offset]i xx xx xx ... [*<length>] ----- データを length 回繰り返しオーバーライト.
 
 y/str ----- ヤンクバッファに文字列をヤンク
 y//xx xx xx ... ----- ヤンクバッファにデータをヤンク
 <start>,<end> d ----- 範囲指定で削除（データはヤンクされます）
-<start>,<end> f xx xx xx ... - データで埋める（範囲指定）
 <start>,<end> C <dest> ----- <dest>にデータを挿入 (データはヤンクされます)
 <start>,<end> c <dest> ----- データをコピー（データはヤンクされます）
 [start,end] s /regexp/str ----- 正規表現をstrで置換
@@ -78,6 +75,7 @@ y//xx xx xx ... ----- ヤンクバッファにデータをヤンク
 [start,end] s //xx xx xx .../str ----- data1 を str に置換
 [start,end] s //xx xx xx ...//xx xx xx ... ----- data1 を data2 に置換
 [start],[end] y ----- ヤンクバッファにヤンク
+<start>,<end> f xx xx xx ... - データで埋める（範囲指定）
 [start,end]|<data> ----- データとのビット単位論理和
 [start,end]&<data> ----- データとのビット単位論理積
 [start,end]^<data> ----- データとのビット単位排他的論理和

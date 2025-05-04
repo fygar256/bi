@@ -106,11 +106,8 @@ Jump to address.
 \fB[offset]m[a-z]\fR
 Mark position.
 .TP
-\fB[offset]O/string\fR \fB[offset]o/string\fR
+\fB[offset]O<string>\fR \fB[offset]o<string>\fR
 Insert/overwrite string.
-.TP
-\fB[offset]O//xx xx...\fR \fB[offset]o//xx xx...\fR
-Insert/overwrite binary.
 .TP
 \fB[offset]R<file>\fR \fB[offset]r<file>\fR
 Read file (insert/overwrite) at offset.
@@ -118,8 +115,8 @@ Read file (insert/overwrite) at offset.
 \fB[offset]p\fR \fB[offset]P\fR
 Paste yank buffer.
 .TP
-\fB[offset]i<xx>[*<length>]\fR \fB[offset]I<xx>[*<length>]\fR
-Overwrite/insert repeated byte.
+\fB[offset]i xx xx xx ... [*<length>]\fR \fB[offset]I xx xx xx ... [*<length>]\fR
+Overwrite/insert repeated length times.
 .TP
 \fBy/str\fR \fBy//xx xx xx ...\fR
 Yank to buffer.
