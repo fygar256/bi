@@ -114,7 +114,7 @@ def print_title():
     global filename,modified,insmod,mem,repsw,utf8
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.4.3 by T.Maekawa                   utf8mode:{"off" if not utf8 else repsw}     {"insert   " if insmod else "overwrite"}   ")
+    print(f"bi version 3.4.4 by T.Maekawa                   utf8mode:{"off" if not utf8 else repsw}     {"insert   " if insmod else "overwrite"}   ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
