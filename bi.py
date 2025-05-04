@@ -756,6 +756,7 @@ def scripting(scriptfile):
         return False
     line=f.readline().strip()
     flag=-1
+    scriptingflag=True
     while line:
         if verbose:
             print(line)
@@ -932,7 +933,7 @@ def call_exec(line):
             exec(line,globals())
             esccolor(4)
             escclrline()
-            print("[ Hit any key ]",end='',flush=True)
+            print("[ Hit a key ]",end='',flush=True)
             getch()
             escclear()
             repaint()
