@@ -476,7 +476,7 @@ def get_value(s,idx):
 def scommand(start,end,line,idx):
     global span,nff
     nff=False
-    orgpos=fpos()
+    pos=fpos()
 
     idx2=skipspc(line,0)
     idx=skipspc(line,idx)
@@ -503,44 +503,55 @@ def scommand(start,end,line,idx):
     n,idx=get_str_or_hexs(line,idx)
 
     i=start
+    cnt=0
+    jump(i)
+
+    if re_==True:
+        f=searchstr(m)
+        i=fpos()
+    else:
+        f=searchhex(hs)
+        span=len(hs)
+        i=fpos()
+
     while True:
         jump(i)
-        if re_==True:
-            f=searchstr(m)
-            i=fpos()
-        else:
-            f=searchhex(hs)
-            span=len(hs)
-            i=fpos()
 
         if i<=end and f:
             delmem(i,i+span-1,False)
             insmem(i,n)
+            pos=i+len(n)
+            cnt+=1
             i=i-span+len(n)
             f=searchnext(i)
             i=fpos()
         else:
-            jump(orgpos)
+            jump(pos)
+            stdmm(f"{cnt} times replaced.")
             return
 
 def opeand(x,x2,x3):
     for i in range(x,x2+1):
         setmem(i,readmem(i)&(x3&0xff))
+    stdmm(f"{x2-x+1} bytes anded.")
     return
             
 def opeor(x,x2,x3):
     for i in range(x,x2+1):
         setmem(i,readmem(i)|(x3&0xff))
+    stdmm(f"{x2-x+1} bytes ored.")
     return
             
 def opexor(x,x2,x3):
     for i in range(x,x2+1):
         setmem(i,readmem(i)^(x3&0xff))
+    stdmm(f"{x2-x+1} bytes xored.")
     return
             
 def openot(x,x2):
     for i in range(x,x2+1):
         setmem(i,(~(readmem(i))&0xff))
+    stdmm(f"{x2-x+1} bytes noted.")
     return
             
 def srematch(addr):
@@ -1134,6 +1145,7 @@ def commandline_(line):
         ch=line[idx]
         idx+=1
         openot(x,x2)
+        jump(x2+1)
         return -1
 
     if idx<len(line) and line[idx] in "fIivCc&|^<>":
@@ -1231,12 +1243,15 @@ def commandline_(line):
             return -1
         elif ch=='&':
             opeand(x,x2,x3)
+            jump(x2+1)
             return -1
         elif ch=='|':
             opeor(x,x2,x3)
+            jump(x2+1)
             return -1
         elif ch=='^':
             opexor(x,x2,x3)
+            jump(x2+1)
             return -1
     stdmm("Unrecognized command.")
     return -1
