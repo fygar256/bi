@@ -754,7 +754,6 @@ def scripting(scriptfile):
     except:
         stderr("Script file open error.")
         return False
-    scriptingflag=True
     line=f.readline().strip()
     flag=-1
     while line:
@@ -1505,7 +1504,7 @@ def wrtfile(start,end,fn):
         return False
 
 def main():
-    global filename,verbose
+    global filename,verbose,scriptingflag
     parser = argparse.ArgumentParser()
     parser.add_argument('file', help='file to edit')
     parser.add_argument('-s', '--script', type=str, default='', metavar='script.bi', help='bi script file')
@@ -1516,6 +1515,8 @@ def main():
     script=args.script
     if not script:
         escclear()
+    else:
+        scriptingflag=True
     verbose=args.verbose
     wrtflg=args.write
     if not readfile(filename):
@@ -1528,13 +1529,13 @@ def main():
                 writefile(filename)
         except:
             writefile("file.save")
-            stdmm("Some error occured. memory saved to file.save.")
+            stderr("Some error occured. memory saved to file.save.")
     else:
         try:
             fedit()
         except:
             writefile("file.save")
-            stdmm("Some error occured. memory saved to file.save.")
+            stderr("Some error occured. memory saved to file.save.")
 
     esccolor(7)
     escdispcursor()
