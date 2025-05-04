@@ -213,7 +213,7 @@ def delmem(start,end,yf):
     global yank,mem,modified,lastchange
     length=end-start+1
     if length<=0 or start>=len(mem):
-        stdmm("Invalid range.")
+        stderr("Invalid range.")
         return
     if yf:
         yankmem(start,end)
@@ -232,7 +232,7 @@ def yankmem(start,end):
     global yank,mem
     length=end-start+1
     if length<=0 or start>=len(mem):
-        stdmm("Invalid range.")
+        stderr("Invalid range.")
         return
     yank=[]
     cnt=0
@@ -361,7 +361,7 @@ def stdmm(s):
 def stderr(s):
     global scriptingflag,verbose
     if scriptingflag:
-        print(s)
+        print(s,file=sys.stderr)
     else:
         clrmm()
         esccolor(3)
@@ -437,13 +437,13 @@ def get_value(s,idx):
             u+=s[idx]
             idx+=1
         else:
-            stdmm("Invalid eval expression.")
+            stderr("Invalid eval expression.")
             return UNKNOWN,idx
 
         try:
             v=int(eval(u))
         except:
-            stdmm("Invalid eval expression.")
+            stderr("Invalid eval expression.")
             return UNKNOWN,idx
 
     elif ch=='.':
@@ -453,7 +453,7 @@ def get_value(s,idx):
         idx+=1
         v=mark[ord(s[idx])-ord('a')]
         if v==UNKNOWN:
-            stdmm("Unknown mark.")
+            stderr("Unknown mark.")
             return UNKNOWN,idx-1
         else:
             idx+=1
@@ -571,13 +571,13 @@ def srematch(addr):
     try:
         ms = byte_data.decode('utf-8', errors='replace')
     except:
-        stdmm("Unicode decode error")
+        stderr("Unicode decode error")
         return 0
 
     try:
         f = re.match(remem, ms)
     except:
-        stdmm("Bad regular expression.")
+        stderr("Bad regular expression.")
         return 0
 
     if f:
@@ -587,7 +587,7 @@ def srematch(addr):
         try:
             matched_bytes = matched_str.encode('utf-8')
         except:
-            stdmm("Unicode encode error.")
+            stderr("Unicode encode error.")
             return 0
 
         span=len(matched_bytes)
@@ -865,7 +865,7 @@ def get_str_or_hexs(line,idx):
             try:
                 bseq=s.encode('utf-8')
             except:
-                stdmm("Unicode encode error.")
+                stderr("Unicode encode error.")
                 return [],idx
             m=list(bseq)
     else:
@@ -877,7 +877,7 @@ def get_str(line,idx):
     try:
         bseq=s.encode('utf-8')
     except:
-        stdmm("Unicode encode error.")
+        stderr("Unicode encode error.")
         return [],idx
     m=list(bseq)
     return m,idx
@@ -938,7 +938,7 @@ def call_exec(line):
             repaint()
 
     except:
-        stdmm("python exec() error.")
+        stderr("python exec() error.")
 
     finally:
         return
@@ -952,7 +952,7 @@ def commandline_(line):
         return -1
     if line=='q':
         if lastchange:
-            stdmm("No write since last change. To overriding quit, use 'q!'.")
+            stderr("No write since last change. To overriding quit, use 'q!'.")
             return -1
         return 0
     elif line=='q!':
@@ -996,7 +996,7 @@ def commandline_(line):
             escclear()
             return -1
         else:
-            stdmm("Specify script file name.")
+            stderr("Specify script file name.")
             return -1
     elif line[0]=='n':
         searchnext(fpos()+1)
@@ -1181,7 +1181,7 @@ def commandline_(line):
                 stdmm(f"{len(data)} bytes filled.")
                 jump(x+len(data))
             else:
-                stdmm("Invalid syntax.")
+                stderr("Invalid syntax.")
             return -1
 
         if ch=='i':
@@ -1193,7 +1193,7 @@ def commandline_(line):
                 length=1
 
             if xf2:
-                stdmm("Invalid syntax.")
+                stderr("Invalid syntax.")
                 return -1
 
             data=m*length
@@ -1212,7 +1212,7 @@ def commandline_(line):
                 length=1
 
             if xf2:
-                stdmm("Invalid syntax.")
+                stderr("Invalid syntax.")
                 return -1
 
             data=m*length
@@ -1223,7 +1223,7 @@ def commandline_(line):
 
         x3,idx=expression(line,idx)
         if x3==UNKNOWN:
-            stdmm("Invalid parameter.")
+            stderr("Invalid parameter.")
             return -1
 
         if ch=='c':
@@ -1255,7 +1255,7 @@ def commandline_(line):
             opexor(x,x2,x3)
             jump(x2+1)
             return -1
-    stdmm("Unrecognized command.")
+    stderr("Unrecognized command.")
     return -1
 
 def commandline(line):
