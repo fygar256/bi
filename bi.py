@@ -111,10 +111,10 @@ def skipspc(s,idx):
     return idx
 
 def print_title():
-    global filename,modified,insmod,mem,repsw
+    global filename,modified,insmod,mem,repsw,utf8
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.4.3 by T.Maekawa                                         {"insert   " if insmod else "overwrite"} ")
+    print(f"bi version 3.4.3 by T.Maekawa                   utf8mode:{"off" if not utf8 else repsw}     {"insert   " if insmod else "overwrite"}   ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
@@ -124,7 +124,7 @@ def printchar(a):
         print("~",end='',flush=True)
         return 1
     if utf8:
-        if mem[a]<0x80 or 0x80<=mem[a]<=0xbf or 0xf0<=mem[a]<=0xff:
+        if mem[a]<0x80 or 0x80<=mem[a]<=0xbf or 0xf8<=mem[a]<=0xff:
             print(chr(mem[a]&0xff) if 0x20<=mem[a]<=0x7e else '.',end='')
             return 1
         elif 0xc0<=mem[a]<=0xdf:
@@ -145,6 +145,16 @@ def printchar(a):
             except:
                 print(".",end='')
                 return 1
+        elif 0xf0<=mem[a]<=0xf7:
+            m=[readmem(a+repsw),readmem(a+1+repsw),readmem(a+2+repsw),readmem(a+3+repsw)]
+            try:
+                ch=bytes(m).decode('utf-8')
+                print(f"{ch}  ",end='',flush=True)
+                return 4
+            except:
+                print(".",end='')
+                return 1
+
     else:
         print(chr(mem[a]&0xff) if 0x20<=mem[a]<=0x7e else '.',end='')
         return 1
@@ -1346,7 +1356,7 @@ def fedit():
             continue
         elif ch == chr(12):
             escclear()
-            repsw=(repsw+(1 if utf8 else 0))%3
+            repsw=(repsw+(1 if utf8 else 0))%4
             repaint()
             continue
         elif ch == 'Z':
