@@ -30,6 +30,8 @@ bi file
 ##### reference of man
 man bi
 
+##### Document
+
                    vi like binary editor 'bi'
 
            Designed and Programmed by Taisuke Maekawa (fygar256)
@@ -155,7 +157,7 @@ Remarks
     to the end of the data + 1, and if dest>filesize, it fills from the end of
     the file + 1 to dest with 0s, and writes the deleted data from dest.
 
-    ^L switches multi-byte boundary from 0 to 2. if utf-8 multi-byte characters
+    ^L switches multi-byte boundary from 0 to 3. if utf-8 multi-byte characters
     are not seen, press ^L several times.
 
     ^Y toggles utf-8 display mode. Initial value is disable. When the screen
@@ -254,6 +256,7 @@ w<file> commands.
 2025-04-26 version 3.4.1 added functionality of print a value.
 2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file and '@' command.
 2025-05-04 version 3.4.3.5 adjustment to uniform notation to python. stable.
+2025-05-04 version 3.4.4 utf8 manipulation (full) added.
 --------------------
 
       I don't take any responsibility for the result of application of
