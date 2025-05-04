@@ -276,16 +276,19 @@ def movmem(start,end,dest):
     global mem
     m=redmem(start,end)
     if start<=dest<=end:
-        return
+        return end+1
     l=len(mem)
     delmem(start,end,True)
     if dest>l:
         ovwmem(dest,m)
+        return dest+len(m)
     else:
         if dest>start:
             insmem(dest-(end-start+1),m)
+            return dest-(end-start)+len(m)-1
         else:
             insmem(dest,m)
+            return dest+len(m)
 
 def scrup():
     global homeaddr
@@ -1088,6 +1091,7 @@ def commandline_(line):
         elif ch=='R':
             insmem(x,data)
 
+        jump(x+len(data))
         return -1
 
     if idx<len(line) and line[idx] in 'oO':
@@ -1218,9 +1222,9 @@ def commandline_(line):
             jump(x3+len(m))
             return -1
         elif ch=='v':
-            movmem(x,x2,x3)
+            xp=movmem(x,x2,x3)
             stdmm(f"{x2-x+1} bytes moved.")
-            jump(x3)
+            jump(xp)
             return -1
         elif ch=='&':
             opeand(x,x2,x3)
