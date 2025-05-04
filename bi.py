@@ -75,6 +75,9 @@ def escclear():
     print(f"{ESC}2J",end='',flush=True)
     esclocate()
 
+def escclraftcur():
+    print(f"{ESC}0J",end='',flush=True)
+
 def escclrline():
     print(f"{ESC}2K",end='',flush=True)
 
@@ -182,7 +185,7 @@ def repaint():
             c=printchar(a)
             a+=c
             by+=c
-        print(" ",end='',flush=True)
+        print("  ",end='',flush=True)
     esccolor(0)
     escdispcursor()
 
