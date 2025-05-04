@@ -274,21 +274,25 @@ def cpymem(start,end,dest):
 
 def movmem(start,end,dest):
     global mem
-    m=redmem(start,end)
     if start<=dest<=end:
         return end+1
     l=len(mem)
+    if start>=l:
+        return dest
+    m=redmem(start,end)
     delmem(start,end,True)
     if dest>l:
         ovwmem(dest,m)
-        return dest+len(m)
+        xp=dest+len(m)
     else:
         if dest>start:
             insmem(dest-(end-start+1),m)
-            return dest-(end-start)+len(m)-1
+            xp= dest-(end-start)+len(m)-1
         else:
             insmem(dest,m)
-            return dest+len(m)
+            xp= dest+len(m)
+    stdmm(f"{end-start+1} bytes moved.")
+    return xp
 
 def scrup():
     global homeaddr
@@ -1223,7 +1227,6 @@ def commandline_(line):
             return -1
         elif ch=='v':
             xp=movmem(x,x2,x3)
-            stdmm(f"{x2-x+1} bytes moved.")
             jump(xp)
             return -1
         elif ch=='&':
