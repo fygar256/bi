@@ -476,15 +476,18 @@ def get_value(s,idx):
         v=0
     return v,idx
 
-def scommand(start,end,xf,xf2,line,idx):
+def scommand(start,end,line,idx):
     global span,nff
     nff=False
     pos=fpos()
 
+    idx2=skipspc(line,0)
     idx=skipspc(line,idx)
-    if not xf and not xf2:
-        start=0
-        end=len(mem)-1
+    if idx2<len(line) and line[idx2]=='s':
+        idx2=skipspc(line,idx2+1)
+        if idx==idx2:
+            start=0
+            end=len(mem)-1
     f=False
 
     m=''
@@ -1138,7 +1141,7 @@ def commandline_(line):
         wrtfile(x,x2,fn)
         return -1
     elif ch=='s':
-        scommand(x,x2,xf,xf2,line,idx+1)
+        scommand(x,x2,line,idx+1)
         return -1
 
     if idx<len(line) and line[idx]=='~':
