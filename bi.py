@@ -476,8 +476,31 @@ def get_value(s,idx):
         v=0
     return v,idx
 
+def searchnextnoloop(fp):
+    global smem,nff
+    cur_pos=fp
+
+    if regexp==False and not smem:
+        return False
+    while True:
+        if regexp:
+            f=hitre(cur_pos)
+        else:
+            f=hit(cur_pos)
+
+        if f:
+            jump(cur_pos)
+            return True
+
+        cur_pos+=1
+
+        if cur_pos>=len(mem):
+            jump(len(mem))
+            return False
+
+
 def scommand(start,end,xf,xf2,line,idx):
-    global span,nff
+    global span,nff,regexp,remem,smem
     nff=False
     pos=fpos()
 
@@ -495,10 +518,18 @@ def scommand(start,end,xf,xf2,line,idx):
         f=True
         if idx<len(line) and line[idx]!='/':
             m,idx=get_restr(line,idx)
-            re_=True
+            regexp=True
+            remem=m
+            span=1
         elif idx<len(line) and line[idx]=='/':
-            hs,idx=get_hexs(line,idx+1)
-            re_=False
+            smem,idx=get_hexs(line,idx+1)
+            regexp=False
+            remem=''
+            span=len(hs)
+
+    if span==0:
+        stderr(f"Specify search object.")
+        return
 
     n,idx=get_str_or_hexs(line,idx)
 
@@ -506,25 +537,19 @@ def scommand(start,end,xf,xf2,line,idx):
     cnt=0
     jump(i)
 
-    if re_==True:
-        f=searchstr(m)
-        i=fpos()
-    else:
-        f=searchhex(hs)
-        span=len(hs)
-        i=fpos()
-
     while True:
-        jump(i)
 
-        if i<=end and f:
+        f=searchnextnoloop(fpos())
+
+        i=fpos()
+
+        if i<=end and f==True:
             delmem(i,i+span-1,False)
             insmem(i,n)
             pos=i+len(n)
             cnt+=1
-            i=i-span+len(n)
-            f=searchnext(i)
-            i=fpos()
+            i=pos
+            jump(i)
         else:
             jump(pos)
             stdmm(f"{cnt} times replaced.")
@@ -554,8 +579,12 @@ def openot(x,x2):
     stdmm(f"{x2-x+1} bytes noted.")
     return
             
-def srematch(addr):
+def hitre(addr):
     global span, remem, mem
+
+    if not remem:
+        return False
+
     span = 0
     m = []
 
@@ -569,13 +598,13 @@ def srematch(addr):
         ms = byte_data.decode('utf-8', errors='replace')
     except:
         stderr("Unicode decode error")
-        return 0
+        return False
 
     try:
         f = re.match(remem, ms)
     except:
         stderr("Bad regular expression.")
-        return 0
+        return False
 
     if f:
         start, end = f.span()
@@ -585,19 +614,12 @@ def srematch(addr):
             matched_bytes = matched_str.encode('utf-8')
         except:
             stderr("Unicode encode error.")
-            return 0
+            return False
 
         span=len(matched_bytes)
-        return 1
-    else:
-        return 0
-
-def hitre(addr):
-    global remem
-    if not remem:
         return True
-
-    return srematch(addr)
+    else:
+        return False
 
 def hit(addr):
     global smem,mem
@@ -690,6 +712,7 @@ def searchstr(s):
         return(searchnext(fpos()))
     return False
 
+
 def searchsub(line):
     if len(line)>2 and line[0:2]=='//':
         sm,idx=get_hexs(line,2)
@@ -722,7 +745,6 @@ def searchhex(sm):
         smem=sm
         return(searchnext(fpos()))
     return False
-
 
 def comment(s):
     idx=0
@@ -1529,11 +1551,14 @@ def main():
             writefile("file.save")
             stderr("Some error occured. memory saved to file.save.")
     else:
+        fedit()
+        """
         try:
             fedit()
         except:
             writefile("file.save")
             stderr("Some error occured. memory saved to file.save.")
+        """
 
     esccolor(7)
     escdispcursor()
