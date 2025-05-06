@@ -520,12 +520,15 @@ def scommand(start,end,xf,xf2,line,idx):
             m,idx=get_restr(line,idx)
             regexp=True
             remem=m
-            span=1
+            span=len(m)
         elif idx<len(line) and line[idx]=='/':
             smem,idx=get_hexs(line,idx+1)
             regexp=False
             remem=''
-            span=len(hs)
+            span=len(smem)
+        else:
+            stderr(f"Invalid syntax.")
+            return
 
     if span==0:
         stderr(f"Specify search object.")
