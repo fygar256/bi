@@ -12,9 +12,6 @@ The development environment and operation verification are done on ArchLinux.
 This software disributed with MIT license.
 
 ```
-##### installation (ArchLinux)
-yay -S bi
-
 ##### installation (Other)
 git clone http://github.com/fygar256/bi
 cd bi
