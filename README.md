@@ -261,6 +261,10 @@ w<file> commands.
 
 ```
 
+##### Debug cooperation
+
+Pacific Software Development
+
 ##### Screenshot
 
 <img alt="image" src="https://github.com/fygar256/bi/blob/main/screenshot.png">
