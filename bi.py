@@ -998,7 +998,6 @@ def commandline_(line):
     elif line[0]=='r':
         if len(line)<2:
             readfile(filename)
-            jump(0)
             stdmm("Original file read.")
             return -1
     elif line[0]=='T' or line[0]=='t':
@@ -1554,14 +1553,11 @@ def main():
             writefile("file.save")
             stderr("Some error occured. memory saved to file.save.")
     else:
-        fedit()
-        """
         try:
             fedit()
         except:
             writefile("file.save")
             stderr("Some error occured. memory saved to file.save.")
-        """
 
     esccolor(7)
     escdispcursor()
