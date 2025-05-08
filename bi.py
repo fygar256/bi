@@ -724,10 +724,20 @@ def searchsub(line):
         m,idx=get_restr(line,1)
         return searchstr(m)
 
+def search_pre_input_hook():
+    readline.insert_text('/')
+    readline.redisplay()
+
+def no_pre_input_hook():
+    readline.insert_text('')
+    readline.redisplay()
+
 def search():
     esclocate(0,BOTTOMLN)
     esccolor(7)
-    s="/"+getln("/")
+    readline.set_pre_input_hook(search_pre_input_hook)
+    
+    s=getln(":")
     searchsub(comment(s))
 
 def get_hexs(s,idx):
@@ -1288,6 +1298,7 @@ def commandline(line):
 def commandln():
     esclocate(0,BOTTOMLN)
     esccolor(7)
+    readline.set_pre_input_hook(no_pre_input_hook)
     line=getln(':').lstrip()
     return commandline(line)
 
@@ -1551,11 +1562,14 @@ def main():
             writefile("file.save")
             stderr("Some error occured. memory saved to file.save.")
     else:
+        fedit()
+        """
         try:
             fedit()
         except:
             writefile("file.save")
             stderr("Some error occured. memory saved to file.save.")
+        """
 
     esccolor(7)
     escdispcursor()
