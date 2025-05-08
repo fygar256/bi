@@ -98,9 +98,9 @@ def getch():
 def putch(c):
     print(c,end='',flush=True)
 
-def getln():
+def getln(s=""):
     try:
-        s=input("")
+        s=input(s)
     except:
         s=""
     return s
@@ -727,8 +727,7 @@ def searchsub(line):
 def search():
     esclocate(0,BOTTOMLN)
     esccolor(7)
-    print("/",end='',flush=True)
-    s="/"+getln()
+    s="/"+getln("/")
     searchsub(comment(s))
 
 def get_hexs(s,idx):
@@ -1289,8 +1288,7 @@ def commandline(line):
 def commandln():
     esclocate(0,BOTTOMLN)
     esccolor(7)
-    putch(':')
-    line=getln().lstrip()
+    line=getln(':').lstrip()
     return commandline(line)
 
 def printdata():
