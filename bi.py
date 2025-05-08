@@ -1345,16 +1345,16 @@ def printdata():
 
 def disp_curpos():
     esccolor(4)
-    esclocate(curx // 2 * 3 + 12 + (curx & 1), cury + 3)
+    esclocate(curx // 2 * 3 + 12 , cury + 3)
     print("[",end='',flush=True)
-    esclocate(curx // 2 * 3 + 15 + (curx & 1), cury + 3)
+    esclocate(curx // 2 * 3 + 15 , cury + 3)
     print("]",end='',flush=True)
 
 def erase_curpos():
     esccolor(7)
-    esclocate(curx // 2 * 3 + 12 + (curx & 1), cury + 3)
+    esclocate(curx // 2 * 3 + 12 , cury + 3)
     print(" ",end='',flush=True)
-    esclocate(curx // 2 * 3 + 15 + (curx & 1), cury + 3)
+    esclocate(curx // 2 * 3 + 15 , cury + 3)
     print(" ",end='',flush=True)
 
 def fedit():
