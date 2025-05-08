@@ -37,6 +37,11 @@ verbose=False
 scriptingflag=False
 stack=[]
 cp=0
+histories = {
+    'command': [],
+    'search': []
+}
+
 
 def printhexs(s):
     for i,b in enumerate(s):
@@ -98,12 +103,33 @@ def getch():
 def putch(c):
     print(c,end='',flush=True)
 
-def getln(s=""):
+def get_history_list():
+    """現在の履歴をリストとして取得"""
+    return [readline.get_history_item(i) for i in range(1, readline.get_current_history_length() + 1)]
+
+def set_history_list(mode):
+    """履歴をリストから設定"""
+    history_items=histories[mode]
+    readline.clear_history()
+    for item in history_items:
+        readline.add_history(item)
+
+def getln(s="",mode="command"):
+    mode="search" if mode=="search" else "command"
     try:
-        s=input(s)
+        histories[mode]  # 空でも準備しておく
+        set_history_list(mode)
+        try:
+            user_input = input(s)
+        except:
+            user_input= ""
+
+        histories[mode] = get_history_list()
+        set_history_list(mode)
+
     except:
-        s=""
-    return s
+        pass
+    return user_input
 
 def skipspc(s,idx):
     while idx<len(s):
@@ -737,7 +763,7 @@ def search():
     esccolor(7)
     readline.set_pre_input_hook(search_pre_input_hook)
     
-    s=getln(":")
+    s=getln(":","search")
     searchsub(comment(s))
 
 def get_hexs(s,idx):
@@ -1299,7 +1325,7 @@ def commandln():
     esclocate(0,BOTTOMLN)
     esccolor(7)
     readline.set_pre_input_hook(no_pre_input_hook)
-    line=getln(':').lstrip()
+    line=getln(':',"command").lstrip()
     return commandline(line)
 
 def printdata():
@@ -1562,14 +1588,11 @@ def main():
             writefile("file.save")
             stderr("Some error occured. memory saved to file.save.")
     else:
-        fedit()
-        """
         try:
             fedit()
         except:
             writefile("file.save")
             stderr("Some error occured. memory saved to file.save.")
-        """
 
     esccolor(7)
     escdispcursor()
