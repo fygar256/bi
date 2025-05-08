@@ -116,19 +116,15 @@ def set_history_list(mode):
 
 def getln(s="",mode="command"):
     mode="search" if mode=="search" else "command"
+    histories[mode]  # 空でも準備しておく
+    set_history_list(mode)
     try:
-        histories[mode]  # 空でも準備しておく
-        set_history_list(mode)
-        try:
-            user_input = input(s)
-        except:
-            user_input= ""
-
-        histories[mode] = get_history_list()
-        set_history_list(mode)
-
+        user_input = input(s)
     except:
-        pass
+        user_input= ""
+
+    histories[mode] = get_history_list()
+
     return user_input
 
 def skipspc(s,idx):
@@ -759,12 +755,14 @@ def no_pre_input_hook():
     readline.redisplay()
 
 def search():
+    disp_curpos()
     esclocate(0,BOTTOMLN)
     esccolor(7)
     readline.set_pre_input_hook(search_pre_input_hook)
     
-    s=getln(":","search")
+    s=getln("","search")
     searchsub(comment(s))
+    erase_curpos()
 
 def get_hexs(s,idx):
     m=[]
@@ -1345,6 +1343,20 @@ def printdata():
     else:
         print(f"{addr:012X} : ~~                                                   ",end='',flush=True)
 
+def disp_curpos():
+    esccolor(4)
+    esclocate(curx // 2 * 3 + 12 + (curx & 1), cury + 3)
+    print("[",end='',flush=True)
+    esclocate(curx // 2 * 3 + 15 + (curx & 1), cury + 3)
+    print("]",end='',flush=True)
+
+def erase_curpos():
+    esccolor(7)
+    esclocate(curx // 2 * 3 + 12 + (curx & 1), cury + 3)
+    print(" ",end='',flush=True)
+    esclocate(curx // 2 * 3 + 15 + (curx & 1), cury + 3)
+    print(" ",end='',flush=True)
+
 def fedit():
     global nff,yank,lastchange,modified,insmod,homeaddr,curx,cury,repsw,utf8,cp
     stroke = False
@@ -1497,7 +1509,9 @@ def fedit():
         elif ch == 'x':
             delmem(fpos(), fpos(), False)
         elif ch == ':':
+            disp_curpos()
             f = commandln()
+            erase_curpos()
             if f == 1:
                 return True
             elif f == 0:
