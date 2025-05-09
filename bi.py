@@ -27,6 +27,8 @@ insmod=False
 curx=0
 cury=0
 mark=[UNKNOWN] * 26
+begin=0
+debug=True
 smem=[]
 regexp=False
 repsw=0
@@ -41,7 +43,10 @@ histories = {
     'command': [],
     'search': []
 }
-
+ending=0
+beginning=0
+partial=False
+fixed=False
 
 def printhexs(s):
     for i,b in enumerate(s):
@@ -136,23 +141,28 @@ def skipspc(s,idx):
     return idx
 
 def print_title():
-    global filename,modified,insmod,mem,repsw,utf8
+    global filename,modified,insmod,mem,repsw,utf8,fixed,partial,beginning,ending
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.4.4 by T.Maekawa                   utf8mode:{"off" if not utf8 else repsw}     {"insert   " if insmod else "overwrite"}   ")
+    if partial:
+        print(f"begin:{beginning:012X} end:{ending:012X} {"not " if not fixed else "    "}fixed   ",end="")
+    else:
+        print("bi version 3.4.5 by T.Maekawa                 ",end='')
+    print(f"utf8mode:{"off" if not utf8 else repsw}     {"insert   " if insmod else "overwrite"}   ")
     esccolor(5)
     print(f"file:[{filename:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
 
 def printchar(a):
-    global utf8
-    if a>=len(mem):
+    global utf8,beginning,ending
+    if not(a-beginning>=0 and a-ending<=0 and a-beginning<len(mem)):
         print("~",end='',flush=True)
         return 1
+    c=readmem(a)
     if utf8:
-        if mem[a]<0x80 or 0x80<=mem[a]<=0xbf or 0xf8<=mem[a]<=0xff:
-            print(chr(mem[a]&0xff) if 0x20<=mem[a]<=0x7e else '.',end='')
+        if c<0x80 or 0x80<=c<=0xbf or 0xf8<=c<=0xff:
+            print(chr(c&0xff) if 0x20<=c<=0x7e else '.',end='')
             return 1
-        elif 0xc0<=mem[a]<=0xdf:
+        elif 0xc0<=c<=0xdf:
             m=[readmem(a+repsw),readmem(a+1+repsw)]
             try:
                 ch=bytes(m).decode('utf-8')
@@ -161,7 +171,7 @@ def printchar(a):
             except:
                 print(".",end='')
                 return 1
-        elif 0xe0<=mem[a]<=0xef:
+        elif 0xe0<=c<=0xef:
             m=[readmem(a+repsw),readmem(a+1+repsw),readmem(a+2+repsw)]
             try:
                 ch=bytes(m).decode('utf-8')
@@ -170,7 +180,7 @@ def printchar(a):
             except:
                 print(".",end='')
                 return 1
-        elif 0xf0<=mem[a]<=0xf7:
+        elif 0xf0<=c<=0xf7:
             m=[readmem(a+repsw),readmem(a+1+repsw),readmem(a+2+repsw),readmem(a+3+repsw)]
             try:
                 ch=bytes(m).decode('utf-8')
@@ -181,7 +191,7 @@ def printchar(a):
                 return 1
 
     else:
-        print(chr(mem[a]&0xff) if 0x20<=mem[a]<=0x7e else '.',end='')
+        print(chr(c&0xff) if 0x20<=c<=0x7e else '.',end='')
         return 1
 
 def repaint():
@@ -199,7 +209,10 @@ def repaint():
         esccolor(7)
         for i in range(16):
             a=y*16+i+addr
-            print(f"~~ " if a>=len(mem) else f"{mem[a]&0xff:02X} ",end='')
+            if (partial and (a>=beginning and a<=ending) and a-beginning<len(mem)) or (not partial and a-beginning<len(mem)):
+                print(f"{mem[a-beginning]&0xff:02X} ",end='')
+            else:
+                print("~~ ",end='')
         esccolor(6)
         a=y*16+addr
         by=0
@@ -212,85 +225,128 @@ def repaint():
     escdispcursor()
 
 def insmem(start,mem2):
-    global mem,lastchange,modified
-    if start>=len(mem):
-        for i in range(start-len(mem)):
-            mem+=[0]
-        mem=mem+mem2
-        modified=True
-        lastchange=True
-        return
+    global mem,lastchange,modified,partial,beginning,ending,fixed
 
-    mem1=[]
-    mem3=[]
-    for j in range(start):
-        mem1+=[mem[j]&0xff]
-    for j in range(len(mem)-start):
-        mem3+=[mem[start+j]&0xff]
-    mem=mem1+mem2+mem3
+    if not fixed:
+        if start>ending:
+            for i in range(ending-start):
+                mem+=[0]
+            mem=mem+mem2
+            modified=True
+            lastchange=True
+            return
+
+        mem1=[]
+        mem3=[]
+        for j in range(start-beginning):
+            mem1+=[mem[j]&0xff]
+        for j in range(len(mem)-(start-beginning)):
+            mem3+=[mem[start-beginning+j]&0xff]
+        mem=mem1+mem2+mem3
+    else:
+        if start-beginning>=len(mem):
+            return
+
+        mem1=[]
+        mem3=[]
+        for j in range(start-beginning):
+            mem1+=[mem[j]&0xff]
+        for j in range(len(mem)-len(mem2)-(start-beginning)):
+            if (ending-beginning)>=j:
+                mem3+=[mem[start-beginning+j]&0xff]
+        mem=mem1+mem2+mem3
+
     modified=True
     lastchange=True
+
+def ovwmem(start,mem0):
+    global mem,modified,lastchange,beginning,partial,fixed
+
+    if mem0==[]:
+        return
+
+    if not fixed:
+        if start-beginning+len(mem0)>=len(mem):
+            for j in range(start-beginning+len(mem0)-len(mem)):
+                mem+=[0]
+
+        for j in range(len(mem0)):
+            if j>=len(mem):
+                mem+=[mem0[j]&0xff]
+            else:
+                mem[start-beginning+j]=mem0[j]&0xff
+    else:
+        for j in range(len(mem0)):
+            if start-beginning+j<len(mem):
+                mem[start-beginning+j]=mem0[j]&0xff
+
+    lastchange=True
+    modified=True
 
 def delmem(start,end,yf):
-    global yank,mem,modified,lastchange
+    global yank,mem,modified,lastchange,beginning,partial,fixed
     length=end-start+1
-    if length<=0 or start>=len(mem):
-        stderr("Invalid range.")
-        return
-    if yf:
-        yankmem(start,end)
+    if not fixed:
+        if length<=0 or start>=len(mem):
+            stderr("Invalid range.")
+            return
+        if yf:
+            yankmem(start,end)
 
-    mem1=[]
-    mem2=[]
-    for j in range(start):
-        mem1+=[mem[j]&0xff]
-    for j in range(end+1,len(mem)):
-        mem2+=[mem[j]&0xff]
-    mem=mem1+mem2
+        mem1=[]
+        mem2=[]
+        for j in range(start-beginning):
+            mem1+=[mem[j]&0xff]
+        for j in range(end-beginning+1,len(mem)):
+            mem2+=[mem[j]&0xff]
+        mem=mem1+mem2
+    else:
+        memlen=len(mem)
+        if length<=0 or start-beginning>=len(mem):
+            stderr("Invalid range.")
+            return
+        if yf:
+            yankmem(start,end)
+
+        mem1=[]
+        mem2=[]
+        for j in range(start-beginning):
+            mem1+=[mem[j]&0xff]
+        for j in range(end-beginning+1,len(mem)):
+            mem2+=[mem[j]&0xff]
+        mem=mem1+mem2
+        if len(mem)<=memlen:
+            for i in range(memlen-len(mem)):
+                mem+=[0]
+
     lastchange=True
     modified=True
 
+
 def yankmem(start,end):
-    global yank,mem
+    global yank,mem,beginning
     length=end-start+1
-    if length<=0 or start>=len(mem):
+    if length<=0 or start-beginning>=len(mem):
         stderr("Invalid range.")
         return
     yank=[]
     cnt=0
     for j in range(start,end+1):
-        if j<len(mem):
+        if j-beginning<len(mem):
             cnt+=1
-            yank+=[mem[j]&0xff]
+            yank+=[mem[j-beginning]&0xff]
 
     stdmm(f"{cnt} bytes yanked.")
 
-def ovwmem(start,mem0):
-    global mem,modified,lastchange
-
-    if mem0==[]:
-        return
-
-    if start+len(mem0)>=len(mem):
-        for j in range(start+len(mem0)-len(mem)):
-            mem+=[0]
-
-    for j in range(len(mem0)):
-        if j>=len(mem):
-            mem+=[mem0[j]&0xff]
-        else:
-            mem[start+j]=mem0[j]&0xff
-    lastchange=True
-    modified=True
-
 def redmem(start,end):
-    global mem
+    global mem,beginning,fixed
     m=[]
     for i in range(start,end+1):
-        if len(mem)>i:
-            m+=[mem[i]&0xff]
+        if len(mem)>i-beginning:
+            m+=[mem[i-beginning]&0xff]
         else:
-            m+=[0]
+            if not fixed:
+                m+=[0]
     return m
 
 def cpymem(start,end,dest):
@@ -298,26 +354,13 @@ def cpymem(start,end,dest):
     ovwmem(dest,m)
 
 def movmem(start,end,dest):
-    global mem
+    global mem,yank
     if start<=dest<=end:
         return end+1
-    l=len(mem)
-    if start>=l:
-        return dest
-    m=redmem(start,end)
     delmem(start,end,True)
-    if dest>l:
-        ovwmem(dest,m)
-        xp=dest+len(m)
-    else:
-        if dest>start:
-            insmem(dest-(end-start+1),m)
-            xp= dest-(end-start)+len(m)-1
-        else:
-            insmem(dest,m)
-            xp= dest+len(m)
-    stdmm(f"{end-start+1} bytes moved.")
-    return xp
+    insmem(dest-(end-start+1),yank)
+    stdmm(f"{len(yank)} bytes moved.")
+    return dest-(end-start+1)+len(yank)
 
 def scrup():
     global homeaddr
@@ -345,21 +388,30 @@ def inccurx():
 
 def readmem(addr):
     global mem
-    if addr>=len(mem):
+    if addr-beginning<0:
         return 0
-    return (mem[addr]&0xff)
+    if addr-beginning>=len(mem):
+        return 0
+    return (mem[addr-beginning]&0xff)
 
 def setmem(addr,data):
-    global mem,modified,lastchange
+    global mem,modified,lastchange,ending
 
-    if addr>=len(mem):
-        for i in range(addr-len(mem)+1):
+    if addr<beginning:
+        return
+
+    if fixed and addr>ending:
+        return
+
+    if addr>ending:
+        for i in range(addr-ending):
             mem+=[0]
+        ending=len(mem)-1
 
     if isinstance(data,int) and 0<=data<=255:
-        mem[addr]=data
+        mem[addr-beginning]=data
     else:
-        mem[addr]=0
+        mem[addr-beginning]=0
 
     modified=True
     lastchange=True
@@ -439,6 +491,7 @@ def expression(s,idx):
     return x,idx
 
 def get_value(s,idx):
+    global ending,beginning
     if idx>=len(s):
         return UNKNOWN,idx
     idx=skipspc(s,idx)
@@ -446,7 +499,13 @@ def get_value(s,idx):
     if ch=='$':
         idx+=1
         if len(mem)!=0:
-            v=len(mem)-1
+            v=ending
+        else:
+            v=0
+    elif ch=='^':
+        idx+=1
+        if len(mem)!=0:
+            v=beginning
         else:
             v=0
     elif ch=='{':
@@ -499,7 +558,7 @@ def get_value(s,idx):
     return v,idx
 
 def searchnextnoloop(fp):
-    global smem,nff
+    global smem,nff,beginning,ending
     cur_pos=fp
 
     if regexp==False and not smem:
@@ -516,20 +575,20 @@ def searchnextnoloop(fp):
 
         cur_pos+=1
 
-        if cur_pos>=len(mem):
-            jump(len(mem))
+        if cur_pos-beginning>=len(mem):
+            jump(ending+1)
             return False
 
 
 def scommand(start,end,xf,xf2,line,idx):
-    global span,nff,regexp,remem,smem
+    global span,nff,regexp,remem,smem,beginning,ending
     nff=False
     pos=fpos()
 
     idx=skipspc(line,idx)
     if not xf and not xf2:
-        start=0
-        end=len(mem)-1
+        start=beginning
+        end=ending
     f=False
 
     m=''
@@ -605,7 +664,7 @@ def openot(x,x2):
     return
             
 def hitre(addr):
-    global span, remem, mem
+    global span, remem, mem, beginning
 
     if not remem:
         return False
@@ -613,10 +672,10 @@ def hitre(addr):
     span = 0
     m = []
 
-    if addr < len(mem) - RELEN:
-        m = mem[addr:addr + RELEN]
+    if addr-beginning < len(mem) - RELEN:
+        m = mem[addr-beginning:addr -beginning + RELEN]
     else:
-        m = mem[addr:]
+        m = mem[addr-beginning:]
 
     byte_data = bytes(m)
     try:
@@ -647,16 +706,16 @@ def hitre(addr):
         return False
 
 def hit(addr):
-    global smem,mem
+    global smem,mem,beginning
     for i in range(len(smem)):
-        if addr+i<len(mem) and mem[addr+i]==smem[i]:
+        if addr-beginning+i<len(mem) and mem[addr-beginning+i]==smem[i]:
             continue
         else:
             return False
     return True
 
 def searchnext(fp):
-    global smem,nff
+    global smem,nff,beginning
     curpos=fp
     start=fp
     if regexp==False and not smem:
@@ -673,10 +732,10 @@ def searchnext(fp):
 
         curpos+=1
 
-        if curpos>=len(mem):
+        if curpos-beginning>=len(mem):
             if nff:
                 stdmm("Search reached to bottom, continuing from top.")
-            curpos=0
+            curpos=beginning
             esccolor(0)
 
         if curpos==start:
@@ -685,6 +744,7 @@ def searchnext(fp):
             return False
 
 def searchlast(fp):
+    global ending
     curpos=fp
     start=fp
     if regexp==False and not smem:
@@ -700,10 +760,10 @@ def searchlast(fp):
             return True
 
         curpos-=1
-        if curpos<0:
+        if curpos<beginning:
             stdmm("Search reached to top, continuing from bottom.")
             esccolor(0)
-            curpos=len(mem)-1
+            curpos=ending
 
         if curpos==start:
             stdmm("Not found.")
@@ -1000,9 +1060,10 @@ def call_exec(line):
         return
 
 def commandline_(line):
-    global lastchange,yank,filename,stack,verbose,scriptingflag,cp
+    global lastchange,yank,filename,stack,verbose,scriptingflag,cp,ending,beginning,mem
 
     cp=fpos()
+    ending=beginning+len(mem)-1
     line=comment(line)
     if line=='':
         return -1
@@ -1327,6 +1388,7 @@ def commandln():
     return commandline(line)
 
 def printdata():
+    global beginning
     addr=fpos()
     a=readmem(addr)
     esclocate(0,24)
@@ -1338,32 +1400,33 @@ def printdata():
         s='.'
     else:
         s='\''+chr(a)+'\''
-    if addr<len(mem):
+    if addr-beginning<len(mem):
         print(f"{addr:012X} : 0x{a:02X} 0b{a:08b} 0o{a:03o} {a} {s}      ",end='',flush=True)
     else:
         print(f"{addr:012X} : ~~                                                   ",end='',flush=True)
 
 def disp_curpos():
     esccolor(4)
-    esclocate(curx // 2 * 3 + 12 , cury + 3)
+    esclocate((curx // 2) * 3 + 12 , cury + 3)
     print("[",end='',flush=True)
-    esclocate(curx // 2 * 3 + 15 , cury + 3)
+    esclocate((curx // 2) * 3 + 15 , cury + 3)
     print("]",end='',flush=True)
 
 def erase_curpos():
     esccolor(7)
-    esclocate(curx // 2 * 3 + 12 , cury + 3)
+    esclocate((curx // 2) * 3 + 12 , cury + 3)
     print(" ",end='',flush=True)
-    esclocate(curx // 2 * 3 + 15 , cury + 3)
+    esclocate((curx // 2) * 3 + 15 , cury + 3)
     print(" ",end='',flush=True)
 
 def fedit():
-    global nff,yank,lastchange,modified,insmod,homeaddr,curx,cury,repsw,utf8,cp
+    global nff,yank,lastchange,modified,insmod,homeaddr,curx,cury,repsw,utf8,cp,ending,beginning
     stroke = False
     ch = ''
     repsw=0
     while True:
         cp=fpos()
+        ending=beginning+len(mem)-1
         repaint()
         printdata()
         esclocate(curx // 2 * 3 + 13 + (curx & 1), cury + 3)
@@ -1498,7 +1561,7 @@ def fedit():
             sh = 4 if not curx & 1 else 0
             mask = 0xf if not curx & 1 else 0xf0
             if insmod:
-                if not stroke and addr < len(mem):
+                if not stroke and addr-beginning < len(mem):
                     insmem(addr, [c << sh])
                 else:
                     setmem(addr, readmem(addr) & mask | c << sh)
@@ -1518,18 +1581,23 @@ def fedit():
                 return False
 
 def readfile(fn):
-    global mem,newfile
+    global mem,newfile,beginning,ending
     try:
         f=open(fn,"rb")
     except:
-        newfile=True
-        stdmm("<new file>")
         mem=[]
     else:
         newfile=False
         try:
-            mem=list(f.read())
+            f.seek(beginning,0)
+            m=[]
+            for i in range(beginning,ending+1):
+                d=f.read(1)
+                if d==b'':
+                    break
+                m+=[int.from_bytes(d,byteorder='little')]
             f.close()
+            mem=m
             return True
         except MemoryError:
             stderr("Memory overflow.")
@@ -1549,7 +1617,8 @@ def writefile(fn):
     global mem
     regulate_mem()
     try:
-        f=open(fn,"wb")
+        f=open(fn,"r+b")
+        f.seek(beginning,0)
         f.write(bytes(mem))
         f.close()
         stdmm("File written.")
@@ -1559,10 +1628,11 @@ def writefile(fn):
         return False
 
 def wrtfile(start,end,fn):
-    global mem
+    global mem,beginning
     regulate_mem()
     try:
-        f=open(fn,"wb")
+        f=open(fn,"r+b")
+        f.seek(beginning,0)
         for i in range(start,end+1):
             if i<len(mem):
                 f.write(bytes([mem[i]]))
@@ -1575,15 +1645,54 @@ def wrtfile(start,end,fn):
         return False
 
 def main():
-    global filename,verbose,scriptingflag
+    global filename,verbose,scriptingflag,homeaddr,ending,beginning,partial,fixed
     parser = argparse.ArgumentParser()
     parser.add_argument('file', help='file to edit')
-    parser.add_argument('-s', '--script', type=str, default='', metavar='script.bi', help='bi script file')
+    parser.add_argument('-b', '--begin', type=str, default='0', help='partial edit beginning offset')
+    parser.add_argument('-e', '--end', type=str, default='', help='partial edit end offset')
+    parser.add_argument('-f', '--fixed', action='store_true', help='fixed length edit when partial editing')
     parser.add_argument('-v', '--verbose', action='store_true', help='verbose when processing script')
     parser.add_argument('-w', '--write', action='store_true', help='write file when exiting script')
+    parser.add_argument('-s', '--script', type=str, default='', metavar='script.bi', help='bi script file')
     args = parser.parse_args()
     filename=args.file
     script=args.script
+    if args.begin=='0':
+        beginning=0
+        homeaddr=0
+    else:
+        beginning=int(args.begin,16)
+        homeaddr=beginning&0xffffffffffffff00
+        partial=True
+
+    fixed=args.fixed
+
+    ending=UNKNOWN
+    if args.end=="":
+        if args.begin!='0':
+            try:
+                ending=os.path.getsize(filename)-1
+            except:
+                stderr("file to partially read does not exsist.")
+                return
+        else:
+            pass
+    else:
+        ending=int(args.end,16)
+
+    if not os.path.exists(filename):
+        if partial:
+            stderr("file to partially read does not exsist.")
+            return
+        else:
+            ending=0
+            beginning=0
+            newfile=True
+            stdmm("<new file>")
+    else:
+        if ending==UNKNOWN:
+            ending=os.path.getsize(filename)-1
+
     if not script:
         escclear()
     else:
@@ -1602,11 +1711,14 @@ def main():
             writefile("file.save")
             stderr("Some error occured. memory saved to file.save.")
     else:
-        try:
+        if debug:
             fedit()
-        except:
-            writefile("file.save")
-            stderr("Some error occured. memory saved to file.save.")
+        else:
+            try:
+                fedit()
+            except:
+                writefile("file.save")
+                stderr("Some error occured. memory saved to file.save.")
 
     esccolor(7)
     escdispcursor()
