@@ -121,6 +121,15 @@ On command line mode
    <start>,<end>w<filename> ---- write data on file
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
+Option
+    -s script.bi   scripting
+    -v             verbose when scripting
+    -b <offset>    partial edit beginning offset
+    -e <offset>    partial edit ending offset
+    -h             help
+    -f             fixed length edit when partial editing.
+    -w             write when end of scripting.
+
 Remarks
 
     Regular expression can be used for string search.
@@ -141,9 +150,9 @@ Remarks
 
         <expression> := <factor> | <factor> [+|-] <factor>
 
-    factor is a number in hexadecimal or decimal with prefix '#'.
+    factor is a number in hexadecimal or decimal with prefix '%'.
     And you can also give values with '[a-z] as marked position,
-    0 as the top of file, . as the current position, and $ as the bottom
+    ^ as the top of file, . as the current position, and $ as the bottom
     of file. Python eval() expression is what is enclosed with '{}'.
     You can give values like this {0xff^0x55}.
     Also, you can give the value of file as mem[x] in {}, x can be specified
@@ -181,6 +190,10 @@ Speed up
     If you need for bi to be higher speed, you can compile bi.py with
     pyinstaller like this: pyinstaller --onefile bi.py
 
+Partial edit
+    -b and -e option set bi partial edit mode like this:
+    bi sample -b 100 -e 1ff
+    this edits offset of sample file from 0x100 to 0x1ff.
 ★Attention
 
     It doesn't support undo command yet.
@@ -255,6 +268,7 @@ w<file> commands.
 2025-05-04 version 3.4.3.5 adjustment to uniform notation to python.
 2025-05-04 version 3.4.4 utf8 manipulation (full) added.
 2025-05-09 version 3.4.4.7 stable.
+2025-05-09 version 3.4.5 added partial edit functionality.
 --------------------
 
       I don't take any responsibility for the result of application of
