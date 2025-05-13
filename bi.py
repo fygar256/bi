@@ -378,7 +378,7 @@ def stdmm(s):
         clrmm()
         esccolor(4)
         esclocate(0,BOTTOMLN)
-        print(s,end='',flush=True)
+        print(" "+s,end='',flush=True)
 
 def stderr(s):
     global scriptingflag,verbose
@@ -388,7 +388,7 @@ def stderr(s):
         clrmm()
         esccolor(3)
         esclocate(0,BOTTOMLN)
-        print(s)
+        print(" "+s,end='',flush=True)
 
 
 def jump(addr):
