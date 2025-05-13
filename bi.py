@@ -577,7 +577,7 @@ def scommand(start,end,xf,xf2,line,idx):
             jump(i)
         else:
             jump(pos)
-            stdmm(f"{cnt} times replaced.")
+            stdmm(f"  {cnt} times replaced.")
             return
 
 def opeand(x,x2,x3):
