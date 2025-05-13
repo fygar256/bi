@@ -253,7 +253,7 @@ w<file> commands.
 2025-04-26 version 3.4.1 added functionality of print a value.
 2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file and '@' command.
 2025-05-04 version 3.4.3.5 adjustment to uniform notation to python.
-2025-05-04 version 3.4.4 utf8 manipulation (full) added.
+2025-05-04 version 3.4.4 utf8 full support.
 2025-05-09 version 3.4.4.7 stable.
 --------------------
 
