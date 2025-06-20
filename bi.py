@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/local/bin/python3
 import sys
 import tty
 import termios
@@ -10,8 +10,8 @@ import io
 import argparse
 import readline
 ESC='\033['
-LENONSCR=(20*16)
-BOTTOMLN=23
+LENONSCR=(19*16)
+BOTTOMLN=22
 RELEN=128
 UNKNOWN=0xffffffffffffffffffffffffffffffff
 mem=[]
@@ -139,13 +139,13 @@ def print_title():
     global filename,modified,insmod,mem,repsw,utf8
     esclocate(0,0)
     esccolor(6)
-    print(f"bi version 3.4.4 by T.Maekawa                   utf8mode:{"off" if not utf8 else repsw}     {"insert   " if insmod else "overwrite"}   ")
+    print(f'bi version 3.4.4 by T.Maekawa                   utf8mode:{"off" if not utf8 else repsw}     {"insert   " if insmod else "overwrite"}   ')
     esccolor(5)
     if len(filename)>35:
         fn=filename[0:35]
     else:
         fn=filename
-    print(f"file:[{fn:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ")
+    print(f'file:[{fn:<35}] length:{len(mem)} bytes [{("not " if not modified else "")+"modified"}]    ')
 
 def printchar(a):
     global utf8
@@ -196,7 +196,7 @@ def repaint():
     print("OFFSET       +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF ")
     esccolor(7)
     addr=homeaddr
-    for y in range(0x14):
+    for y in range(LENONSCR//16):
         esccolor(5)
         esclocate(0,3+y)
         print(f"{(addr+y*16)&0xffffffffffff:012X} ",end='')
@@ -342,7 +342,7 @@ def inccurx():
         curx+=1
     else:
         curx=0
-        if cury<19:
+        if cury<LENONSCR//16-1:
             cury+=1
         else:
             scrdown()
@@ -1333,7 +1333,7 @@ def commandln():
 def printdata():
     addr=fpos()
     a=readmem(addr)
-    esclocate(0,24)
+    esclocate(0,23)
     esccolor(6)
     s='.'
     if a<0x20:
@@ -1421,7 +1421,7 @@ def fedit():
             curx = 30
             continue
         elif ch == 'j':
-            if cury < 19:
+            if cury < LENONSCR//16-1:
                 cury += 1
             else:
                 scrdown()
@@ -1614,6 +1614,8 @@ def main():
 
     esccolor(7)
     escdispcursor()
+    esclocate(0,23)
 if __name__=="__main__":
     main()
+
 
