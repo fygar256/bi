@@ -18,6 +18,7 @@ mem=[]
 yank=[]
 coltab=[0,1,4,5,2,6,3,7]
 filename=""
+termcol='black'
 lastchange=False
 modified=False
 newfile=False
@@ -87,7 +88,11 @@ def escclrline():
     print(f"{ESC}2K",end='',flush=True)
 
 def esccolor(col1=7,col2=0):
-    print(f"{ESC}3{coltab[col1]}m{ESC}4{coltab[col2]}m",end='',flush=True)
+    global termcol
+    if termcol=='black':
+        print(f"{ESC}3{coltab[col1]}m{ESC}4{coltab[col2]}m",end='',flush=True)
+    else:
+        print(f"{ESC}3{coltab[0]}m{ESC}4{coltab[7]}m",end='',flush=True)
 
 def escresetcolor():
     print(f"{ESC}0m",end='')
@@ -1579,15 +1584,17 @@ def wrtfile(start,end,fn):
         return False
 
 def main():
-    global filename,verbose,scriptingflag
+    global filename,verbose,scriptingflag,termcol
     parser = argparse.ArgumentParser()
     parser.add_argument('file', help='file to edit')
     parser.add_argument('-s', '--script', type=str, default='', metavar='script.bi', help='bi script file')
+    parser.add_argument('-t', '--termcolor', type=str, default='black', help='background color of terminal. default is \'black\' the others are white.')
     parser.add_argument('-v', '--verbose', action='store_true', help='verbose when processing script')
     parser.add_argument('-w', '--write', action='store_true', help='write file when exiting script')
     args = parser.parse_args()
     filename=args.file
     script=args.script
+    termcol=args.termcolor
     if not script:
         escclear()
     else:
