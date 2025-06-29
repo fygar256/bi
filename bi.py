@@ -523,6 +523,9 @@ def searchnextnoloop(fp):
             jump(cur_pos)
             return True
 
+        elif f<0:
+            return False
+
         cur_pos+=1
 
         if cur_pos>=len(mem):
@@ -617,7 +620,7 @@ def hitre(addr):
     global span, remem, mem
 
     if not remem:
-        return False
+        return -1
 
     span = 0
     m = []
@@ -632,13 +635,13 @@ def hitre(addr):
         ms = byte_data.decode('utf-8', errors='replace')
     except:
         stderr("Unicode decode error")
-        return False
+        return -1
 
     try:
         f = re.match(remem, ms)
     except:
         stderr("Bad regular expression.")
-        return False
+        return -1
 
     if f:
         start, end = f.span()
@@ -648,12 +651,12 @@ def hitre(addr):
             matched_bytes = matched_str.encode('utf-8')
         except:
             stderr("Unicode encode error.")
-            return False
+            return -1
 
         span=len(matched_bytes)
-        return True
+        return 1
     else:
-        return False
+        return 0
 
 def hit(addr):
     global smem,mem
@@ -661,8 +664,8 @@ def hit(addr):
         if addr+i<len(mem) and mem[addr+i]==smem[i]:
             continue
         else:
-            return False
-    return True
+            return 0
+    return 1
 
 def searchnext(fp):
     global smem,nff
@@ -676,9 +679,12 @@ def searchnext(fp):
         else:
             f=hit(curpos)
 
-        if f:
+        if f==1:
             jump(curpos)
             return True
+
+        elif f<0:
+            return False
 
         curpos+=1
 
@@ -707,6 +713,10 @@ def searchlast(fp):
         if f:
             jump(curpos)
             return True
+
+        elif f<0:
+            return False
+
 
         curpos-=1
         if curpos<0:
