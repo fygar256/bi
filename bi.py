@@ -512,25 +512,25 @@ def searchnextnoloop(fp):
     cur_pos=fp
 
     if regexp==False and not smem:
-        return False
+        return 0
     while True:
         if regexp:
             f=hitre(cur_pos)
         else:
             f=hit(cur_pos)
 
-        if f:
+        if f==1:
             jump(cur_pos)
-            return True
+            return 1
 
         elif f<0:
-            return False
+            return -1
 
         cur_pos+=1
 
         if cur_pos>=len(mem):
             jump(len(mem))
-            return False
+            return 0
 
 
 def scommand(start,end,xf,xf2,line,idx):
@@ -580,7 +580,9 @@ def scommand(start,end,xf,xf2,line,idx):
 
         i=fpos()
 
-        if i<=end and f==True:
+        if f<0:
+            return
+        elif i<=end and f==1:
             delmem(i,i+span-1,False)
             insmem(i,n)
             pos=i+len(n)
@@ -710,7 +712,7 @@ def searchlast(fp):
         else:
             f=hit(curpos)
 
-        if f:
+        if f==1:
             jump(curpos)
             return True
 
