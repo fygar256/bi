@@ -1249,28 +1249,23 @@ def commandline_(line):
             shift_rotate(x,x2,times,bit,multibyte,ch)
             return -1
 
-        if ch in 'f':
-            m,idx=get_hexs(line,idx)
-            if len(m):
-                data=m*((x2-x+1)//len(m))+m[0:((x2-x+1)%len(m))]
-                ovwmem(x,data)
-                stdmm(f"{len(data)} bytes filled.")
-                jump(x+len(data))
-            else:
-                stderr("Invalid syntax.")
-            return -1
-
         if ch=='i':
             m,idx=get_hexs(line,idx)
+            if xf2:
+                if len(m):
+                    data=m*((x2-x+1)//len(m))+m[0:((x2-x+1)%len(m))]
+                    ovwmem(x,data)
+                    stdmm(f"{len(data)} bytes filled.")
+                    jump(x+len(data))
+                else:
+                    stderr("Invalid syntax.")
+                return -1
+
             if idx<len(line) and line[idx]=='*':
                 idx+=1
                 length,idx=expression(line,idx)
             else:
                 length=1
-
-            if xf2:
-                stderr("Invalid syntax.")
-                return -1
 
             data=m*length
             ovwmem(x,data)
