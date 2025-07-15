@@ -236,7 +236,7 @@ w<file> commands.
 2025-05-04 version 3.4.3.5 adjustment to uniform notation to python.
 2025-05-04 version 3.4.4 utf8 manipulation (full) added.
 2025-05-09 version 3.4.4.7 stable.
-2025-05-09 version 3.4.5 added partial edit functionality.
+2025-05-09 version 3.4.4.7rel15 unified i command and f command.
 --------------------
 
       I don't take any responsibility for the result of application of
