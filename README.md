@@ -1,4 +1,5 @@
 # bi
+
 Binary editor like vI - bi
 
 bi is a binary editor with a user interface similar to vi. It started when I posted it on ASCII-net for MS-DOS in December 1991. 33 years have passed since then. Another binary editor with a user interface similar to vi was released for Linux in 1996 by Gerhard Buergmann, called bvi, but I was the first. The first version of bi was written in C, but the currently released version is written in python.
@@ -103,9 +104,10 @@ On command line mode
    [offset]r<filename>     ----- read file (overwrite) on and after [offset]
    [offset] p              ----- paste yank buffer (overwrite)
    [offset] P              ----- paste yank buffer (insert)
-   [offset]i xx xx xx ... *<length>  ----- overwrite data xx repeatedly length times
    [offset]I xx xx xx ... *<length>  ----- insert data xx repeatedly length times
+   [offset]i xx xx xx ... *<length>  ----- overwrite data xx repeatedly length times
 
+   <start>,<end> i xx xx xx ... - fill with data by range
    y/str                   ----- yank to yank buffer with string
    y//xx xx xx ...         ----- yank to yank buffer with data
    <start>,<end> d         ----- delete by range (data will be yanked)
@@ -125,10 +127,15 @@ On command line mode
    [start,end]>[[times],[01]]  - right shift with bit 0,1 or rotate by byte
    [start,end]<<[[times],[01]] - left shift with bit 0,1 or rotate by multibyte
    [start,end]>>[[times],[01]] - right shift with bit 0,1 or rotate by multibyte
-   <start>,<end> f xx xx xx ... - fill with data by range
    <start>,<end>w<filename> ---- write data on file
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
+Option
+    -s script.bi   scripting
+    -v             verbose when scripting
+    -b <offset>    partial edit beginning offset
+    -e <offset>    partial edit ending offset
+    -h             help
 Remarks
 
     Regular expression can be used for string search.
@@ -149,9 +156,9 @@ Remarks
 
         <expression> := <factor> | <factor> [+|-] <factor>
 
-    factor is a number in hexadecimal or decimal with prefix '#'.
+    factor is a number in hexadecimal or decimal with prefix '%'.
     And you can also give values with '[a-z] as marked position,
-    0 as the top of file, . as the current position, and $ as the bottom
+    ^ as the top of file, . as the current position, and $ as the bottom
     of file. Python eval() expression is what is enclosed with '{}'.
     You can give values like this {0xff^0x55}.
     Also, you can give the value of file as mem[x] in {}, x can be specified
@@ -189,6 +196,10 @@ Speed up
     If you need for bi to be higher speed, you can compile bi.py with
     pyinstaller like this: pyinstaller --onefile bi.py
 
+Partial edit
+    -b and -e option set bi partial edit mode like this:
+    bi sample -b 100 -e 1ff
+    this edits offset of sample file from 0x100 to 0x1ff.
 ★Attention
 
     It doesn't support undo command yet.
@@ -261,8 +272,9 @@ w<file> commands.
 2025-04-26 version 3.4.1 added functionality of print a value.
 2025-05-01 version 3.4.3 added reference of cp and mem[] as current position and editing file and '@' command.
 2025-05-04 version 3.4.3.5 adjustment to uniform notation to python.
-2025-05-04 version 3.4.4 utf8 full support.
+2025-05-04 version 3.4.4 utf8 manipulation (full) added.
 2025-05-09 version 3.4.4.7 stable.
+2025-05-09 version 3.4.4.7rel14 slight version up. unified i command and f command.
 --------------------
 
       I don't take any responsibility for the result of application of
