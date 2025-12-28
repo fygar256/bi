@@ -20,7 +20,9 @@ The development environment and operation verification are done on ArchLinux.
 
 This software disributed with MIT license.
 
-##### installation (Other)
+##### installation
+
+```
 git clone http://github.com/fygar256/bi
 cd bi
 chmod +x bi.py
@@ -28,6 +30,7 @@ sudo cp bi.py /usr/bin/bi
 
 sudo cp bi.1.gz /usr/share/man/man1/
 sudo mandb
+```
 
 ##### execution
 bi file
