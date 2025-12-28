@@ -38,17 +38,18 @@ man bi
 
 ##### Title
 
-                   vi like binary editor 'bi'
+vi like binary editor 'bi'
 
-           Designed and Programmed by Taisuke Maekawa (fygar256)
-                   
+Designed and Programmed by Taisuke Maekawa (fygar256)
 
 Overview
 --------
 
-    BI is a binary editor designed to mimic the interface of the
-    UNIX editor 'vi'. The name (BI) is an abbreviation for Binary editor
-	like vI. For the vi and binary enthusists.
+BI is a binary editor designed to mimic the interface of the
+
+UNIX editor 'vi'. The name (BI) is an abbreviation for Binary editor
+
+like vI. For the vi and binary enthusists.
 
 ##### Debug cooperation
 
