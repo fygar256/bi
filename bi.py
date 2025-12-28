@@ -1187,19 +1187,6 @@ def commandline_(line):
         jump(x+len(data))
         return -1
 
-    if idx<len(line) and line[idx] in 'oO':
-        ch=line[idx]
-        idx+=1
-        l,idx=get_str(line,idx)
-        if ch=='o':
-            ovwmem(x,l)
-            stdmm(f"{len(l)} bytes stored.")
-        elif ch=='O':
-            insmem(x,l)
-            stdmm(f"{len(l)} bytes inserted.")
-        jump(x+len(l))
-        return -1
-
     if idx<len(line):
         ch=line[idx]
     else:
@@ -1250,7 +1237,11 @@ def commandline_(line):
             return -1
 
         if ch=='i':
-            m,idx=get_hexs(line,idx)
+            idx=skipspc(line,idx)
+            if idx<len(line) and line[idx]=='/':
+                m,idx=get_str(line,idx+1)
+            else:
+                m,idx=get_hexs(line,idx)
             if xf2:
                 if len(m):
                     data=m*((x2-x+1)//len(m))+m[0:((x2-x+1)%len(m))]
@@ -1275,7 +1266,11 @@ def commandline_(line):
             return -1
 
         if ch=='I':
-            m,idx=get_hexs(line,idx)
+            idx=skipspc(line,idx)
+            if idx<len(line) and line[idx]=='/':
+                m,idx=get_str(line,idx+1)
+            else:
+                m,idx=get_hexs(line,idx)
             if idx<len(line) and line[idx]=='*':
                 idx+=1
                 length,idx=expression(line,idx)
