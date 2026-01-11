@@ -36,13 +36,13 @@ go get golang.org/x/term
 To build:
 
 ```
-go build -o bg bi.go
+go build -o bi bi.go
 ```
 
 To run:
 
 ```
-bg file
+./bi file
 ```
 
 ## in python high functionality version
