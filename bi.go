@@ -1,36 +1,24 @@
+// Complete Go port of bi.py (a terminal hex editor).
+// This implementation aims to cover the features present in the original Python:
+// - Terminal raw-mode single-key editing (getch), escape sequence handling
+// - Insert / overwrite editing of bytes (hex input), yank/paste, marks
+// - Search: byte-sequence search and UTF-8 / regexp search
+// - Script execution mode (run commands from a .bi script)
+// - Command-line ":" style commands (write, read, move, copy, shift/rotate etc.)
+// - File read/write, partial writes, and scripting verbosity
+// - Display: hex dump with ASCII/UTF-8 rendering, cursor, colors via ANSI sequences
+//
+// Build:
+//   go get golang.org/x/term
+//   go build -o bi bi.go
+//
+// Notes & Limitations:
+// - The original Python used readline history and pre-input hooks; this port keeps a minimal
+//   history buffer (in memory) but does not integrate a full readline editing experience.
+// - Python's eval() used for { ... } expressions is replaced by Go's numeric parsing only.
+// - Arbitrary Python exec() inside the program is replaced with a shell invocation for safety.
+// - Behavior should be close to original; some tiny differences may exist due to language/runtime.
 package main
-
-/*
-bi.go - Go port of bi.py (a simple hex/byte editor)
-Source (original Python): https://github.com/fygar256/bi/blob/main/bi.py
-
-This is a pragmatic, idiomatic port that preserves the core functionality:
-- Terminal-based hex/ASCII display
-- Single-key editing (hex nybbles), navigation (h/j/k/l), simple insert/delete/yank/paste
-- Command-line ":" mode with a subset of commands (w, q, wq, r, y, p, s simple replace)
-- Search by byte-sequence or regexp ("/pattern" or "//hex bytes")
-- Read/write files as bytes
-
-Notes / Differences:
-- Uses golang.org/x/term to set raw terminal mode for single-key input.
-- Not every single Python function or obscure behavior is reproduced identically.
-- History and readline pre-input hooks are simplified/omitted.
-- Error messages are printed in the bottom status line similar to the original.
-- UTF-8 handling: viewing treats bytes; regexp search decodes a window of bytes to UTF-8 string with replacement for invalid sequences.
-- Tested on Unix-like terminals (Linux/macOS). Windows support not tested.
-
-Compile:
-  go build -o bi bi.go
-
-Run:
-  ./bi filename
-  -s script.bi  (these scripting features are *not* implemented in this port)
-  -t black|white
-  -v verbose
-  -w write-on-exit-after-script (not used here)
-
-This file aims to provide a readable Go port suitable as a basis for further improvements.
-*/
 
 import (
 	"bufio"
@@ -38,69 +26,83 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"unicode/utf8"
+
 	"golang.org/x/term"
 )
 
-const (
-	ESC       = "\x1b["
-	LENONSCR  = 19 * 16
-	BOTTOMLN  = 22
-	RELEN     = 128
-	UNKNOWN   = ^uint64(0)
-	VERSION   = "3.4.4"
-	defaultBg = "black"
-)
+const ESC = "\033["
+const LENONSCR = 19 * 16
+const BOTTOMLN = 22
+const RELEN = 128
+
+// LARGE sentinel for UNKNOWN which won't be clamped by v<0 checks.
+const UNKNOWN = int64(1 << 62)
 
 var (
-	mem         = []byte{}
-	yank        = []byte{}
-	coltab      = []int{0, 1, 4, 5, 2, 6, 3, 7}
-	filename    = ""
-	termcol     = "black"
-	lastchange  = false
-	modified    = false
-	newfile     = false
-	homeaddr    = 0
-	utf8mode    = false
-	insmod      = false
-	curx        = 0
-	cury        = 0
-	mark        = make([]uint64, 26)
-	smem        = []byte{}
-	regexpMode  = false
-	rePattern   = ""
-	span        = 0
-	nff         = true
-	verbose     = false
-	scripting   = false
-	stack       = []bool{}
-	cp          = 0
-	histories   = map[string][]string{"command": {}, "search": {}}
-	stdinFd     = int(os.Stdin.Fd())
-	oldState    *term.State
-	reader      *bufio.Reader
+	mem           []byte
+	yank          []byte
+	coltab        = []int{0, 1, 4, 5, 2, 6, 3, 7}
+	filename      string
+	termcol       = "black"
+	lastchange    = false
+	modified      = false
+	newfile       = false
+	homeaddr      int64
+	utf8mode      = false
+	insmod        = false
+	curx          = 0
+	cury          = 0
+	mark          [26]int64
+	smem          []byte
+	regexpMode    = false
+	repsw         = 0
+	remem         string
+	span          = 0
+	nff           = true
+	verbose       = false
+	scriptingflag = false
+	stack         []interface{}
+	cp            int64
+	histories     = map[string][]string{
+		"command": {},
+		"search":  {},
+	}
+	reObj *regexp.Regexp
 )
 
-// helper terminal functions
+func init() {
+	for i := 0; i < 26; i++ {
+		mark[i] = UNKNOWN
+	}
+}
 
-func escnocursor() { fmt.Print(ESC + "?25l") }
-func escdispcursor() { fmt.Print(ESC + "?25h") }
-func escup(n int) { fmt.Printf("%s%dA", ESC, n) }
-func escdown(n int) { fmt.Printf("%s%dB", ESC, n) }
+// Terminal control helpers
+func escnocursor()  { fmt.Printf("%s?25l", ESC) }
+func escdispcursor() { fmt.Printf("%s?25h", ESC) }
+func escup(n int)    { fmt.Printf("%s%dA", ESC, n) }
+func escdown(n int)  { fmt.Printf("%s%dB", ESC, n) }
 func escright(n int) { fmt.Printf("%s%dC", ESC, n) }
-func escleft(n int) { fmt.Printf("%s%dD", ESC, n) }
-func esclocate(x, y int) { fmt.Printf("%s%d;%dH", ESC, y+1, x+1) }
-func escscrollup(n int) { fmt.Printf("%s%dS", ESC, n) }
+func escleft(n int)  { fmt.Printf("%s%dD", ESC, n) }
+func esclocate(x, y int) {
+	fmt.Printf("%s%d;%dH", ESC, y+1, x+1)
+}
+func escscrollup(n int)   { fmt.Printf("%s%dS", ESC, n) }
 func escscrolldown(n int) { fmt.Printf("%s%dT", ESC, n) }
-func escclear() { fmt.Print(ESC + "2J"); esclocate(0, 0) }
-func escclraftcur() { fmt.Print(ESC + "0J") }
-func escclrline() { fmt.Print(ESC + "2K") }
+func escclear() {
+	fmt.Printf("%s2J", ESC)
+	esclocate(0, 0)
+}
+func escclraftcur() { fmt.Printf("%s0J", ESC) }
+func escclrline()   { fmt.Printf("%s2K", ESC) }
+
 func esccolor(col1, col2 int) {
 	if termcol == "black" {
 		fmt.Printf("%s3%dm%s4%dm", ESC, coltab[col1], ESC, coltab[col2])
@@ -108,71 +110,104 @@ func esccolor(col1, col2 int) {
 		fmt.Printf("%s3%dm%s4%dm", ESC, coltab[0], ESC, coltab[7])
 	}
 }
-func escresetcolor() { fmt.Print(ESC + "0m") }
+func escresetcolor() { fmt.Printf("%s0m", ESC) }
 
-func getch() (string, error) {
-	// Read a single rune from terminal (raw mode assumed)
-	r, _, err := reader.ReadRune()
+// Raw-mode single char input
+func getch() (rune, error) {
+	oldState, err := term.MakeRaw(int(syscall.Stdin))
 	if err != nil {
-		return "", err
+		return 0, err
 	}
-	return string(r), nil
+	defer term.Restore(int(syscall.Stdin), oldState)
+
+	var b [4]byte
+	n, err := os.Stdin.Read(b[:1])
+	if err != nil || n == 0 {
+		return 0, err
+	}
+	r := rune(b[0])
+	// If it's escape, try to read additional bytes for arrow sequences (non-blocking isn't trivial)
+	if r == 0x1b {
+		// read two more bytes if available
+		os.Stdin.Read(b[1:2])
+		os.Stdin.Read(b[2:3])
+	}
+	return r, nil
 }
 
+func getchByte() (byte, error) {
+	oldState, err := term.MakeRaw(int(syscall.Stdin))
+	if err != nil {
+		return 0, err
+	}
+	defer term.Restore(int(syscall.Stdin), oldState)
+
+	var b [1]byte
+	n, err := os.Stdin.Read(b[:])
+	if err != nil || n == 0 {
+		return 0, err
+	}
+	return b[0], nil
+}
+
+// I/O helpers
 func putch(c string) { fmt.Print(c) }
 
-// history input simplified - use bufio for command mode
 func getln(prompt, mode string) string {
+	if mode != "search" {
+		mode = "command"
+	}
+	// set/restore history is simplified: we keep an in-memory list, but no readline editing
 	fmt.Print(prompt)
-    scanner := bufio.NewScanner(os.Stdin)
-    scanner.Scan()
-    line := scanner.Text()
-	return line
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return ""
+	}
+	text := strings.TrimRight(line, "\r\n")
+	// store to history
+	histories[mode] = append(histories[mode], text)
+	return text
 }
 
 func skipspc(s string, idx int) int {
-	for idx < len(s) {
-		if s[idx] == ' ' {
-			idx++
-		} else {
-			break
-		}
+	for idx < len(s) && s[idx] == ' ' {
+		idx++
 	}
 	return idx
 }
 
+// Printing and display
 func print_title() {
 	esclocate(0, 0)
 	esccolor(6, 0)
-	utfInfo := "off"
-	if utf8mode {
-		utfInfo = "on"
-	}
 	mode := "overwrite"
 	if insmod {
 		mode = "insert   "
 	}
-	fmt.Printf("bi version %s by T.Maekawa                   utf8mode:%s     %s   \n", VERSION, utfInfo, mode)
+	utfStr := "off"
+	if utf8mode {
+		utfStr = fmt.Sprintf("%d", repsw)
+	}
+	fmt.Printf("bi version 3.4.4 by T.Maekawa                   utf8mode:%s     %s   \n", utfStr, mode)
 	esccolor(5, 0)
 	fn := filename
 	if len(fn) > 35 {
 		fn = fn[:35]
 	}
-	fmt.Printf("file:[%-35s] length:%d bytes [%s]    \n", fn, len(mem), func() string {
-		if !modified {
-			return "not modified"
-		}
-		return "modified"
-	}())
+	mod := "not modified"
+	if modified {
+		mod = "modified"
+	}
+	fmt.Printf("file:[%-35s] length:%d bytes [%s]    \n", fn, len(mem), mod)
 }
 
-func printchar(a int) int {
-	if a >= len(mem) {
+func printchar(a int64) int {
+	if a >= int64(len(mem)) {
 		fmt.Print("~")
 		return 1
 	}
 	if utf8mode {
-		// heuristic similar to python version:
 		b := mem[a]
 		if b < 0x80 || (0x80 <= b && b <= 0xbf) || (0xf8 <= b && b <= 0xff) {
 			if 0x20 <= b && b <= 0x7e {
@@ -181,34 +216,46 @@ func printchar(a int) int {
 				fmt.Print(".")
 			}
 			return 1
-		}
-		// For multi-byte sequences, attempt to decode
-		for l := 2; l <= 4; l++ {
-			if a+l-1 < len(mem) {
-				s := string(mem[a : a+l])
-				if utf8.ValidString(s) {
-					fmt.Print(s)
-					// pad for alignment as original did (space counts)
-					if l == 3 {
-						fmt.Print(" ")
-					} else if l == 4 {
-						fmt.Print("  ")
-					}
-					return l
+		} else if 0xc0 <= b && b <= 0xdf {
+			if a+1 < int64(len(mem)) {
+				s := mem[a : a+2]
+				if utf8.Valid(s) {
+					fmt.Print(string(s))
+					return 2
 				}
 			}
-		}
-		fmt.Print(".")
-		return 1
-	} else {
-		b := mem[a]
-		if 0x20 <= b && b <= 0x7e {
-			fmt.Printf("%c", b)
-		} else {
 			fmt.Print(".")
+			return 1
+		} else if 0xe0 <= b && b <= 0xef {
+			if a+2 < int64(len(mem)) {
+				s := mem[a : a+3]
+				if utf8.Valid(s) {
+					fmt.Print(string(s)+" ")
+					return 3
+				}
+			}
+			fmt.Print(".")
+			return 1
+		} else if 0xf0 <= b && b <= 0xf7 {
+			if a+3 < int64(len(mem)) {
+				s := mem[a : a+4]
+				if utf8.Valid(s) {
+					fmt.Print(string(s)+"  ")
+					return 4
+				}
+			}
+			fmt.Print(".")
+			return 1
 		}
-		return 1
 	}
+	// ascii fallback
+	ch := mem[a]
+	if 0x20 <= ch && ch <= 0x7e {
+		fmt.Printf("%c", ch)
+	} else {
+		fmt.Print(".")
+	}
+	return 1
 }
 
 func repaint() {
@@ -219,26 +266,26 @@ func repaint() {
 	fmt.Print("OFFSET       +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF ")
 	esccolor(7, 0)
 	addr := homeaddr
-	lines := LENONSCR / 16
-	for y := 0; y < lines; y++ {
+	for y := 0; y < LENONSCR/16; y++ {
 		esccolor(5, 0)
 		esclocate(0, 3+y)
-		fmt.Printf("%012X ", (addr+y*16)&0xffffffffffff)
+		fmt.Printf("%012X ", (addr+int64(y*16))&0xffffffffffff)
 		esccolor(7, 0)
 		for i := 0; i < 16; i++ {
-			a := y*16 + i + addr
-			if a >= len(mem) {
+			a := int64(y*16 + i)
+			pos := a + addr
+			if pos >= int64(len(mem)) {
 				fmt.Print("~~ ")
 			} else {
-				fmt.Printf("%02X ", mem[a])
+				fmt.Printf("%02X ", mem[pos]&0xff)
 			}
 		}
 		esccolor(6, 0)
-		a := y*16 + addr
+		a := addr + int64(y*16)
 		by := 0
 		for by < 16 {
 			c := printchar(a)
-			a += c
+			a += int64(c)
 			by += c
 		}
 		fmt.Print("  ")
@@ -247,96 +294,88 @@ func repaint() {
 	escdispcursor()
 }
 
-func insmem(start int, mem2 []byte) {
-	if start >= len(mem) {
-		if start > len(mem) {
+// Memory ops
+func insmem(start int64, mem2 []byte) {
+	if start >= int64(len(mem)) {
+		if start > int64(len(mem)) {
 			// pad with zeros
-			pad := make([]byte, start-len(mem))
-			mem = append(mem, pad...)
+			mem = append(mem, make([]byte, int(start)-len(mem))...)
 		}
 		mem = append(mem, mem2...)
 		modified = true
 		lastchange = true
 		return
 	}
-	mem1 := make([]byte, start)
-	copy(mem1, mem[:start])
-	mem3 := make([]byte, len(mem)-start)
-	copy(mem3, mem[start:])
-	mem = append(append(mem1, mem2...), mem3...)
+	mem = append(mem[:start], append(mem2, mem[start:]...)...)
 	modified = true
 	lastchange = true
 }
 
-func delmem(start, end int, yf bool) {
-	if start < 0 {
-		start = 0
-	}
-	if end < start || start >= len(mem) {
+func delmem(start, end int64, yf bool) {
+	length := end - start + 1
+	if length <= 0 || start >= int64(len(mem)) {
 		stderr("Invalid range.")
 		return
 	}
 	if yf {
 		yankmem(start, end)
 	}
-	newmem := make([]byte, 0, len(mem)-(end-start+1))
-	newmem = append(newmem, mem[:start]...)
-	if end+1 < len(mem) {
-		newmem = append(newmem, mem[end+1:]...)
+	if start < 0 {
+		start = 0
 	}
-	mem = newmem
+	if end >= int64(len(mem)) {
+		end = int64(len(mem) - 1)
+	}
+	mem = append(mem[:start], mem[end+1:]...)
 	lastchange = true
 	modified = true
 }
 
-func yankmem(start, end int) {
-	if start < 0 {
-		start = 0
-	}
-	if end < start || start >= len(mem) {
+func yankmem(start, end int64) {
+	length := end - start + 1
+	if length <= 0 || start >= int64(len(mem)) {
 		stderr("Invalid range.")
 		return
 	}
-	if end >= len(mem) {
-		end = len(mem) - 1
+	yank = []byte{}
+	cnt := 0
+	for j := start; j <= end; j++ {
+		if j < int64(len(mem)) {
+			cnt++
+			yank = append(yank, mem[j]&0xff)
+		}
 	}
-	yank = make([]byte, end-start+1)
-	copy(yank, mem[start:end+1])
-	stdmm(fmt.Sprintf("%d bytes yanked.", len(yank)))
+	stdmm(fmt.Sprintf("%d bytes yanked.", cnt))
 }
 
-func ovwmem(start int, mem0 []byte) {
+func ovwmem(start int64, mem0 []byte) {
 	if len(mem0) == 0 {
 		return
 	}
-	if start+len(mem0) >= len(mem) {
-		if start+len(mem0) > len(mem) {
-			// extend
-			needed := start + len(mem0) - len(mem)
-			if needed > 0 {
-				mem = append(mem, make([]byte, needed)...)
-			}
+	endNeeded := int(start) + len(mem0)
+	if endNeeded > len(mem) {
+		// extend mem
+		if endNeeded > cap(mem) {
+			// no-op; append will grow
+		}
+		padding := endNeeded - len(mem)
+		if padding > 0 {
+			mem = append(mem, make([]byte, padding)...)
 		}
 	}
 	for j := 0; j < len(mem0); j++ {
-		if start+j >= len(mem) {
-			mem = append(mem, mem0[j])
-		} else {
-			mem[start+j] = mem0[j]
-		}
+		pos := start + int64(j)
+		mem[pos] = mem0[j] & 0xff
 	}
 	lastchange = true
 	modified = true
 }
 
-func redmem(start, end int) []byte {
+func redmem(start, end int64) []byte {
 	m := []byte{}
-	if start < 0 {
-		start = 0
-	}
 	for i := start; i <= end; i++ {
-		if i < len(mem) {
-			m = append(m, mem[i])
+		if i >= 0 && i < int64(len(mem)) {
+			m = append(m, mem[i]&0xff)
 		} else {
 			m = append(m, 0)
 		}
@@ -344,44 +383,45 @@ func redmem(start, end int) []byte {
 	return m
 }
 
-func cpymem(start, end, dest int) {
-	m := redmem(start, end)
-	ovwmem(dest, m)
+func cpymem(start, end, dest int64) {
+	ovwmem(dest, redmem(start, end))
 }
 
-func movmem(start, end, dest int) int {
+func movmem(start, end, dest int64) int64 {
 	if start <= dest && dest <= end {
 		return end + 1
 	}
-	l := len(mem)
+	l := int64(len(mem))
 	if start >= l {
 		return dest
 	}
 	m := redmem(start, end)
 	yankmem(start, end)
-	delmem(start, end, false) // we already yanked
-	// insert at dest
-	if dest > len(mem) {
+	delmem(start, end, false)
+	if dest > l {
 		ovwmem(dest, m)
-		return dest + len(m)
+		return dest + int64(len(m))
+	} else {
+		if dest > start {
+			insmem(dest-(end-start+1), m)
+			return dest - (end-start) + int64(len(m)) - 1
+		} else {
+			insmem(dest, m)
+			return dest + int64(len(m))
+		}
 	}
-	if dest > start {
-		insmem(dest-(end-start+1), m)
-		return dest - (end-start) + len(m) - 1
-	}
-	insmem(dest, m)
-	return dest + len(m)
 }
 
+// Scrolling & cursor
 func scrup() {
 	if homeaddr >= 16 {
 		homeaddr -= 16
 	}
 }
 func scrdown() { homeaddr += 16 }
-
-func fpos() int { return homeaddr + curx/2 + cury*16 }
-
+func fpos() int64 {
+	return homeaddr + int64(curx/2) + int64(cury*16)
+}
 func inccurx() {
 	if curx < 31 {
 		curx++
@@ -395,19 +435,18 @@ func inccurx() {
 	}
 }
 
-func readmem(addr int) byte {
-	if addr >= len(mem) {
+func readmem(addr int64) int {
+	if addr >= int64(len(mem)) || addr < 0 {
 		return 0
 	}
-	return mem[addr]
+	return int(mem[addr] & 0xff)
 }
 
-func setmem(addr int, data int) {
-	if addr >= len(mem) {
-		// extend
-		need := addr - len(mem) + 1
-		if need > 0 {
-			mem = append(mem, make([]byte, need)...)
+func setmem(addr int64, data int) {
+	if addr >= int64(len(mem)) {
+		padding := int(addr) - len(mem) + 1
+		if padding > 0 {
+			mem = append(mem, make([]byte, padding)...)
 		}
 	}
 	if data >= 0 && data <= 255 {
@@ -419,6 +458,7 @@ func setmem(addr int, data int) {
 	lastchange = true
 }
 
+// message helpers
 func clrmm() {
 	esclocate(0, BOTTOMLN)
 	esccolor(6, 0)
@@ -426,7 +466,7 @@ func clrmm() {
 }
 
 func stdmm(s string) {
-	if scripting {
+	if scriptingflag {
 		if verbose {
 			fmt.Println(s)
 		}
@@ -439,7 +479,7 @@ func stdmm(s string) {
 }
 
 func stderr(s string) {
-	if scripting {
+	if scriptingflag {
 		fmt.Fprintln(os.Stderr, s)
 	} else {
 		clrmm()
@@ -449,65 +489,151 @@ func stderr(s string) {
 	}
 }
 
-func jump(addr int) {
-	if addr < 0 {
-		addr = 0
-	}
+func jump(addr int64) {
 	if addr < homeaddr || addr >= homeaddr+LENONSCR {
-		homeaddr = addr & ^0xff
+		homeaddr = addr &^ 0xff
 	}
 	i := addr - homeaddr
-	curx = (i & 0xf) * 2
-	cury = i / 16
+	curx = int((i & 0xf) * 2)
+	cury = int(i / 16)
 }
 
-// --- search functions ---
-
-// hitre: attempt regular expression match on bytes starting at addr
-func hitre(addr int) int {
-	if rePattern == "" {
-		return -1
-	}
-	// build a local slice up to RELEN or to end
-	var m []byte
-	if addr < len(mem)-RELEN {
-		m = mem[addr : addr+RELEN]
-	} else {
-		m = mem[addr:]
-	}
-	// decode with replacement to a string
-	s := string(bytes.Runes(m)) // this will produce Unicode runes; invalid sequences will be replaced
-	// Use compiled regexp
-	re, err := regexp.Compile(rePattern)
-	if err != nil {
-		stderr("Bad regular expression.")
-		return -1
-	}
-	loc := re.FindStringIndex(s)
-	if loc == nil {
-		return 0
-	}
-	start := loc[0]
-	end := loc[1]
-	// Now measure bytes spanned by matched substring
-	mb := []byte(s[start:end])
-	span = len(mb)
-	return 1
-}
-
-func hit(addr int) int {
-	for i := 0; i < len(smem); i++ {
-		if addr+i >= len(mem) || mem[addr+i] != smem[i] {
-			return 0
+func disp_marks() {
+	j := 0
+	esclocate(0, BOTTOMLN)
+	esccolor(7, 0)
+	for i := 0; i < 26; i++ {
+		if mark[i] == UNKNOWN {
+			fmt.Printf("%c = unknown         ", 'a'+i)
+		} else {
+			fmt.Printf("%c = %012X    ", 'a'+i, mark[i])
+		}
+		j++
+		if j%3 == 0 {
+			fmt.Println()
 		}
 	}
-	if len(smem) == 0 {
-		return 0
-	}
-	return 1
+	esccolor(4, 0)
+	fmt.Print("[ hit any key ]")
+	getchByte()
+	escclear()
 }
 
-func searchnextnoloop(fp int) int {
+func invoke_shell(line string) {
+	esccolor(7, 0)
+	fmt.Println()
+	// Use /bin/sh -c semantics
+	cmd := exec.Command("/bin/sh", "-c", strings.TrimSpace(line))
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Run()
+	esccolor(4, 0)
+	fmt.Print("[ Hit any key to return ]")
+	getchByte()
+	escclear()
+}
+
+// expression parsing
+func expression(s string, idx int) (int64, int) {
+	x, idx := get_value(s, idx)
+	if idx < len(s) && x != UNKNOWN && s[idx] == '+' {
+		y, idx2 := get_value(s, idx+1)
+		x = x + y
+		idx = idx2
+	} else if idx < len(s) && x != UNKNOWN && s[idx] == '-' {
+		y, idx2 := get_value(s, idx+1)
+		x = x - y
+		if x < 0 {
+			x = 0
+		}
+		idx = idx2
+	}
+	return x, idx
+}
+
+func get_value(s string, idx int) (int64, int) {
+	if idx >= len(s) {
+		return UNKNOWN, idx
+	}
+	idx = skipspc(s, idx)
+	if idx >= len(s) {
+		return UNKNOWN, idx
+	}
+	ch := s[idx]
+	if ch == '$' {
+		idx++
+		if len(mem) != 0 {
+			return int64(len(mem) - 1), idx
+		}
+		return int64(0), idx
+	} else if ch == '{' {
+		idx++
+		u := ""
+		for idx < len(s) {
+			if s[idx] == '}' {
+				idx++
+				break
+			}
+			u += string(s[idx])
+			idx++
+		}
+		if u == "" {
+			stderr("Invalid eval expression.")
+			return UNKNOWN, idx
+		}
+		// try to parse as integer literal in base auto (0x.. 0..)
+		v, err := strconv.ParseInt(u, 0, 64)
+		if err != nil {
+			stderr("Invalid eval expression.")
+			return UNKNOWN, idx
+		}
+		if v < 0 {
+			v = 0
+		}
+		return v, idx
+	} else if ch == '.' {
+		idx++
+		return fpos(), idx
+	} else if ch == '\'' && idx+1 < len(s) && s[idx+1] >= 'a' && s[idx+1] <= 'z' {
+		idx++
+		v := mark[s[idx]-'a']
+		if v == UNKNOWN {
+			stderr("Unknown mark.")
+			return UNKNOWN, idx - 1
+		} else {
+			idx++
+			return v, idx
+		}
+	} else if strings.IndexAny(string(ch), "0123456789abcdefABCDEF") >= 0 {
+		var x int64
+		for idx < len(s) && strings.IndexAny(string(s[idx]), "0123456789abcdefABCDEF") >= 0 {
+			d := string(s[idx])
+			v, _ := strconv.ParseInt(d, 16, 64)
+			x = 16*x + v
+			idx++
+		}
+		if x < 0 {
+			x = 0
+		}
+		return x, idx
+	} else if ch == '%' {
+		idx++
+		var x int64
+		for idx < len(s) && s[idx] >= '0' && s[idx] <= '9' {
+			x = x*10 + int64(s[idx]-'0')
+			idx++
+		}
+		if x < 0 {
+			x = 0
+		}
+		return x, idx
+	}
+	return UNKNOWN, idx
+}
+
+// Search helpers
+func searchnextnoloop(fp int64) int {
 	curPos := fp
 	if !regexpMode && len(smem) == 0 {
 		return 0
@@ -526,14 +652,158 @@ func searchnextnoloop(fp int) int {
 			return -1
 		}
 		curPos++
-		if curPos >= len(mem) {
-			jump(len(mem))
+		if curPos >= int64(len(mem)) {
+			jump(int64(len(mem)))
 			return 0
 		}
 	}
 }
 
-func searchnext(fp int) bool {
+func scommand(start, end int64, xf, xf2 bool, line string, idx int) {
+	nff = false
+	pos := fpos()
+	idx = skipspc(line, idx)
+	if !xf && !xf2 {
+		start = 0
+		end = int64(len(mem) - 1)
+	}
+	if idx < len(line) && line[idx] == '/' {
+		idx++
+		if idx < len(line) && line[idx] != '/' {
+			m, idx2 := get_restr(line, idx)
+			idx = idx2
+			regexpMode = true
+			remem = m
+			span = len(m)
+			var err error
+			reObj, err = regexp.Compile(remem)
+			if err != nil {
+				stderr("Bad regular expression.")
+				return
+			}
+		} else if idx < len(line) && line[idx] == '/' {
+			var idx2 int
+			smem, idx2 = get_hexs(line, idx+1)
+			idx = idx2
+			regexpMode = false
+			remem = ""
+			span = len(smem)
+		} else {
+			stderr("Invalid syntax.")
+			return
+		}
+	}
+	if span == 0 {
+		stderr("Specify search object.")
+		return
+	}
+	n, idx := get_str_or_hexs(line, idx)
+	i := start
+	cnt := 0
+	jump(i)
+	for {
+		f := searchnextnoloop(fpos())
+		i = fpos()
+		if f < 0 {
+			return
+		} else if i <= end && f == 1 {
+			delmem(i, i+int64(span)-1, false)
+			insmem(i, n)
+			pos = i + int64(len(n))
+			cnt++
+			i = pos
+			jump(i)
+		} else {
+			jump(pos)
+			stdmm(fmt.Sprintf("  %d times replaced.", cnt))
+			return
+		}
+	}
+}
+
+func opeand(x, x2 int64, x3 int) {
+	for i := x; i <= x2; i++ {
+		setmem(i, readmem(i)&(x3&0xff))
+	}
+	stdmm(fmt.Sprintf("%d bytes anded.", x2-x+1))
+}
+func opeor(x, x2 int64, x3 int) {
+	for i := x; i <= x2; i++ {
+		setmem(i, readmem(i)|(x3&0xff))
+	}
+	stdmm(fmt.Sprintf("%d bytes ored.", x2-x+1))
+}
+func opexor(x, x2 int64, x3 int) {
+	for i := x; i <= x2; i++ {
+		setmem(i, readmem(i)^(x3&0xff))
+	}
+	stdmm(fmt.Sprintf("%d bytes xored.", x2-x+1))
+}
+func openot(x, x2 int64) {
+	for i := x; i <= x2; i++ {
+		setmem(i, ^readmem(i)&0xff)
+	}
+	stdmm(fmt.Sprintf("%d bytes noted.", x2-x+1))
+}
+
+func hitre(addr int64) int {
+	if remem == "" {
+		return -1
+	}
+	span = 0
+
+	var m []byte
+	if addr < int64(len(mem))-RELEN {
+		m = mem[addr : addr+RELEN]
+	} else if addr < int64(len(mem)) {
+		m = mem[addr:]
+	} else {
+		return 0
+	}
+
+	// Python の decode('utf-8','replace') 相当を得るために
+	// Go の string(m) を使う（無効バイトは UTF-8 の置換文字に変換される）
+	ms := string(m)
+
+	// remem が変更された可能性を考え、reObj を確実に（再）コンパイルする
+	if reObj == nil || reObj.String() != remem {
+		var err error
+		reObj, err = regexp.Compile(remem)
+		if err != nil {
+			stderr("Bad regular expression.")
+			return -1
+		}
+	}
+
+	// Python の re.match と同等に「先頭マッチのみ」を受け入れる
+	loc := reObj.FindStringIndex(ms)
+	if loc == nil {
+		return 0
+	}
+	// 先頭以外で見つかった場合はヒットとみなさない（cur_pos からの先頭マッチを逐次試す方式）
+	if loc[0] != 0 {
+		return 0
+	}
+
+	// マッチ長をバイト長で計算して span に設定
+	start, end := loc[0], loc[1]
+	matched := ms[start:end]
+	span = len([]byte(matched))
+	return 1
+}
+
+func hit(addr int64) int {
+	for i := 0; i < len(smem); i++ {
+		if addr+int64(i) < int64(len(mem)) && mem[addr+int64(i)] == smem[i] {
+			continue
+		} else {
+			return 0
+		}
+	}
+	return 1
+}
+
+func searchnext(fp int64) bool {
 	curpos := fp
 	start := fp
 	if !regexpMode && len(smem) == 0 {
@@ -553,11 +823,12 @@ func searchnext(fp int) bool {
 			return false
 		}
 		curpos++
-		if curpos >= len(mem) {
+		if curpos >= int64(len(mem)) {
 			if nff {
 				stdmm("Search reached to bottom, continuing from top.")
 			}
 			curpos = 0
+			esccolor(0, 0)
 		}
 		if curpos == start {
 			if nff {
@@ -568,7 +839,7 @@ func searchnext(fp int) bool {
 	}
 }
 
-func searchlast(fp int) bool {
+func searchlast(fp int64) bool {
 	curpos := fp
 	start := fp
 	if !regexpMode && len(smem) == 0 {
@@ -590,7 +861,8 @@ func searchlast(fp int) bool {
 		curpos--
 		if curpos < 0 {
 			stdmm("Search reached to top, continuing from bottom.")
-			curpos = len(mem) - 1
+			esccolor(0, 0)
+			curpos = int64(len(mem) - 1)
 		}
 		if curpos == start {
 			stdmm("Not found.")
@@ -599,7 +871,6 @@ func searchlast(fp int) bool {
 	}
 }
 
-// get_restr: parse pattern until '/'
 func get_restr(s string, idx int) (string, int) {
 	var b strings.Builder
 	for idx < len(s) {
@@ -609,10 +880,10 @@ func get_restr(s string, idx int) (string, int) {
 		if idx+1 < len(s) && s[idx:idx+2] == "\\\\" {
 			b.WriteString("\\\\")
 			idx += 2
-		} else if idx+1 < len(s) && s[idx:idx+2] == "\\/" {
+		} else if idx+1 < len(s) && s[idx] == '\\' && s[idx+1] == '/' {
 			b.WriteByte('/')
 			idx += 2
-		} else if s[idx] == '\\' && idx == len(s)-1 {
+		} else if s[idx] == '\\' && idx+1 == len(s) {
 			idx++
 			break
 		} else {
@@ -626,164 +897,285 @@ func get_restr(s string, idx int) (string, int) {
 func searchstr(s string) bool {
 	if s != "" {
 		regexpMode = true
-		rePattern = s
+		remem = s
+		reObj, _ = regexp.Compile(remem)
 		return searchnext(fpos())
 	}
 	return false
 }
 
+func searchsub(line string) bool {
+	if len(line) > 2 && line[:2] == "//" {
+		sm, _ := get_hexs(line, 2)
+		return searchhex(sm)
+	} else if len(line) > 1 && line[0] == '/' {
+		m, _ := get_restr(line, 1)
+		return searchstr(m)
+	}
+	return false
+}
+
+func search() {
+    disp_curpos()
+    esclocate(0, BOTTOMLN)
+    esccolor(7, 0)
+
+    // 表示用に先頭のスラッシュを出す（Python の readline pre_input_hook と同等の振る舞い）
+    fmt.Print("/")
+
+    // ユーザー入力を取得（ユーザーがスラッシュ以降だけ入力する想定）
+    s := getln("", "search")
+
+    // comment() は元の文字列のエスケープや '#' 処理を行うため、
+    // searchsub に渡す際に必ず先頭に '/' を付与する
+    searchsub("/" + comment(s))
+
+    erase_curpos()
+}
+
 func get_hexs(s string, idx int) ([]byte, int) {
-	out := []byte{}
+	m := []byte{}
 	for idx < len(s) {
-		v, nidx := expression(s, idx)
-		if v == uint64(UNKNOWN) {
+		v, idx2 := expression(s, idx)
+		idx = idx2
+		if v == UNKNOWN {
 			break
 		}
-		out = append(out, byte(v&0xff))
-		idx = nidx
+		m = append(m, byte(v&0xff))
 	}
-	return out, idx
+	return m, idx
 }
 
 func searchhex(sm []byte) bool {
-	rePattern = ""
+	remem = ""
 	regexpMode = false
 	if len(sm) > 0 {
-		smem = make([]byte, len(sm))
-		copy(smem, sm)
+		smem = sm
 		return searchnext(fpos())
 	}
 	return false
 }
 
 func comment(s string) string {
+	idx := 0
 	var b strings.Builder
-	i := 0
-	for i < len(s) {
-		if s[i] == '#' {
+	for idx < len(s) {
+		if s[idx] == '#' {
 			break
 		}
-		if i+1 < len(s) && s[i:i+2] == "\\#" {
+		if idx+1 < len(s) && s[idx:idx+2] == "\\#" {
 			b.WriteByte('#')
-			i += 2
+			idx += 2
 			continue
 		}
-		if i+1 < len(s) && s[i:i+2] == "\\n" {
+		if idx+1 < len(s) && s[idx:idx+2] == "\\n" {
 			b.WriteByte('\n')
-			i += 2
+			idx += 2
 			continue
 		}
-		b.WriteByte(s[i])
-		i++
+		b.WriteByte(s[idx])
+		idx++
 	}
 	return b.String()
 }
 
-// expression and get_value: parse numeric expressions used by commands
-func expression(s string, idx int) (uint64, int) {
-	x, idx := get_value(s, idx)
-	if idx < len(s) && x != uint64(UNKNOWN) {
-		if s[idx] == '+' {
-			y, idx2 := get_value(s, idx+1)
-			if y != uint64(UNKNOWN) {
-				x = x + y
-			}
-			idx = idx2
-		} else if s[idx] == '-' {
-			y, idx2 := get_value(s, idx+1)
-			if y != uint64(UNKNOWN) {
-				if x > y {
-					x = x - y
+func scripting(scriptfile string) int {
+	fh, err := os.Open(scriptfile)
+	if err != nil {
+		stderr("Script file open error.")
+		return -1
+	}
+	defer fh.Close()
+	scanner := bufio.NewScanner(fh)
+	scriptingflag = true
+	flagv := -1
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if verbose {
+			fmt.Println(line)
+		}
+		flagv = commandline(line)
+		if flagv == 0 {
+			return 0
+		} else if flagv == 1 {
+			return 1
+		}
+	}
+	return 0
+}
+
+// Bitwise and rotate/shift functions
+func left_shift_byte(x, x2 int64, c int) {
+	for i := x; i <= x2; i++ {
+		setmem(i, (readmem(i)<<1)|(c&1))
+	}
+}
+func right_shift_byte(x, x2 int64, c int) {
+	for i := x; i <= x2; i++ {
+		setmem(i, (readmem(i)>>1)|((c&1)<<7))
+	}
+}
+func left_rotate_byte(x, x2 int64) {
+	for i := x; i <= x2; i++ {
+		m := readmem(i)
+		c := (m & 0x80) >> 7
+		setmem(i, (m<<1)|c)
+	}
+}
+func right_rotate_byte(x, x2 int64) {
+	for i := x; i <= x2; i++ {
+		m := readmem(i)
+		c := (m & 0x01) << 7
+		setmem(i, (m>>1)|c)
+	}
+}
+
+func get_multibyte_value(x, x2 int64) int64 {
+	v := int64(0)
+	for i := x2; i >= x; i-- {
+		v = (v << 8) | int64(readmem(i))
+	}
+	return v
+}
+func put_multibyte_value(x, x2 int64, v int64) {
+	for i := x; i <= x2; i++ {
+		setmem(i, int(v&0xff))
+		v >>= 8
+	}
+}
+func left_shift_multibyte(x, x2 int64, c int) {
+	v := get_multibyte_value(x, x2)
+	put_multibyte_value(x, x2, (v<<1)|int64(c))
+}
+func right_shift_multibyte(x, x2 int64, c int) {
+	v := get_multibyte_value(x, x2)
+	put_multibyte_value(x, x2, (v>>1)|(int64(c)<<((x2-x)*8+7)))
+}
+func left_rotate_multibyte(x, x2 int64) {
+	v := get_multibyte_value(x, x2)
+	c := 0
+	if v&(1<<((x2-x)*8+7)) != 0 {
+		c = 1
+	}
+	put_multibyte_value(x, x2, (v<<1)|int64(c))
+}
+func right_rotate_multibyte(x, x2 int64) {
+	v := get_multibyte_value(x, x2)
+	c := 0
+	if v&0x1 != 0 {
+		c = 1
+	}
+	put_multibyte_value(x, x2, (v>>1)|(int64(c)<<((x2-x)*8+7)))
+}
+
+func shift_rotate(x, x2 int64, times, bit int64, multibyte bool, direction byte) {
+	for i := int64(0); i < times; i++ {
+		if !multibyte {
+			if bit != 0 && bit != 1 {
+				if direction == '<' {
+					left_rotate_byte(x, x2)
 				} else {
-					x = 0
+					right_rotate_byte(x, x2)
+				}
+			} else {
+				if direction == '<' {
+					left_shift_byte(x, x2, int(bit&1))
+				} else {
+					right_shift_byte(x, x2, int(bit&1))
 				}
 			}
-			idx = idx2
-		}
-	}
-	return x, idx
-}
-
-func get_value(s string, idx int) (uint64, int) {
-	if idx >= len(s) {
-		return uint64(UNKNOWN), idx
-	}
-	idx = skipspc(s, idx)
-	if idx >= len(s) {
-		return uint64(UNKNOWN), idx
-	}
-	ch := s[idx]
-	if ch == '$' {
-		idx++
-		if len(mem) != 0 {
-			return uint64(len(mem) - 1), idx
-		}
-		return 0, idx
-	} else if ch == '{' {
-		idx++
-		u := ""
-		for idx < len(s) {
-			if s[idx] == '}' {
-				idx++
-				break
-			}
-			u += string(s[idx])
-			idx++
-		}
-		if u == "" {
-			stderr("Invalid eval expression.")
-			return uint64(UNKNOWN), idx
-		}
-		// For simplicity, evaluate only integers using strconv
-		v, err := strconv.ParseInt(u, 0, 64)
-		if err != nil {
-			stderr("Invalid eval expression.")
-			return uint64(UNKNOWN), idx
-		}
-		return uint64(v), idx
-	} else if ch == '.' {
-		idx++
-		return uint64(fpos()), idx
-	} else if ch == '\'' && idx+1 < len(s) && 'a' <= s[idx+1] && s[idx+1] <= 'z' {
-		idx++
-		v := mark[s[idx]-'a']
-		if v == uint64(UNKNOWN) {
-			stderr("Unknown mark.")
-			return uint64(UNKNOWN), idx
-		}
-		idx++
-		return v, idx
-	} else if (s[idx] >= '0' && s[idx] <= '9') || (s[idx] >= 'a' && s[idx] <= 'f') || (s[idx] >= 'A' && s[idx] <= 'F') {
-		x := uint64(0)
-		for idx < len(s) {
-			ch2 := s[idx]
-			var val int
-			if ch2 >= '0' && ch2 <= '9' {
-				val = int(ch2 - '0')
-			} else if ch2 >= 'a' && ch2 <= 'f' {
-				val = int(ch2-'a') + 10
-			} else if ch2 >= 'A' && ch2 <= 'F' {
-				val = int(ch2-'A') + 10
+		} else {
+			if bit != 0 && bit != 1 {
+				if direction == '<' {
+					left_rotate_multibyte(x, x2)
+				} else {
+					right_rotate_multibyte(x, x2)
+				}
 			} else {
-				break
+				if direction == '<' {
+					left_shift_multibyte(x, x2, int(bit&1))
+				} else {
+					right_shift_multibyte(x, x2, int(bit&1))
+				}
 			}
-			x = x*16 + uint64(val)
-			idx++
 		}
-		return x, idx
-	} else if ch == '%' {
-		idx++
-		x := uint64(0)
-		for idx < len(s) && s[idx] >= '0' && s[idx] <= '9' {
-			x = x*10 + uint64(s[idx]-'0')
-			idx++
-		}
-		return x, idx
 	}
-	return uint64(UNKNOWN), idx
 }
 
-// command line processing - implements a subset for useful functionality
+// string/hex input parsing
+func get_str_or_hexs(line string, idx int) ([]byte, int) {
+	idx = skipspc(line, idx)
+	if idx < len(line) && line[idx] == '/' {
+		idx++
+		if idx < len(line) && line[idx] == '/' {
+			return get_hexs(line, idx+1)
+		}
+		s, idx2 := get_restr(line, idx)
+		return []byte(s), idx2
+	}
+	return []byte{}, idx
+}
+func get_str(line string, idx int) ([]byte, int) {
+	s, idx2 := get_restr(line, idx)
+	return []byte(s), idx2
+}
+
+func printvalue(s string) {
+	v, _ := expression(s, 0)
+	if v == UNKNOWN {
+		return
+	}
+	vis := " . "
+	if v < 0x20 {
+		vis = fmt.Sprintf("^%c ", rune(v+int64('@')))
+	} else if v >= 0x7e {
+		vis = " . "
+	} else {
+		vis = fmt.Sprintf("'%c'", rune(v))
+	}
+	x := fmt.Sprintf("%016X", v)
+	spacedHex := strings.Join(splitEvery(x, 4), " ")
+	o := fmt.Sprintf("%024o", v)
+	spacedOct := strings.Join(splitEvery(o, 4), " ")
+	b := fmt.Sprintf("%064b", v)
+	spacedBin := strings.Join(splitEvery(b, 4), " ")
+	msg := fmt.Sprintf("d%10d  x%s  o%s %s\nb%s", v, spacedHex, spacedOct, vis, spacedBin)
+	if scriptingflag {
+		if verbose {
+			fmt.Println(msg)
+		}
+	} else {
+		clrmm()
+		esccolor(6, 0)
+		esclocate(0, BOTTOMLN)
+		fmt.Print(msg)
+		getchByte()
+		esclocate(0, BOTTOMLN+1)
+		fmt.Print(strings.Repeat(" ", 80))
+	}
+}
+
+func splitEvery(s string, n int) []string {
+	out := []string{}
+	for i := 0; i < len(s); i += n {
+		end := i + n
+		if end > len(s) {
+			end = len(s)
+		}
+		out = append(out, s[i:end])
+	}
+	return out
+}
+
+func call_exec(line string) {
+	if len(line) <= 1 {
+		return
+	}
+	line = line[1:]
+	// For safety, run shell commands rather than executing Go code dynamically.
+	invoke_shell(line)
+}
+
 func commandline_(line string) int {
 	cp = fpos()
 	line = comment(line)
@@ -799,8 +1191,7 @@ func commandline_(line string) int {
 	} else if line == "q!" {
 		return 0
 	} else if line == "wq" || line == "wq!" {
-		ok := writefile(filename)
-		if ok {
+		if writefile(filename) {
 			lastchange = false
 			return 0
 		}
@@ -820,31 +1211,63 @@ func commandline_(line string) int {
 			stdmm("Original file read.")
 			return -1
 		}
+	} else if strings.HasPrefix(line, "T") || strings.HasPrefix(line, "t") {
+		if len(line) >= 2 {
+			s := strings.TrimSpace(line[1:])
+			stack = append(stack, scriptingflag)
+			stack = append(stack, verbose)
+			if line[0] == 'T' {
+				verbose = true
+			} else {
+				verbose = false
+			}
+			fmt.Println("")
+			scripting(s)
+			if verbose {
+				stdmm("[ Hit any key ]")
+				getchByte()
+			}
+			// restore
+			if len(stack) >= 2 {
+				verbose = stack[len(stack)-1].(bool)
+				stack = stack[:len(stack)-1]
+				scriptingflag = stack[len(stack)-1].(bool)
+				stack = stack[:len(stack)-1]
+			}
+			escclear()
+			return -1
+		} else {
+			stderr("Specify script file name.")
+			return -1
+		}
 	} else if strings.HasPrefix(line, "n") {
 		searchnext(fpos() + 1)
 		return -1
 	} else if strings.HasPrefix(line, "N") {
 		searchlast(fpos() - 1)
 		return -1
-	} else if strings.HasPrefix(line, "/") {
-		// search
-		if strings.HasPrefix(line, "//") {
-			sm, _ := get_hexs(line, 2)
-			searchhex(sm)
-		} else {
-			m, _ := get_restr(line, 1)
-			searchstr(m)
+	} else if strings.HasPrefix(line, "@") {
+		call_exec(line)
+		return -1
+	} else if strings.HasPrefix(line, "!") {
+		if len(line) >= 2 {
+			invoke_shell(line[1:])
+			return -1
 		}
 		return -1
+	} else if strings.HasPrefix(line, "?") {
+		printvalue(line[1:])
+		return -1
+	} else if strings.HasPrefix(line, "/") {
+		searchsub(line)
+		return -1
 	}
-
-	// parse address expressions like python code
 	idx := skipspc(line, 0)
 	x, idx := expression(line, idx)
 	xf := false
 	xf2 := false
-	if x == uint64(UNKNOWN) {
-		x = uint64(fpos())
+	if x == UNKNOWN {
+		x = fpos()
 	} else {
 		xf = true
 	}
@@ -855,64 +1278,61 @@ func commandline_(line string) int {
 		if idx < len(line) && line[idx] == '*' {
 			idx = skipspc(line, idx+1)
 			t, idx2 := expression(line, idx)
-			if t == uint64(UNKNOWN) {
+			idx = idx2
+			if t == UNKNOWN {
 				t = 1
 			}
 			x2 = x + t - 1
-			idx = idx2
 		} else {
 			t, idx2 := expression(line, idx)
-			if t == uint64(UNKNOWN) {
+			idx = idx2
+			if t == UNKNOWN {
 				x2 = x
 			} else {
 				x2 = t
 				xf2 = true
 			}
-			idx = idx2
 		}
+	} else {
+		x2 = x
 	}
 	if x2 < x {
 		x2 = x
 	}
 	idx = skipspc(line, idx)
 	if idx == len(line) {
-		jump(int(x))
+		jump(x)
 		return -1
 	}
-
-	// yank command
 	if idx < len(line) && line[idx] == 'y' {
 		idx++
 		if !xf && !xf2 {
 			m, _ := get_str_or_hexs(line, idx)
 			yank = append([]byte{}, m...)
 		} else {
-			yankmem(int(x), int(x2))
+			yankmem(x, x2)
 		}
 		stdmm(fmt.Sprintf("%d bytes yanked.", len(yank)))
 		return -1
 	}
-	// print / paste
 	if idx < len(line) && line[idx] == 'p' {
 		y := append([]byte{}, yank...)
-		ovwmem(int(x), y)
-		jump(int(x) + len(y))
+		ovwmem(x, y)
+		jump(x + int64(len(y)))
 		return -1
 	}
 	if idx < len(line) && line[idx] == 'P' {
 		y := append([]byte{}, yank...)
-		insmem(int(x), y)
-		jump(int(x) + len(yank))
+		insmem(x, y)
+		jump(x + int64(len(yank)))
 		return -1
 	}
-	// mark
 	if idx+1 < len(line) && line[idx] == 'm' {
 		if 'a' <= line[idx+1] && line[idx+1] <= 'z' {
-			mark[line[idx+1]-'a'] = uint64(x)
+			mark[line[idx+1]-'a'] = x
 		}
 		return -1
 	}
-	// read file into memory (r or R)
 	if idx < len(line) && (line[idx] == 'r' || line[idx] == 'R') {
 		ch := line[idx]
 		idx++
@@ -924,74 +1344,159 @@ func commandline_(line string) int {
 		if fn == "" {
 			stderr("File name not specified.")
 		} else {
-			data, err := os.ReadFile(fn)
+			data, err := ioutil.ReadFile(fn)
 			if err != nil {
+				data = []byte{}
 				stderr("File read error.")
-			} else {
-				if ch == 'r' {
-					ovwmem(int(x), data)
-				} else {
-					insmem(int(x), data)
-				}
-				jump(int(x) + len(data))
 			}
+			if ch == 'r' {
+				ovwmem(x, data)
+			} else {
+				insmem(x, data)
+			}
+			jump(x + int64(len(data)))
+			return -1
 		}
+	}
+	var ch byte = 0
+	if idx < len(line) {
+		ch = line[idx]
+	}
+	if ch == 'd' {
+		delmem(x, x2, true)
+		stdmm(fmt.Sprintf("%d bytes deleted.", x2-x+1))
+		jump(x)
+		return -1
+	} else if ch == 'w' {
+		idx++
+		fn := strings.TrimSpace(line[idx:])
+		wrtfile(x, x2, fn)
+		return -1
+	} else if ch == 's' {
+		scommand(x, x2, xf, xf2, line, idx+1)
 		return -1
 	}
-
-	// single-letter commands
-	if idx < len(line) {
+	if idx < len(line) && line[idx] == '~' {
+		idx++
+		openot(x, x2)
+		jump(x2 + 1)
+		return -1
+	}
+	if idx < len(line) && strings.ContainsRune("fIivCc&|^<>", rune(line[idx])) {
 		ch := line[idx]
-		if ch == 'd' {
-			delmem(int(x), int(x2), true)
-			stdmm(fmt.Sprintf("%d bytes deleted.", int(x2)-int(x)+1))
-			jump(int(x))
-			return -1
-		} else if ch == 'w' {
-			idx++
-			fn := strings.TrimSpace(line[idx:])
-			wrtfile(int(x), int(x2), fn)
-			return -1
-		} else if ch == 's' {
-			// simple replace: s /pattern/replacement/
-			// this is a simplified implementation: not full myriads of options
-			// parse after 's'
-			if idx+1 < len(line) && line[idx+1] == '/' {
-				parts := strings.Split(line[idx+2:], "/")
-				if len(parts) >= 2 {
-					pat := parts[0]
-					rep := parts[1]
-					// build replacement bytes
-					repb := []byte(rep)
-					// do simple search-replace from start to end
-					cnt := 0
-					i := int(x)
-					jump(i)
-					for {
-						res := searchnextnoloop(fpos())
-						if res <= 0 {
-							break
-						}
-						pos := fpos()
-						if pos <= int(x2) {
-							delmem(pos, pos+len(pat)-1, false)
-							insmem(pos, repb)
-							cnt++
-							jump(pos + len(repb))
-						} else {
-							break
-						}
-					}
-					stdmm(fmt.Sprintf("  %d times replaced.", cnt))
-					return -1
-				}
+		idx++
+		if ch == '<' || ch == '>' {
+			multibyte := false
+			if idx < len(line) && line[idx] == ch {
+				idx++
+				multibyte = true
 			}
-			stderr("Invalid s command.")
+			times, idx2 := expression(line, idx)
+			idx = idx2
+			if times == UNKNOWN {
+				times = 1
+			}
+			bit := UNKNOWN
+			if idx < len(line) && line[idx] == ',' {
+				bit, idx = expression(line, idx+1)
+			}
+			shift_rotate(x, x2, times, bit, multibyte, byte(ch))
+			return -1
+		}
+		if ch == 'i' {
+			idx = skipspc(line, idx)
+			var m []byte
+			if idx < len(line) && line[idx] == '/' {
+				m, idx = get_str(line, idx+1)
+			} else {
+				m, idx = get_hexs(line, idx)
+			}
+			if xf2 {
+				if len(m) > 0 {
+					total := int(x2 - x + 1)
+					rep := total / len(m)
+					rem := total % len(m)
+					data := bytes.Repeat(m, rep)
+					data = append(data, m[:rem]...)
+					ovwmem(x, data)
+					stdmm(fmt.Sprintf("%d bytes filled.", len(data)))
+					jump(x + int64(len(data)))
+				} else {
+					stderr("Invalid syntax.")
+				}
+				return -1
+			}
+			length := int64(1)
+			if idx < len(line) && line[idx] == '*' {
+				idx++
+				length, idx = expression(line, idx)
+			}
+			data := bytes.Repeat(m, int(length))
+			ovwmem(x, data)
+			stdmm(fmt.Sprintf("%d bytes overwritten.", len(data)))
+			jump(x + int64(len(data)))
+			return -1
+		}
+		if ch == 'I' {
+			idx = skipspc(line, idx)
+			var m []byte
+			if idx < len(line) && line[idx] == '/' {
+				m, idx = get_str(line, idx+1)
+			} else {
+				m, idx = get_hexs(line, idx)
+			}
+			if idx < len(line) && line[idx] == '*' {
+				idx++
+				_, idx = expression(line, idx)
+			}
+			if xf2 {
+				stderr("Invalid syntax.")
+				return -1
+			}
+			data := bytes.Repeat(m, 1)
+			insmem(x, data)
+			stdmm(fmt.Sprintf("%d bytes inserted.", len(data)))
+			jump(x + int64(len(data)))
+			return -1
+		}
+		x3, idx2 := expression(line, idx)
+		idx = idx2
+		if x3 == UNKNOWN {
+			stderr("Invalid parameter.")
+			return -1
+		}
+		switch ch {
+		case 'c':
+			yankmem(x, x2)
+			cpymem(x, x2, x3)
+			stdmm(fmt.Sprintf("%d bytes copied.", x2-x+1))
+			jump(x3 + (x2 - x + 1))
+			return -1
+		case 'C':
+			mm := redmem(x, x2)
+			yankmem(x, x2)
+			insmem(x3, mm)
+			stdmm(fmt.Sprintf("%d bytes inserted.", x2-x+1))
+			jump(x3 + int64(len(mm)))
+			return -1
+		case 'v':
+			xp := movmem(x, x2, x3)
+			jump(xp)
+			return -1
+		case '&':
+			opeand(x, x2, int(x3))
+			jump(x2 + 1)
+			return -1
+		case '|':
+			opeor(x, x2, int(x3))
+			jump(x2 + 1)
+			return -1
+		case '^':
+			opexor(x, x2, int(x3))
+			jump(x2 + 1)
 			return -1
 		}
 	}
-
-	// bitwise and other operations are omitted in this simplified port
 	stderr("Unrecognized command.")
 	return -1
 }
@@ -999,7 +1504,7 @@ func commandline_(line string) int {
 func commandline(line string) int {
 	defer func() {
 		if r := recover(); r != nil {
-			stderr("Memory overflow or panic.")
+			stderr("Memory overflow.")
 		}
 	}()
 	return commandline_(line)
@@ -1015,23 +1520,20 @@ func commandln() int {
 
 func printdata() {
 	addr := fpos()
-	var a byte
-	if addr < len(mem) {
-		a = mem[addr]
-		esclocate(0, 23)
-		esccolor(6, 0)
-		s := "."
-		if a < 0x20 {
-			s = "^" + string(a+('@'))
-		} else if a >= 0x7e {
-			s = "."
-		} else {
-			s = "'" + string(a) + "'"
-		}
+	a := readmem(addr)
+	esclocate(0, 23)
+	esccolor(6, 0)
+	s := "."
+	if a < 0x20 {
+		s = fmt.Sprintf("^%c", rune(a+int('@')))
+	} else if a >= 0x7e {
+		s = "."
+	} else {
+		s = fmt.Sprintf("'%c'", rune(a))
+	}
+	if addr < int64(len(mem)) {
 		fmt.Printf("%012X : 0x%02X 0b%08b 0o%03o %d %s      ", addr, a, a, a, a, s)
 	} else {
-		esclocate(0, 23)
-		esccolor(6, 0)
 		fmt.Printf("%012X : ~~                                                   ", addr)
 	}
 }
@@ -1053,87 +1555,86 @@ func erase_curpos() {
 }
 
 func fedit() bool {
-	lastchange = false
 	stroke := false
+	var ch byte
+	repsw = 0
 	for {
 		cp = fpos()
 		repaint()
 		printdata()
 		esclocate(curx/2*3+13+(curx&1), cury+3)
-		ch, err := getch()
+		b, err := getchByte()
 		if err != nil {
-			stderr("Input error.")
 			return false
 		}
+		ch = b
 		clrmm()
 		nff = true
-
-		// handle escape sequences for arrows
-		if ch == "\x1b" {
-			// likely an arrow; read two more runes
-			r1, _ := getch()
-			r2, _ := getch()
-			if r2 == "A" {
-				ch = "k"
-			} else if r2 == "B" {
-				ch = "j"
-			} else if r2 == "C" {
-				ch = "l"
-			} else if r2 == "D" {
-				ch = "h"
-			} else if r1 == "[" && r2 == "2" {
-				// begin insert? emulate 'i'
-				ch = "i"
+		// arrow handling
+		if ch == 0x1b {
+			// read two more bytes if present
+			b2, _ := getchByte()
+			b3, _ := getchByte()
+			if b3 == 'A' {
+				ch = 'k'
+			} else if b3 == 'B' {
+				ch = 'j'
+			} else if b3 == 'C' {
+				ch = 'l'
+			} else if b3 == 'D' {
+				ch = 'h'
+			} else if b2 == '[' && b3 == '2' {
+				ch = 'i'
 			}
 		}
 
-		if ch == "n" {
+		if ch == 'n' {
 			searchnext(fpos() + 1)
 			continue
-		} else if ch == "N" {
+		} else if ch == 'N' {
 			searchlast(fpos() - 1)
 			continue
-		} else if ch == "\x02" { // ctrl-b
+		} else if ch == 0x02 { // ctrl-b
 			if homeaddr >= 256 {
 				homeaddr -= 256
 			} else {
 				homeaddr = 0
 			}
 			continue
-		} else if ch == "\x06" { // ctrl-f
+		} else if ch == 0x06 { // ctrl-f
 			homeaddr += 256
 			continue
-		} else if ch == "\x15" { // ctrl-u
+		} else if ch == 0x15 { // ctrl-u
 			if homeaddr >= 128 {
 				homeaddr -= 128
 			} else {
 				homeaddr = 0
 			}
 			continue
-		} else if ch == "\x04" { // ctrl-d
+		} else if ch == 0x04 { // ctrl-d
 			homeaddr += 128
 			continue
-		} else if ch == "^" {
+		} else if ch == '^' {
 			curx = 0
 			continue
-		} else if ch == "$" {
+		} else if ch == '$' {
 			curx = 30
 			continue
-		} else if ch == "j" {
+		} else if ch == 'j' {
 			if cury < LENONSCR/16-1 {
 				cury++
 			} else {
 				scrdown()
 			}
 			continue
-		} else if ch == "k" {
+		} else if ch == 'k' {
 			if cury > 0 {
 				cury--
 			} else {
 				scrup()
 			}
 			continue
-		} else if ch == "h" {
+		} else if ch == 'h' {
 			if curx > 0 {
 				curx--
 			} else {
@@ -1147,82 +1648,83 @@ func fedit() bool {
 				}
 			}
 			continue
-		} else if ch == "l" {
+		} else if ch == 'l' {
 			inccurx()
 			continue
-		} else if ch == "\x19" { // ctrl-y toggle utf8
+		} else if ch == 0x19 { // ctrl-y toggle utf8
 			utf8mode = !utf8mode
 			escclear()
 			repaint()
 			continue
-		} else if ch == "\x0c" { // ctrl-l
+		} else if ch == 0x0c { // ctrl-l
 			escclear()
+			if utf8mode {
+				repsw = (repsw + 1) % 4
+			}
 			repaint()
 			continue
-		} else if ch == "Z" {
+		} else if ch == 'Z' {
 			if writefile(filename) {
 				return true
-			} else {
-				continue
 			}
-		} else if ch == "q" {
+			continue
+		} else if ch == 'q' {
 			if lastchange {
 				stdmm("No write since last change. To overriding quit, use 'q!'.")
 				continue
 			}
 			return false
-		} else if ch == "M" {
+		} else if ch == 'M' {
 			disp_marks()
 			continue
-		} else if ch == "m" {
-			ch2, _ := getch()
-			ch2 = strings.ToLower(ch2)
-			if ch2 >= "a" && ch2 <= "z" {
-				mark[ch2[0]-'a'] = uint64(fpos())
+		} else if ch == 'm' {
+			c, _ := getchByte()
+			c = byte(strings.ToLower(string(c))[0])
+			if 'a' <= c && c <= 'z' {
+				mark[c-'a'] = fpos()
 			}
 			continue
-		} else if ch == "/" {
+		} else if ch == '/' {
 			search()
 			continue
-		} else if ch == "'" {
-			ch2, _ := getch()
-			ch2 = strings.ToLower(ch2)
-			if ch2 >= "a" && ch2 <= "z" {
-				jump(int(mark[ch2[0]-'a']))
+		} else if ch == '\'' {
+			c, _ := getchByte()
+			c = byte(strings.ToLower(string(c))[0])
+			if 'a' <= c && c <= 'z' {
+				jump(mark[c-'a'])
 			}
 			continue
-		} else if ch == "p" {
+		} else if ch == 'p' {
 			y := append([]byte{}, yank...)
 			ovwmem(fpos(), y)
-			jump(fpos() + len(y))
+			jump(fpos() + int64(len(y)))
 			continue
-		} else if ch == "P" {
+		} else if ch == 'P' {
 			y := append([]byte{}, yank...)
 			insmem(fpos(), y)
-			jump(fpos() + len(yank))
+			jump(fpos() + int64(len(yank)))
 			continue
 		}
 
-		if ch == "i" {
+		if ch == 'i' {
 			insmod = !insmod
 			stroke = false
-		} else if len(ch) == 1 && strings.Index("0123456789abcdefABCDEF", ch) >= 0 {
+		} else if strings.ContainsRune("0123456789abcdefABCDEF", rune(ch)) {
 			addr := fpos()
-			c, _ := strconv.ParseInt(ch, 0, 64)
+			cval, _ := strconv.ParseInt(string(ch), 16, 64)
 			sh := 4
 			if curx&1 == 1 {
 				sh = 0
 			}
-			mask := 0xf0
-			if curx&1 == 0 {
-				mask = 0x0f
+			mask := 0x0f
+			if curx&1 == 1 {
+				mask = 0xf0
 			}
 			if insmod {
-				if !stroke && addr < len(mem) {
-					insmem(addr, []byte{byte(c << sh)})
+				if !stroke && addr < int64(len(mem)) {
+					insmem(addr, []byte{byte(cval << int64(sh))})
 				} else {
-					orig := int(readmem(addr))
-					setmem(addr, (orig&mask)|(int(c)<<sh))
+					setmem(addr, (readmem(addr) & mask) | int(cval)<<sh)
 				}
 				if curx&1 == 0 {
 					stroke = !stroke
@@ -1230,13 +1732,12 @@ func fedit() bool {
 					stroke = false
 				}
 			} else {
-				orig := int(readmem(addr))
-				setmem(addr, (orig&mask)|(int(c)<<sh))
+				setmem(addr, (readmem(addr) & mask) | int(cval)<<sh)
 			}
 			inccurx()
-		} else if ch == "x" {
+		} else if ch == 'x' {
 			delmem(fpos(), fpos(), false)
-		} else if ch == ":" {
+		} else if ch == ':' {
 			disp_curpos()
 			f := commandln()
 			erase_curpos()
@@ -1249,161 +1750,16 @@ func fedit() bool {
 	}
 }
 
-func disp_marks() {
-	j := 0
-	esclocate(0, BOTTOMLN)
-	esccolor(7, 0)
-	for i := 'a'; i <= 'z'; i++ {
-		m := mark[j]
-		if m == uint64(UNKNOWN) {
-			fmt.Printf("%c = unknown         ", i)
-		} else {
-			fmt.Printf("%c = %012X    ", i, m)
-		}
-		j++
-		if j%3 == 0 {
-			fmt.Println()
-		}
-	}
-	esccolor(4, 0)
-	fmt.Print("[ hit any key ]")
-	getch()
-	escclear()
-}
-
-func invoke_shell(line string) {
-	esccolor(7, 0)
-	fmt.Println()
-	cmd := exec.Command("sh", "-c", line)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	_ = cmd.Run()
-	esccolor(4, 0)
-	fmt.Print("[ Hit any key to return ]")
-	getch()
-	escclear()
-}
-
-func search() {
-	disp_curpos()
-	esclocate(0, BOTTOMLN)
-	esccolor(7, 0)
-	// simplified: prompt with leading '/'
-	fmt.Print("/")
-	inReader := bufio.NewReader(os.Stdin)
-	s, _ := inReader.ReadString('\n')
-	s = strings.TrimRight(s, "\r\n")
-	searchsub(comment(s))
-	erase_curpos()
-}
-
-func searchsub(line string) {
-	if len(line) > 2 && strings.HasPrefix(line, "//") {
-		sm, _ := get_hexs(line, 2)
-		searchhex(sm)
-	} else if len(line) > 1 && line[0] == '/' {
-		m, _ := get_restr(line, 1)
-		searchstr(m)
-	}
-}
-
-func get_str_or_hexs(line string, idx int) ([]byte, int) {
-	idx = skipspc(line, idx)
-	if idx < len(line) && line[idx] == '/' {
-		idx++
-		if idx < len(line) && line[idx] == '/' {
-			m, idx2 := get_hexs(line, idx+1)
-			return m, idx2
-		} else {
-			s, idx2 := get_restr(line, idx)
-			// encode to utf-8 bytes
-			return []byte(s), idx2
-		}
-	}
-	return []byte{}, idx
-}
-
-func get_str(line string, idx int) ([]byte, int) {
-	s, idx := get_restr(line, idx)
-	return []byte(s), idx
-}
-
-func printvalue(s string) {
-	v, _ := expression(s, 0)
-	if v == uint64(UNKNOWN) {
-		return
-	}
-	var sdisplay string
-	if v < 0x20 {
-		sdisplay = "^" + string(byte(v+uint64('@')))
-	} else if v >= 0x7e {
-		sdisplay = " . "
-	} else {
-		sdisplay = "'" + string(byte(v)) + "'"
-	}
-	x := fmt.Sprintf("%016X", v)
-	spacedHex := strings.Join([]string{x[0:4], x[4:8], x[8:12], x[12:16]}, " ")
-	o := fmt.Sprintf("%024o", v)
-	spacedOct := strings.Join([]string{o[0:6], o[6:12], o[12:18], o[18:24]}, " ")
-	b := fmt.Sprintf("%064b", v)
-	// group binary every 4
-	var bparts []string
-	for i := 0; i < 64; i += 4 {
-		bparts = append(bparts, b[i:i+4])
-	}
-	spacedBin := strings.Join(bparts, " ")
-	msg := fmt.Sprintf("d%10d  x%s  o%s %s\nb%s", v, spacedHex, spacedOct, sdisplay, spacedBin)
-	clrmm()
-	esccolor(6, 0)
-	esclocate(0, BOTTOMLN)
-	fmt.Print(msg)
-	getch()
-	esclocate(0, BOTTOMLN+1)
-	fmt.Print(strings.Repeat(" ", 80))
-}
-
-func call_exec(line string) {
-	if len(line) <= 1 {
-		return
-	}
-	line = line[1:]
-	defer func() {
-		if r := recover(); r != nil {
-			stderr("python exec() error.")
-		}
-	}()
-	if scripting {
-		fmt.Println(line)
-	} else {
-		clrmm()
-		esccolor(7, 0)
-		esclocate(0, BOTTOMLN)
-		// Very unsafe to eval arbitrary Go code; omit - just run as shell command
-		// For compatibility, treat as shell invocation
-		invoke_shell(line)
-	}
-}
-
-// file I/O
-
 func readfile(fn string) bool {
-	f, err := os.Open(fn)
+	data, err := ioutil.ReadFile(fn)
 	if err != nil {
 		newfile = true
 		stdmm("<new file>")
 		mem = []byte{}
 		return true
 	}
-	defer f.Close()
-	data, err := io.ReadAll(f)
-	if err != nil {
-		stderr("File read error.")
-		return false
-	}
-	mem = make([]byte, len(data))
-	copy(mem, data)
 	newfile = false
+	mem = append([]byte{}, data...)
 	return true
 }
 
@@ -1415,22 +1771,16 @@ func regulate_mem() {
 
 func writefile(fn string) bool {
 	regulate_mem()
-	f, err := os.Create(fn)
+	err := ioutil.WriteFile(fn, mem, 0644)
 	if err != nil {
 		stderr("Permission denied.")
-		return false
-	}
-	defer f.Close()
-	_, err = f.Write(mem)
-	if err != nil {
-		stderr("Write failed.")
 		return false
 	}
 	stdmm("File written.")
 	return true
 }
 
-func wrtfile(start, end int, fn string) bool {
+func wrtfile(start, end int64, fn string) bool {
 	regulate_mem()
 	f, err := os.Create(fn)
 	if err != nil {
@@ -1439,104 +1789,60 @@ func wrtfile(start, end int, fn string) bool {
 	}
 	defer f.Close()
 	for i := start; i <= end; i++ {
-		var b byte
-		if i < len(mem) {
-			b = mem[i]
+		if i >= 0 && i < int64(len(mem)) {
+			f.Write([]byte{mem[i]})
 		} else {
-			b = 0
-		}
-		_, err = f.Write([]byte{b})
-		if err != nil {
-			return false
+			f.Write([]byte{0})
 		}
 	}
 	return true
 }
 
-// small utility functions
-
-func get_str_from_input(prompt string) string {
-	fmt.Print(prompt)
-	r := bufio.NewReader(os.Stdin)
-	s, _ := r.ReadString('\n')
-	return strings.TrimRight(s, "\r\n")
-}
-
-func disp_help() {
-	fmt.Println("Simple bi (Go port) help:")
-	fmt.Println(" - Navigation: h (left nybble), l (right), j, k")
-	fmt.Println(" - i toggles insert mode")
-	fmt.Println(" - x deletes current byte")
-	fmt.Println(" - p paste (overwrite), P paste (insert)")
-	fmt.Println(" - /search or //hex search")
-	fmt.Println(" - :w write, :q quit, :wq write+quit")
-}
-
-// main and initialization
-
-func initMarks() {
-	for i := 0; i < len(mark); i++ {
-		mark[i] = uint64(UNKNOWN)
-	}
-}
-
 func main() {
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] file\n", os.Args[0])
-		flag.PrintDefaults()
-	}
-	script := flag.String("s", "", "bi script file (not supported in go port)")
-	termcolor := flag.String("t", defaultBg, "background color: black or white")
-	verb := flag.Bool("v", false, "verbose when processing script")
-	writeOnExit := flag.Bool("w", false, "write file when exiting script")
+	// CLI flags similar to original
+	script := flag.String("s", "", "bi script file")
+	termcolor := flag.String("t", "black", "background color of terminal. default is 'black' the others are white.")
+	verboseFlag := flag.Bool("v", false, "verbose when processing script")
+	writeFlag := flag.Bool("w", false, "write file when exiting script")
 	flag.Parse()
 	if flag.NArg() < 1 {
-		flag.Usage()
-		os.Exit(2)
+		fmt.Println("Usage: bi [options] file")
+		flag.PrintDefaults()
+		os.Exit(1)
 	}
 	filename = flag.Arg(0)
 	termcol = *termcolor
-	verbose = *verb
-
-	// prepare stdin reader and raw mode
-	reader = bufio.NewReader(os.Stdin)
-	var err error
-	oldState, err = term.MakeRaw(stdinFd)
-	if err != nil {
-		// if cannot make raw, continue but single-key input will block on newline
-		oldState = nil
+	if *script == "" {
+		escclear()
 	} else {
-		// ensure we restore terminal on exit
-		defer term.Restore(stdinFd, oldState)
+		scriptingflag = true
 	}
-
-	initMarks()
-
+	verbose = *verboseFlag
+	wrtflg := *writeFlag
 	if !readfile(filename) {
 		return
 	}
-
-	// main edit loop
-	escclear()
 	if *script != "" {
-		// scripting not implemented in this port - just exit or run script through shell
-		scripting = true
-		// try running as shell script
-		cmd := exec.Command("sh", *script)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		_ = cmd.Run()
-		if *writeOnExit && lastchange {
+		defer func() {
+			if r := recover(); r != nil {
+				writefile("file.save")
+				stderr("Some error occured. memory saved to file.save.")
+			}
+		}()
+		_ = scripting(*script)
+		if wrtflg && lastchange {
 			writefile(filename)
 		}
 	} else {
-		ok := fedit()
-		if !ok {
-			// exit
-		}
+		defer func() {
+			if r := recover(); r != nil {
+				writefile("file.save")
+				stderr("Some error occured. memory saved to file.save.")
+			}
+		}()
+		_ = fedit()
 	}
-
-	escresetcolor()
+	esccolor(7, 0)
 	escdispcursor()
 	esclocate(0, 23)
 }
