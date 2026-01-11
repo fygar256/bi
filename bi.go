@@ -1822,26 +1822,23 @@ func main() {
 	if !readfile(filename) {
 		return
 	}
-	if *script != "" {
-		defer func() {
-			if r := recover(); r != nil {
-				writefile("file.save")
-				stderr("Some error occured. memory saved to file.save.")
-			}
-		}()
-		_ = scripting(*script)
-		if wrtflg && lastchange {
-			writefile(filename)
-		}
-	} else {
-		defer func() {
-			if r := recover(); r != nil {
-				writefile("file.save")
-				stderr("Some error occured. memory saved to file.save.")
-			}
-		}()
-		_ = fedit()
-	}
+
+    defer func() {
+        if r := recover(); r != nil {
+            writefile("file.save")
+            stderr("Some error occurred. memory saved to file.save.")
+        }
+    }()
+
+    if *script != "" {
+        _ = scripting(*script)
+        if wrtflg && lastchange {
+            writefile(filename)
+        }
+    } else {
+        _ = fedit()
+    }
+    
 	esccolor(7, 0)
 	escdispcursor()
 	esclocate(0, 23)
