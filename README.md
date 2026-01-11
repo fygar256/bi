@@ -33,10 +33,16 @@ go mod init bi
 go get golang.org/x/term
 ```
 
-To build, run:
+To build:
 
 ```
-go build -o bi bi.go
+go build -o bg bi.go
+```
+
+To run:
+
+```
+bg file
 ```
 
 ## in python high functionality version
