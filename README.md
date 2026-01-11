@@ -54,7 +54,7 @@ bi file
 git clone http://github.com/fygar256/bi
 cd bi
 chmod +x bi.py
-sudo cp bi.py /usr/bin/bi
+sudo cp bi.py /usr/local/bin/bi
 
 sudo cp bi.1.gz /usr/share/man/man1/
 sudo mandb
