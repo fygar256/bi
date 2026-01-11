@@ -20,6 +20,27 @@ The development environment and operation verification are done on ArchLinux.
 
 This software disributed with MIT license.
 
+## in go high speed version
+
+This is a fast version of 'bi', the Binary editor like vi, written in Go. It doesn't support Python calls or eval() or exec(), but it runs much faster than the Python version, making it ideal for working with large files.
+
+The manual, commands, and operation methods are the same as those for the Python version of bi.
+
+The following explains how to initialize the Go directory:
+
+```
+go mod init bi
+go get golang.org/x/term
+```
+
+To build, run:
+
+```
+go build -o bi bi.go
+```
+
+## in python high functionality version
+
 ##### installation
 
 ```
