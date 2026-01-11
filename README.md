@@ -37,12 +37,13 @@ To build:
 
 ```
 go build -o bi bi.go
+sudo cp bi /usr/local/bin
 ```
 
 To run:
 
 ```
-./bi file
+bi file
 ```
 
 ## in python high functionality version
