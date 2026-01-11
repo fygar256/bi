@@ -189,7 +189,7 @@ func print_title() {
 	if utf8mode {
 		utfStr = fmt.Sprintf("%d", repsw)
 	}
-	fmt.Printf("bi version 3.4.4 by T.Maekawa                   utf8mode:%s     %s   \n", utfStr, mode)
+	fmt.Printf("bi go version 3.4.4 by Taisuke Maekawa           utf8mode:%s     %s   \n", utfStr, mode)
 	esccolor(5, 0)
 	fn := filename
 	if len(fn) > 35 {
