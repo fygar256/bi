@@ -8,10 +8,6 @@ It uses ANSI terminal escape sequences, so it is for ANSI terminals. It should w
 
 Development environment and operation verification was done on ArchLinux and FreeBSD. 
 
-For ArchLinux, the shebang should be #!/usr/bin/python, 
-
-and for FreeBSD, it should be #!/usr/local/bin/python3.
-
 If the terminal background color is white, use any string other than `black` for the -t option, or omit the option if it is black.
 
 The bi is designed to be with high functionality, flexible, lightweight, simple, compact, user-friendly and smoothly responsive. bi can handle original script.
