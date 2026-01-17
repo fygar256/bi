@@ -239,6 +239,7 @@ w<file> commands.
 2025-05-09 version 3.4.4.7 stable.
 2025-05-09 version 3.4.4.7rel15 unified i command and f command.
 2025-12-28 version 3.4.4.8 unified i/I command and o/O command.
+2026-01-18 version 3.4.4.16 refactoring by claude.
 --------------------
 
       I don't take any responsibility for the result of application of
