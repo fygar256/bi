@@ -85,6 +85,9 @@ Pacific Software Development
 
 <img alt="image" src="https://github.com/fygar256/bi/blob/main/screenshot.png">
 
+<img alt="image" src="https://github.com/fygar256/bi/blob/main/screenshot-2026-01-18 15-02-53.png">
+screen shot from original bi in 1991.
+
 ##### Mascot character
 
 <img alt="image" width="200px" height="200px" src="https://github.com/fygar256/bi/blob/main/bigirl.png">
