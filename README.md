@@ -16,6 +16,20 @@ The development environment and operation verification are done on ArchLinux.
 
 This software disributed with MIT license.
 
+
+## in python high functionality version
+
+##### installation
+
+```
+git clone http://github.com/fygar256/bi
+cd bi
+chmod +x bi.py
+sudo cp bi.py /usr/local/bin/bi
+
+sudo cp bi.1.gz /usr/share/man/man1/
+sudo mandb
+```
 ## in go high speed version
 
 This is a fast version of 'bi', the Binary editor like vi, written in Go. It doesn't support Python calls or eval() or exec(), but it runs much faster than the Python version, making it ideal for working with large files.
@@ -36,31 +50,18 @@ go build -o bi bi.go
 sudo cp bi /usr/local/bin
 ```
 
-To run:
+## in Ruby readable version
 
-```
-bi file
-```
-
-## in python high functionality version
-
-##### installation
-
-```
-git clone http://github.com/fygar256/bi
-cd bi
-chmod +x bi.py
-sudo cp bi.py /usr/local/bin/bi
-
-sudo cp bi.1.gz /usr/share/man/man1/
-sudo mandb
-```
+This is a version of 'bi' for human to read in Ruby.
 
 ##### execution
+```
 bi file
-
+```
 ##### reference of man
+```
 man bi
+```
 
 ##### Title
 
