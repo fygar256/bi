@@ -54,6 +54,12 @@ sudo cp bi /usr/local/bin
 
 This is a version of 'bi' for human to read in Ruby.
 
+#### installation
+```
+chmod +x bi.rb
+sudo cp bi.rb /usr/local/bin/bi
+```
+
 ##### execution
 ```
 bi file
