@@ -16,7 +16,7 @@ class Terminal
   end
   
   def nocursor
-    print "#{ESC}?25l"
+    ptint "#{ESC}?25l"
     $stdout.flush
   end
   
