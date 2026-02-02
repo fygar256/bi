@@ -32,11 +32,17 @@ sudo mandb
 ```
 ## in go high speed version
 
-This is a fast version of 'bi', the Binary editor like vi, written in Go. It doesn't support Python calls or eval() or exec(), but it runs much faster than the Python version, making it ideal for working with large files.
+This is a fast version of 'bi', the Binary editor like vi, written in Go. It doesn't support Python calls such as eval() and exec(), but it runs much faster than the Python version, making it ideal for working with large files.
 
 The manual, commands, and operation methods are the same as those for the Python version of bi.
 
 The following explains how to initialize the Go directory:
+
+## in C best speed version
+
+This is a version of 'bi', the Binary editor like vi, written in C. It doen't support Python calls such as eval() and exec(), but it runs much faster than Python version, making it ideal for working with large files.
+
+Originally, bi was written in C in 1991, therefore I recreated bi in C with modern functionality.
 
 ```
 go mod init bi
