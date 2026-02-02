@@ -847,6 +847,7 @@ static int searchnextnoloop(int64_t fp) {
         return 0;
     }
     
+    stdmm("Wait");
     while (1) {
         int f;
         if (regexpMode) {
@@ -857,14 +858,17 @@ static int searchnextnoloop(int64_t fp) {
         
         if (f == 1) {
             jump(curPos);
+            clrmm();
             return 1;
         } else if (f < 0) {
+            clrmm();
             return -1;
         }
         
         curPos++;
         if (curPos >= mem_len) {
             jump(mem_len);
+            clrmm();
             return 0;
         }
     }
@@ -874,7 +878,9 @@ static bool searchnext(int64_t fp) {
     int64_t curpos = fp;
     int64_t start = fp;
     
+    stdmm("Wait.");
     if (!regexpMode && smem_len == 0) {
+        clrmm();
         return false;
     }
     
@@ -888,8 +894,10 @@ static bool searchnext(int64_t fp) {
         
         if (f == 1) {
             jump(curpos);
+            clrmm();
             return true;
         } else if (f < 0) {
+            clrmm();
             return false;
         }
         
@@ -906,6 +914,7 @@ static bool searchnext(int64_t fp) {
             if (nff) {
                 stdmm("Not found.");
             }
+            clrmm();
             return false;
         }
     }
@@ -919,6 +928,7 @@ static bool searchlast(int64_t fp) {
         return false;
     }
     
+    stdmm("Wait");
     while (1) {
         int f;
         if (regexpMode) {
@@ -929,8 +939,10 @@ static bool searchlast(int64_t fp) {
         
         if (f == 1) {
             jump(curpos);
+            clrmm();
             return true;
         } else if (f < 0) {
+            clrmm();
             return false;
         }
         
@@ -943,9 +955,11 @@ static bool searchlast(int64_t fp) {
         
         if (curpos == start) {
             stdmm("Not found.");
+            clrmm();
             return false;
         }
     }
+    clrmm();
 }
 
 // String parsing helpers
