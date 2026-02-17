@@ -2,7 +2,7 @@
 
 Binary editor like vI - bi
 
-bi is a binary editor with a user interface similar to vi. It started when I posted it on ASCII-net for MS-DOS in December 1991. 33 years have passed since then. Another binary editor with a user interface similar to vi was released for Linux in 1996 by Gerhard Buergmann, called bvi, but I was the first. The first version of bi was written in C, but the currently released version is written in python and Go.
+bi is a binary editor with a user interface similar to vi. It started when I posted it on ASCII-net for MS-DOS in December 1991. 33 years have passed since then. Another binary editor with a user interface similar to vi was released for Linux in 1996 by Gerhard Buergmann, called bvi, but I was the first. The first version of bi was written in C, but the currently released version is written in python,C and Go.
 
 It uses ANSI terminal escape sequences, so it is for ANSI terminals. It should work on ANSI terminals on Linux, Unix, FreeBSD, and POSIX-compliant OSes where python runs. 
 
@@ -12,7 +12,7 @@ If the terminal background color is white, use any string other than `black` for
 
 The bi is designed to be with high functionality, flexible, lightweight, simple, compact, user-friendly and smoothly responsive. bi can handle original script.
 
-The development environment and operation verification are done on ArchLinux.
+The development environment and operation verification are done on ArchLinux and FreeBSD.
 
 This software disributed with MIT license.
 
