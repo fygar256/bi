@@ -215,13 +215,20 @@ class SearchEngine:
     """検索エンジンクラス"""
     RELEN = 128
     
-    def __init__(self, memory_buffer):
+    def __init__(self, memory_buffer, display):
         self.memory = memory_buffer
+        self.display = display
         self.smem = []
         self.regexp = False
         self.remem = ''
         self.span = 0
         self.nff = True
+
+    def stdmm(self, s):
+        self.display.stdmm(s, False, False)
+
+    def clrmm(self):
+        self.display.clrmm()
     
     def hit(self, addr):
         for i in range(len(self.smem)):
@@ -274,12 +281,15 @@ class SearchEngine:
         if not self.regexp and not self.smem:
             return False
         
+        self.stdmm("Wait.")
         while True:
             f = self.hitre(curpos) if self.regexp else self.hit(curpos)
             
             if f == 1:
+                self.clrmm()
                 return curpos
             elif f < 0:
+                self.clrmm()
                 return None
             
             curpos += 1
@@ -288,9 +298,11 @@ class SearchEngine:
                 if self.nff:
                     curpos = 0
                 else:
+                    self.clrmm()
                     return None
             
             if curpos == start:
+                self.clrmm()
                 return None
     
     def searchlast(self, fp, mem_len):
@@ -299,12 +311,15 @@ class SearchEngine:
         if not self.regexp and not self.smem:
             return False
         
+        self.stdmm("Wait.")
         while True:
             f = self.hitre(curpos) if self.regexp else self.hit(curpos)
             
             if f == 1:
+                self.clrmm()
                 return curpos
             elif f < 0:
+                self.clrmm()
                 return None
             
             curpos -= 1
@@ -312,6 +327,7 @@ class SearchEngine:
                 curpos = mem_len - 1
             
             if curpos == start:
+                self.clrmm()
                 return None
 
 
@@ -644,7 +660,7 @@ class Parser:
                 m += '#'
                 idx += 2
             
-            if idx + 1 < len(s) and s[idx:idx+2] == chr(0x5c) + 'n':
+            elif idx + 1 < len(s) and s[idx:idx+2] == chr(0x5c) + 'n':
                 m += '\n'
                 idx += 2
             else:
@@ -711,7 +727,7 @@ class BiEditor:
         self.display = Display(self.term, self.memory)
         self.parser = Parser(self.memory, self.display)
         self.history = HistoryManager()
-        self.search = SearchEngine(self.memory)
+        self.search = SearchEngine(self.memory, self.display)
         self.filemgr = FileManager(self.memory)
         
         self.verbose = False
@@ -1291,7 +1307,7 @@ class BiEditor:
             return -1
         
         # その他の複雑なコマンド
-        if idx < len(line) and line[idx] in "fIivCc&|^<>":
+        if idx < len(line) and line[idx] in "IivCc&|^<>":
             return self.execute_complex_command(line, idx, x, x2, xf, xf2)
         
         self.stderr("Unrecognized command.")
@@ -1584,6 +1600,7 @@ class BiEditor:
         
         if not self.search.regexp and not self.search.smem:
             return 0
+        self.stdmm("Wait.")
         
         while True:
             if self.search.regexp:
@@ -1593,15 +1610,18 @@ class BiEditor:
             
             if f == 1:
                 self.display.jump(cur_pos)
+                self.display.clrmm()
                 return 1
             
             elif f < 0:
+                self.display.clrmm()
                 return -1
             
             cur_pos += 1
             
             if cur_pos >= len(self.memory.mem):
                 self.display.jump(len(self.memory.mem))
+                self.display.clrmm()
                 return 0
     
     def scripting(self, scriptfile):
