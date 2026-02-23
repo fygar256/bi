@@ -13,56 +13,75 @@ import readline
 
 class Terminal:
     """ターミナル制御を担当するクラス"""
-    ESC = '\033['
+    ESC = '['
     
-    def __init__(self, termcol='black'):
+    def __init__(self, termcol='black', get_scripting=None):
         self.termcol = termcol
         self.coltab = [0, 1, 4, 5, 2, 6, 3, 7]
+        # () -> bool を返すコールバック。True のときエスケープシーケンスを抑制する
+        self.get_scripting = get_scripting
+    
+    def _scripting(self):
+        return self.get_scripting is not None and self.get_scripting()
     
     def nocursor(self):
+        if self._scripting(): return
         print(f"{self.ESC}?25l", end='', flush=True)
     
     def dispcursor(self):
+        if self._scripting(): return
         print(f"{self.ESC}?25h", end='', flush=True)
     
     def up(self, n=1):
+        if self._scripting(): return
         print(f"{self.ESC}{n}A", end='')
     
     def down(self, n=1):
+        if self._scripting(): return
         print(f"{self.ESC}{n}B", end='')
     
     def right(self, n=1):
+        if self._scripting(): return
         print(f"{self.ESC}{n}C", end='')
     
     def left(self, n=1):
+        if self._scripting(): return
         print(f"{self.ESC}{n}D", end='', flush=True)
     
     def locate(self, x=0, y=0):
+        if self._scripting(): return
         print(f"{self.ESC}{y+1};{x+1}H", end='', flush=True)
     
     def scrollup(self, n=1):
+        if self._scripting(): return
         print(f"{self.ESC}{n}S", end='')
     
     def scrolldown(self, n=1):
+        if self._scripting(): return
         print(f"{self.ESC}{n}T", end='')
     
     def clear(self):
+        if self._scripting(): return
         print(f"{self.ESC}2J", end='', flush=True)
         self.locate()
     
     def clraftcur(self):
+        if self._scripting(): return
         print(f"{self.ESC}0J", end='', flush=True)
     
     def clrline(self):
+        if self._scripting(): return
         print(f"{self.ESC}2K", end='', flush=True)
     
     def color(self, col1=7, col2=0):
+        if self._scripting(): return
         if self.termcol == 'black':
             print(f"{self.ESC}3{self.coltab[col1]}m{self.ESC}4{self.coltab[col2]}m", end='', flush=True)
         else:
             print(f"{self.ESC}3{self.coltab[0]}m{self.ESC}4{self.coltab[7]}m", end='', flush=True)
     
     def resetcolor(self):
+        if self._scripting(): return
         print(f"{self.ESC}0m", end='')
     
     @staticmethod
@@ -218,7 +237,7 @@ class SearchEngine:
     def __init__(self, memory_buffer, display, get_flags=None):
         self.memory = memory_buffer
         self.display = display
-        self.get_flags = get_flags  # () -> (scripting, verbose) を返すコールバック
+        self.get_flags = get_flags  # () -> (scripting, verbose)
         self.smem = []
         self.regexp = False
         self.remem = ''
@@ -231,6 +250,12 @@ class SearchEngine:
         else:
             scripting, verbose = False, False
         self.display.stdmm(s, scripting, verbose)
+
+    def stdmm_wait(self, s):
+        """スクリプティング中（-v含む）は常に抑制するメッセージ用"""
+        if self.get_flags is not None and self.get_flags()[0]:
+            return
+        self.display.stdmm(s, False, False)
 
     def clrmm(self):
         self.display.clrmm()
@@ -285,8 +310,7 @@ class SearchEngine:
         start = fp
         if not self.regexp and not self.smem:
             return False
-        
-        self.stdmm("Wait.")
+        self.stdmm_wait("Wait.")
         while True:
             f = self.hitre(curpos) if self.regexp else self.hit(curpos)
             
@@ -315,8 +339,7 @@ class SearchEngine:
         start = fp
         if not self.regexp and not self.smem:
             return False
-        
-        self.stdmm("Wait.")
+        self.stdmm_wait("Wait.")
         while True:
             f = self.hitre(curpos) if self.regexp else self.hit(curpos)
             
@@ -727,7 +750,9 @@ class FileManager:
 class BiEditor:
     """バイナリエディタのメインクラス"""
     def __init__(self, termcol='black'):
-        self.term = Terminal(termcol)
+        self.scriptingflag = False
+        self.verbose = False
+        self.term = Terminal(termcol, get_scripting=lambda: self.scriptingflag)
         self.memory = MemoryBuffer()
         self.display = Display(self.term, self.memory)
         self.parser = Parser(self.memory, self.display)
@@ -736,13 +761,17 @@ class BiEditor:
                                    get_flags=lambda: (self.scriptingflag, self.verbose))
         self.filemgr = FileManager(self.memory)
         
-        self.verbose = False
-        self.scriptingflag = False
         self.stack = []
         self.cp = 0
     
     def stdmm(self, s):
         self.display.stdmm(s, self.scriptingflag, self.verbose)
+
+    def stdmm_wait(self, s):
+        """スクリプティング中（-v含む）は常に抑制するメッセージ用"""
+        if self.scriptingflag:
+            return
+        self.display.stdmm(s, False, False)
     
     def stderr(self, s):
         self.display.stderr(s, self.scriptingflag, self.verbose)
@@ -1606,8 +1635,7 @@ class BiEditor:
         
         if not self.search.regexp and not self.search.smem:
             return 0
-        self.stdmm("Wait.")
-        
+        self.stdmm_wait("Wait.")
         while True:
             if self.search.regexp:
                 f = self.search.hitre(cur_pos)

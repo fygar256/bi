@@ -101,20 +101,21 @@ static bool searchnext(int64_t fp);
 static bool searchlast(int64_t fp);
 
 // Terminal control helpers
-static void escnocursor(void) { printf("%s?25l", ESC); fflush(stdout); }
-static void escdispcursor(void) { printf("%s?25h", ESC); fflush(stdout); }
-static void escup(int n) { printf("%s%dA", ESC, n); }
-static void escdown(int n) { printf("%s%dB", ESC, n); }
-static void escright(int n) { printf("%s%dC", ESC, n); }
-static void escleft(int n) { printf("%s%dD", ESC, n); }
-static void esclocate(int x, int y) { printf("%s%d;%dH", ESC, y + 1, x + 1); }
-static void escscrollup(int n) { printf("%s%dS", ESC, n); }
-static void escscrolldown(int n) { printf("%s%dT", ESC, n); }
-static void escclear(void) { printf("%s2J", ESC); esclocate(0, 0); }
-static void escclraftcur(void) { printf("%s0J", ESC); }
-static void escclrline(void) { printf("%s2K", ESC); }
+static void escnocursor(void)          { if (scriptingflag) return; printf("%s?25l", ESC); fflush(stdout); }
+static void escdispcursor(void)        { if (scriptingflag) return; printf("%s?25h", ESC); fflush(stdout); }
+static void escup(int n)               { if (scriptingflag) return; printf("%s%dA", ESC, n); }
+static void escdown(int n)             { if (scriptingflag) return; printf("%s%dB", ESC, n); }
+static void escright(int n)            { if (scriptingflag) return; printf("%s%dC", ESC, n); }
+static void escleft(int n)             { if (scriptingflag) return; printf("%s%dD", ESC, n); }
+static void esclocate(int x, int y)    { if (scriptingflag) return; printf("%s%d;%dH", ESC, y + 1, x + 1); }
+static void escscrollup(int n)         { if (scriptingflag) return; printf("%s%dS", ESC, n); }
+static void escscrolldown(int n)       { if (scriptingflag) return; printf("%s%dT", ESC, n); }
+static void escclear(void)             { if (scriptingflag) return; printf("%s2J", ESC); esclocate(0, 0); }
+static void escclraftcur(void)         { if (scriptingflag) return; printf("%s0J", ESC); }
+static void escclrline(void)           { if (scriptingflag) return; printf("%s2K", ESC); }
 
 static void esccolor(int col1, int col2) {
+    if (scriptingflag) return;
     if (strcmp(termcol, "black") == 0) {
         printf("%s3%dm%s4%dm", ESC, coltab[col1], ESC, coltab[col2]);
     } else {
@@ -122,7 +123,7 @@ static void esccolor(int col1, int col2) {
     }
 }
 
-static void escresetcolor(void) { printf("%s0m", ESC); }
+static void escresetcolor(void) { if (scriptingflag) return; printf("%s0m", ESC); }
 
 // Raw-mode handling
 static void disable_raw_mode(void) {
@@ -232,6 +233,17 @@ static void stdmm(const char *msg) {
         for (size_t i = strlen(msg) + 1; i < 80; i++) printf(" ");
         fflush(stdout);
     }
+}
+
+static void stdmm_wait(const char *msg) {
+    /* スクリプティング中（-v含む）は常に抑制 */
+    if (scriptingflag) return;
+    clrmm();
+    esccolor(4, 0);
+    esclocate(0, BOTTOMLN);
+    printf(" %s", msg);
+    for (size_t i = strlen(msg) + 1; i < 80; i++) printf(" ");
+    fflush(stdout);
 }
 
 static void clrmm(void) {
@@ -846,8 +858,7 @@ static int searchnextnoloop(int64_t fp) {
     if (!regexpMode && smem_len == 0) {
         return 0;
     }
-    
-    stdmm("Wait");
+    stdmm_wait("Wait.");
     while (1) {
         int f;
         if (regexpMode) {
@@ -879,10 +890,10 @@ static bool searchnext(int64_t fp) {
     int64_t start = fp;
     
     if (!regexpMode && smem_len == 0) {
+        clrmm();
         return false;
     }
-    stdmm("Wait.");
-    
+    stdmm_wait("Wait.");
     while (1) {
         int f;
         if (regexpMode) {
@@ -926,7 +937,7 @@ static bool searchlast(int64_t fp) {
     if (!regexpMode && smem_len == 0) {
         return false;
     }
-    stdmm("Wait.");
+    stdmm_wait("Wait.");
     while (1) {
         int f;
         if (regexpMode) {
