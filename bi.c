@@ -878,11 +878,10 @@ static bool searchnext(int64_t fp) {
     int64_t curpos = fp;
     int64_t start = fp;
     
-    stdmm("Wait.");
     if (!regexpMode && smem_len == 0) {
-        clrmm();
         return false;
     }
+    stdmm("Wait.");
     
     while (1) {
         int f;
@@ -927,8 +926,7 @@ static bool searchlast(int64_t fp) {
     if (!regexpMode && smem_len == 0) {
         return false;
     }
-    
-    stdmm("Wait");
+    stdmm("Wait.");
     while (1) {
         int f;
         if (regexpMode) {

@@ -215,9 +215,10 @@ class SearchEngine:
     """検索エンジンクラス"""
     RELEN = 128
     
-    def __init__(self, memory_buffer, display):
+    def __init__(self, memory_buffer, display, get_flags=None):
         self.memory = memory_buffer
         self.display = display
+        self.get_flags = get_flags  # () -> (scripting, verbose) を返すコールバック
         self.smem = []
         self.regexp = False
         self.remem = ''
@@ -225,7 +226,11 @@ class SearchEngine:
         self.nff = True
 
     def stdmm(self, s):
-        self.display.stdmm(s, False, False)
+        if self.get_flags is not None:
+            scripting, verbose = self.get_flags()
+        else:
+            scripting, verbose = False, False
+        self.display.stdmm(s, scripting, verbose)
 
     def clrmm(self):
         self.display.clrmm()
@@ -727,7 +732,8 @@ class BiEditor:
         self.display = Display(self.term, self.memory)
         self.parser = Parser(self.memory, self.display)
         self.history = HistoryManager()
-        self.search = SearchEngine(self.memory, self.display)
+        self.search = SearchEngine(self.memory, self.display,
+                                   get_flags=lambda: (self.scriptingflag, self.verbose))
         self.filemgr = FileManager(self.memory)
         
         self.verbose = False
