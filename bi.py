@@ -83,6 +83,11 @@ class Terminal:
     def resetcolor(self):
         if self._scripting(): return
         print(f"{self.ESC}0m", end='')
+
+    def highlight_color(self):
+        """検索ヒット箇所のハイライト色 (緑地に明るいシアン・太字)"""
+        if self._scripting(): return
+        print(f"\x1b[1;96;44m", end='', flush=True)
     
     @staticmethod
     def getch():
@@ -358,6 +363,32 @@ class SearchEngine:
                 self.clrmm()
                 return None
 
+    def search_all(self, mem_len, max_results=10000):
+        """全てのマッチ箇所を検索して返す"""
+        matches = []
+        if not self.regexp and not self.smem:
+            return matches
+        
+        self.stdmm_wait("Searching all matches...")
+        curpos = 0
+        
+        while curpos < mem_len and len(matches) < max_results:
+            f = self.hitre(curpos) if self.regexp else self.hit(curpos)
+            
+            if f == 1:
+                # マッチした位置と長さを保存
+                match_len = self.span if self.regexp else len(self.smem)
+                matches.append((curpos, match_len))
+                # 次の検索位置は現在のマッチの後から
+                curpos += max(1, match_len)
+            elif f < 0:
+                break
+            else:
+                curpos += 1
+        
+        self.clrmm()
+        return matches
+
 
 class Display:
     """画面表示クラス"""
@@ -373,6 +404,8 @@ class Display:
         self.utf8 = False
         self.repsw = 0
         self.insmod = False
+        # 複数のハイライト範囲をリストで管理 [(pos, len), ...]
+        self.highlight_ranges = []
     
     def fpos(self):
         return self.homeaddr + self.curx // 2 + self.cury * 16
@@ -400,6 +433,13 @@ class Display:
                 self.cury += 1
             else:
                 self.scrdown()
+    
+    def is_highlighted(self, addr):
+        """指定アドレスがハイライト範囲に含まれるか判定"""
+        for pos, length in self.highlight_ranges:
+            if pos <= addr < pos + length:
+                return True
+        return False
     
     def printchar(self, a):
         if a >= len(self.memory.mem):
@@ -445,7 +485,7 @@ class Display:
     def print_title(self, filename):
         self.term.locate(0, 0)
         self.term.color(6)
-        print(f'bi version 3.4.4 by T.Maekawa                   utf8mode:{"off" if not self.utf8 else self.repsw}     {"insert   " if self.insmod else "overwrite"}   ')
+        print(f'bi version 3.4.5 by Taisuke Maekawa             utf8mode:{"off" if not self.utf8 else self.repsw}     {"insert   " if self.insmod else "overwrite"}   ')
         self.term.color(5)
         if len(filename) > 35:
             fn = filename[0:35]
@@ -468,12 +508,30 @@ class Display:
             self.term.color(7)
             for i in range(16):
                 a = y * 16 + i + addr
-                print(f"~~ " if a >= len(self.memory.mem) else f"{self.memory.mem[a] & 0xff:02X} ", end='')
+                in_hl = (self.highlight_ranges and self.is_highlighted(a))
+                if in_hl:
+                    self.term.highlight_color()
+                    print(f"~~" if a >= len(self.memory.mem) else f"{self.memory.mem[a] & 0xff:02X}", end='')
+                    self.term.resetcolor()
+                    self.term.color(7)
+                    print(" ", end='')
+                else:
+                    self.term.color(7)
+                    print(f"~~ " if a >= len(self.memory.mem) else f"{self.memory.mem[a] & 0xff:02X} ", end='')
+            self.term.color(7)
             self.term.color(6)
             a = y * 16 + addr
             by = 0
             while by < 16:
-                c = self.printchar(a)
+                in_hl = (self.highlight_ranges and self.is_highlighted(a))
+                if in_hl:
+                    self.term.highlight_color()
+                    c = self.printchar(a)
+                    self.term.resetcolor()
+                    self.term.color(6)
+                else:
+                    self.term.color(6)
+                    c = self.printchar(a)
                 a += c
                 by += c
             print("  ", end='', flush=True)
@@ -763,6 +821,11 @@ class BiEditor:
         
         self.stack = []
         self.cp = 0
+        
+        # Undo/Redo機能用
+        self.undo_stack = []  # (mem, modified, mark) のリスト
+        self.redo_stack = []
+        self.max_undo_levels = 100  # 最大undo回数
     
     def stdmm(self, s):
         self.display.stdmm(s, self.scriptingflag, self.verbose)
@@ -772,6 +835,90 @@ class BiEditor:
         if self.scriptingflag:
             return
         self.display.stdmm(s, False, False)
+    
+    def save_undo_state(self):
+        """現在の状態をundoスタックに保存"""
+        if self.scriptingflag:
+            return  # スクリプト実行中はundoを保存しない
+        
+        # 現在の状態を保存
+        state = {
+            'mem': copy.deepcopy(self.memory.mem),
+            'modified': self.memory.modified,
+            'lastchange': self.memory.lastchange,
+            'mark': copy.deepcopy(self.memory.mark)
+        }
+        
+        self.undo_stack.append(state)
+        
+        # スタックサイズの制限
+        if len(self.undo_stack) > self.max_undo_levels:
+            self.undo_stack.pop(0)
+        
+        # 新しい編集が行われたのでredoスタックをクリア
+        self.redo_stack = []
+    
+    def undo(self):
+        """undo実行"""
+        if not self.undo_stack:
+            self.stdmm("No more undo.")
+            return False
+        
+        # 現在の状態をredoスタックに保存
+        current_state = {
+            'mem': copy.deepcopy(self.memory.mem),
+            'modified': self.memory.modified,
+            'lastchange': self.memory.lastchange,
+            'mark': copy.deepcopy(self.memory.mark)
+        }
+        self.redo_stack.append(current_state)
+        
+        # undoスタックから状態を復元
+        state = self.undo_stack.pop()
+        self.memory.mem = state['mem']
+        self.memory.modified = state['modified']
+        self.memory.lastchange = state['lastchange']
+        self.memory.mark = state['mark']
+        
+        # カーソル位置を調整
+        if self.display.fpos() >= len(self.memory.mem) and len(self.memory.mem) > 0:
+            self.display.jump(len(self.memory.mem) - 1)
+        elif len(self.memory.mem) == 0:
+            self.display.jump(0)
+        
+        self.stdmm(f"Undo. ({len(self.undo_stack)} more)")
+        return True
+    
+    def redo(self):
+        """redo実行"""
+        if not self.redo_stack:
+            self.stdmm("No more redo.")
+            return False
+        
+        # 現在の状態をundoスタックに保存
+        current_state = {
+            'mem': copy.deepcopy(self.memory.mem),
+            'modified': self.memory.modified,
+            'lastchange': self.memory.lastchange,
+            'mark': copy.deepcopy(self.memory.mark)
+        }
+        self.undo_stack.append(current_state)
+        
+        # redoスタックから状態を復元
+        state = self.redo_stack.pop()
+        self.memory.mem = state['mem']
+        self.memory.modified = state['modified']
+        self.memory.lastchange = state['lastchange']
+        self.memory.mark = state['mark']
+        
+        # カーソル位置を調整
+        if self.display.fpos() >= len(self.memory.mem) and len(self.memory.mem) > 0:
+            self.display.jump(len(self.memory.mem) - 1)
+        elif len(self.memory.mem) == 0:
+            self.display.jump(0)
+        
+        self.stdmm(f"Redo. ({len(self.redo_stack)} more)")
+        return True
     
     def stderr(self, s):
         self.display.stderr(s, self.scriptingflag, self.verbose)
@@ -876,22 +1023,32 @@ class BiEditor:
             # エスケープシーケンス処理
             if ch == chr(27):
                 c2 = Terminal.getch()
-                c3 = Terminal.getch()
-                if c3 == 'A':
-                    ch = 'k'
-                elif c3 == 'B':
-                    ch = 'j'
-                elif c3 == 'C':
-                    ch = 'l'
-                elif c3 == 'D':
-                    ch = 'h'
-                elif c2 == chr(91) and c3 == chr(50):
-                    ch = 'i'
+                if c2 == chr(91):  # '[' - エスケープシーケンス
+                    c3 = Terminal.getch()
+                    if c3 == 'A':
+                        ch = 'k'
+                    elif c3 == 'B':
+                        ch = 'j'
+                    elif c3 == 'C':
+                        ch = 'l'
+                    elif c3 == 'D':
+                        ch = 'h'
+                    elif c3 == chr(50):
+                        ch = 'i'
+                else:
+                    # ESC単独 - ハイライトをクリア
+                    self.display.highlight_ranges = []
+                    continue
             
             # 検索コマンド
             if ch == 'n':
                 pos = self.search.searchnext(self.display.fpos() + 1, len(self.memory))
                 if pos is not None and pos is not False:
+                    # ハイライト範囲が空の場合、全マッチを再検索してハイライト
+                    if not self.display.highlight_ranges:
+                        matches = self.search.search_all(len(self.memory))
+                        if matches:
+                            self.display.highlight_ranges = matches
                     self.display.jump(pos)
                 elif pos is None:
                     self.stdmm("Not found.")
@@ -899,9 +1056,22 @@ class BiEditor:
             elif ch == 'N':
                 pos = self.search.searchlast(self.display.fpos() - 1, len(self.memory))
                 if pos is not None and pos is not False:
+                    # ハイライト範囲が空の場合、全マッチを再検索してハイライト
+                    if not self.display.highlight_ranges:
+                        matches = self.search.search_all(len(self.memory))
+                        if matches:
+                            self.display.highlight_ranges = matches
                     self.display.jump(pos)
                 elif pos is None:
                     self.stdmm("Not found.")
+                continue
+            
+            # Undo/Redo
+            elif ch == 'u':
+                self.undo()
+                continue
+            elif ch == chr(18):  # Ctrl+R
+                self.redo()
                 continue
             
             # スクロールコマンド
@@ -1009,13 +1179,18 @@ class BiEditor:
             # ヤンク・ペースト
             elif ch == 'p':
                 y = list(self.memory.yank)
-                self.memory.ovwmem(self.display.fpos(), y)
-                self.display.jump(self.display.fpos() + len(y))
+                if y:
+                    self.save_undo_state()
+                    self.memory.ovwmem(self.display.fpos(), y)
+                    self.display.jump(self.display.fpos() + len(y))
                 continue
             elif ch == 'P':
                 y = list(self.memory.yank)
-                self.memory.insmem(self.display.fpos(), y)
-                self.display.jump(self.display.fpos() + len(self.memory.yank))
+                if y:  # yankバッファが空でない場合のみハイライトをクリア
+                    self.save_undo_state()
+                    self.display.highlight_ranges = []
+                    self.memory.insmem(self.display.fpos(), y)
+                    self.display.jump(self.display.fpos() + len(self.memory.yank))
                 continue
             
             # 編集モード
@@ -1029,18 +1204,33 @@ class BiEditor:
                 mask = 0xf if not self.display.curx & 1 else 0xf0
                 if self.display.insmod:
                     if not stroke and addr < len(self.memory.mem):
+                        # 実際に挿入が行われるのでundo保存とハイライトをクリア
+                        self.save_undo_state()
+                        self.display.highlight_ranges = []
                         self.memory.insmem(addr, [c << sh])
                     else:
+                        if not stroke:
+                            self.save_undo_state()
                         self.memory.setmem(addr, self.memory.readmem(addr) & mask | c << sh)
                     stroke = (not stroke) if not self.display.curx & 1 else False
                 else:
+                    if self.display.curx & 1 == 0:  # 上位ニブルの入力時のみ保存
+                        self.save_undo_state()
                     self.memory.setmem(addr, self.memory.readmem(addr) & mask | c << sh)
                 self.display.inccurx()
             elif ch == 'x':
-                self.memory.delmem(self.display.fpos(), self.display.fpos(), False, self.memory.yankmem)
+                # 削除が成功した場合のみundo保存とハイライトをクリア
+                self.save_undo_state()
+                if self.memory.delmem(self.display.fpos(), self.display.fpos(), False, self.memory.yankmem):
+                    self.display.highlight_ranges = []
             elif ch == ':':
                 self.display.disp_curpos()
+                # コマンド実行前のファイル長を保存
+                before_len = len(self.memory.mem)
                 f = self.commandln()
+                # コマンド実行後にファイル長が変わった場合のみハイライトをクリア
+                if len(self.memory.mem) != before_len:
+                    self.display.highlight_ranges = []
                 self.display.erase_curpos()
                 if f == 1:
                     return True
@@ -1068,26 +1258,48 @@ class BiEditor:
             self.searchstr(m)
     
     def searchstr(self, s):
-        """文字列検索"""
+        """文字列検索 - 全てのマッチをハイライト"""
         if s != "":
             self.search.regexp = True
             self.search.remem = s
-            pos = self.search.searchnext(self.display.fpos(), len(self.memory))
-            if pos is not None and pos is not False:
-                self.display.jump(pos)
+            
+            # 全てのマッチ箇所を検索
+            matches = self.search.search_all(len(self.memory))
+            
+            if matches:
+                # ハイライト範囲を設定
+                self.display.highlight_ranges = matches
+                # 最初のマッチ位置にジャンプ
+                first_pos = matches[0][0]
+                self.display.jump(first_pos)
+                self.stdmm(f"Found {len(matches)} match(es)")
                 return True
+            else:
+                self.display.highlight_ranges = []
+                self.stdmm("Not found")
         return False
     
     def searchhex(self, sm):
-        """16進検索"""
+        """16進検索 - 全てのマッチをハイライト"""
         self.search.remem = ''
         self.search.regexp = False
         if sm:
             self.search.smem = sm
-            pos = self.search.searchnext(self.display.fpos(), len(self.memory))
-            if pos is not None and pos is not False:
-                self.display.jump(pos)
+            
+            # 全てのマッチ箇所を検索
+            matches = self.search.search_all(len(self.memory))
+            
+            if matches:
+                # ハイライト範囲を設定
+                self.display.highlight_ranges = matches
+                # 最初のマッチ位置にジャンプ
+                first_pos = matches[0][0]
+                self.display.jump(first_pos)
+                self.stdmm(f"Found {len(matches)} match(es)")
                 return True
+            else:
+                self.display.highlight_ranges = []
+                self.stdmm("Not found")
         return False
     
     def commandln(self):
@@ -1129,6 +1341,14 @@ class BiEditor:
             else:
                 return -1
         
+        # Undo/Redo
+        elif line == 'u' or line == 'undo':
+            self.undo()
+            return -1
+        elif line == 'red' or line == 'redo':
+            self.redo()
+            return -1
+
         # ファイル書き込み
         elif line[0] == 'w':
             if len(line) >= 2:
@@ -1179,11 +1399,21 @@ class BiEditor:
         elif line[0] == 'n':
             pos = self.search.searchnext(self.display.fpos() + 1, len(self.memory))
             if pos is not None and pos is not False:
+                # ハイライト範囲が空の場合、全マッチを再検索してハイライト
+                if not self.display.highlight_ranges:
+                    matches = self.search.search_all(len(self.memory))
+                    if matches:
+                        self.display.highlight_ranges = matches
                 self.display.jump(pos)
             return -1
         elif line[0] == 'N':
             pos = self.search.searchlast(self.display.fpos() - 1, len(self.memory))
             if pos is not None and pos is not False:
+                # ハイライト範囲が空の場合、全マッチを再検索してハイライト
+                if not self.display.highlight_ranges:
+                    matches = self.search.search_all(len(self.memory))
+                    if matches:
+                        self.display.highlight_ranges = matches
                 self.display.jump(pos)
             return -1
         
@@ -1266,14 +1496,18 @@ class BiEditor:
         # paste
         if idx < len(line) and line[idx] == 'p':
             y = list(self.memory.yank)
-            self.memory.ovwmem(x, y)
-            self.display.jump(x + len(y))
+            if y:
+                self.save_undo_state()
+                self.memory.ovwmem(x, y)
+                self.display.jump(x + len(y))
             return -1
         
         if idx < len(line) and line[idx] == 'P':
             y = list(self.memory.yank)
-            self.memory.insmem(x, y)
-            self.display.jump(x + len(self.memory.yank))
+            if y:
+                self.save_undo_state()
+                self.memory.insmem(x, y)
+                self.display.jump(x + len(self.memory.yank))
             return -1
         
         # mark
@@ -1301,12 +1535,13 @@ class BiEditor:
                     data = []
                     self.stderr("File read error.")
             
-            if ch == 'r':
-                self.memory.ovwmem(x, data)
-            elif ch == 'R':
-                self.memory.insmem(x, data)
-            
-            self.display.jump(x + len(data))
+            if data:
+                self.save_undo_state()
+                if ch == 'r':
+                    self.memory.ovwmem(x, data)
+                elif ch == 'R':
+                    self.memory.insmem(x, data)
+                self.display.jump(x + len(data))
             return -1
         
         if idx < len(line):
@@ -1316,6 +1551,7 @@ class BiEditor:
         
         # delete
         if ch == 'd':
+            self.save_undo_state()
             if self.memory.delmem(x, x2, True, self.memory.yankmem):
                 self.stdmm(f"{x2 - x + 1} bytes deleted.")
                 self.display.jump(x)
@@ -1332,11 +1568,13 @@ class BiEditor:
         
         # substitute
         elif ch == 's':
+            self.save_undo_state()
             self.scommand(x, x2, xf, xf2, line, idx + 1)
             return -1
         
         # not
         if idx < len(line) and line[idx] == '~':
+            self.save_undo_state()
             self.openot(x, x2)
             self.display.jump(x2 + 1)
             return -1
@@ -1369,6 +1607,7 @@ class BiEditor:
             else:
                 bit = Parser.UNKNOWN
             
+            self.save_undo_state()
             self.shift_rotate(x, x2, times, bit, multibyte, ch)
             return -1
         
@@ -1389,6 +1628,7 @@ class BiEditor:
             # fill mode for 'i' with range
             if ch == 'i' and xf2:
                 if len(m):
+                    self.save_undo_state()
                     data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
                     self.memory.ovwmem(x, data)
                     self.stdmm(f"{len(data)} bytes filled.")
@@ -1402,14 +1642,16 @@ class BiEditor:
                 return -1
             
             data = m * length
-            if ch == 'i':
-                self.memory.ovwmem(x, data)
-                self.stdmm(f"{len(data)} bytes overwritten.")
-            else:
-                self.memory.insmem(x, data)
-                self.stdmm(f"{len(data)} bytes inserted.")
-            
-            self.display.jump(x + len(data))
+            if data:
+                self.save_undo_state()
+                if ch == 'i':
+                    self.memory.ovwmem(x, data)
+                    self.stdmm(f"{len(data)} bytes overwritten.")
+                else:
+                    self.memory.insmem(x, data)
+                    self.stdmm(f"{len(data)} bytes inserted.")
+                
+                self.display.jump(x + len(data))
             return -1
         
         # 残りのコマンドは第3引数が必要
@@ -1420,6 +1662,7 @@ class BiEditor:
         
         # copy/Copy
         if ch == 'c':
+            self.save_undo_state()
             self.memory.yankmem(x, x2)
             m = self.memory.redmem(x, x2)
             self.memory.ovwmem(x3, m)
@@ -1427,6 +1670,7 @@ class BiEditor:
             self.display.jump(x3 + (x2 - x + 1))
             return -1
         elif ch == 'C':
+            self.save_undo_state()
             m = self.memory.redmem(x, x2)
             self.memory.yankmem(x, x2)
             self.memory.insmem(x3, m)
@@ -1436,20 +1680,24 @@ class BiEditor:
         
         # move
         elif ch == 'v':
+            self.save_undo_state()
             xp = self.movmem(x, x2, x3)
             self.display.jump(xp)
             return -1
         
         # ビット演算
         elif ch == '&':
+            self.save_undo_state()
             self.opeand(x, x2, x3)
             self.display.jump(x2 + 1)
             return -1
         elif ch == '|':
+            self.save_undo_state()
             self.opeor(x, x2, x3)
             self.display.jump(x2 + 1)
             return -1
         elif ch == '^':
+            self.save_undo_state()
             self.opexor(x, x2, x3)
             self.display.jump(x2 + 1)
             return -1
