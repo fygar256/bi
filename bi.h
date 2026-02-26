@@ -210,6 +210,7 @@ void search_free(SearchEngine *search);
 void display_init(Display *disp, Terminal *term, MemoryBuffer *mem);
 size_t display_fpos(Display *disp);
 void display_jump(Display *disp, size_t addr);
+int display_printchar(Display *disp, size_t a);
 void display_repaint(Display *disp, const char *filename);
 void display_printdata(Display *disp);
 void display_clrmm(Display *disp);
@@ -243,6 +244,20 @@ bool editor_undo(BiEditor *editor);
 bool editor_redo(BiEditor *editor);
 void editor_fedit(BiEditor *editor);
 int editor_commandline(BiEditor *editor, const char *line);
+int editor_scripting(BiEditor *editor, const char *scriptfile);
+
+// 編集操作関数
+void editor_opeand(BiEditor *editor, uint64_t x, uint64_t x2, uint64_t x3);
+void editor_opeor(BiEditor *editor, uint64_t x, uint64_t x2, uint64_t x3);
+void editor_opexor(BiEditor *editor, uint64_t x, uint64_t x2, uint64_t x3);
+void editor_openot(BiEditor *editor, uint64_t x, uint64_t x2);
+uint64_t editor_movmem(BiEditor *editor, uint64_t start, uint64_t end, uint64_t dest);
+void editor_shift_rotate(BiEditor *editor, uint64_t x, uint64_t x2, int times, 
+                         int bit, bool multibyte, char direction);
+int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end, 
+                    bool xf, bool xf2, const char *line, size_t idx);
+size_t editor_searchnextnoloop(BiEditor *editor, size_t fp);
+
 void editor_free(BiEditor *editor);
 
 #endif // BI_H

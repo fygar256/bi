@@ -636,7 +636,7 @@ void display_repaint(Display *disp, const char *filename) {
     // Print title
     terminal_locate(disp->term, 0, 0);
     terminal_color(disp->term, 6, 0);
-    printf("bi version %s by Taisuke Maekawa             utf8mode:%s     %s   ",
+    printf("bi C version %s by Taisuke Maekawa           utf8mode:%s     %s   ",
            VERSION, disp->utf8 ? (disp->repsw ? "on " : "off") : "off",
            disp->insmod ? "insert   " : "overwrite");
     
@@ -1369,6 +1369,34 @@ void editor_fedit(BiEditor *editor) {
             continue;
         }
         
+        // マーク設定 (m command)
+        else if (ch == 'm') {
+            int ch2 = terminal_getch();
+            if (ch2 >= 'a' && ch2 <= 'z') {
+                editor->memory.mark[ch2 - 'a'] = display_fpos(&editor->display);
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Mark '%c' set at %zX", ch2, display_fpos(&editor->display));
+                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            }
+            continue;
+        }
+        
+        // マークへジャンプ (' command)
+        else if (ch == '\'') {
+            int ch2 = terminal_getch();
+            if (ch2 >= 'a' && ch2 <= 'z') {
+                uint64_t mark_pos = editor->memory.mark[ch2 - 'a'];
+                if (mark_pos != UNKNOWN) {
+                    display_jump(&editor->display, mark_pos);
+                } else {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "Mark '%c' not set", ch2);
+                    display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+                }
+            }
+            continue;
+        }
+        
         // ヤンク・ペースト
         else if (ch == 'p') {
             if (editor->memory.yank.size > 0) {
@@ -1527,16 +1555,21 @@ int editor_commandline(BiEditor *editor, const char *line) {
     // シェルコマンド実行
     else if (parsed_line[0] == '!') {
         if (strlen(parsed_line) >= 2) {
-            terminal_color(&editor->term, 7, 0);
-            printf("\n");
-            fflush(stdout);
+            if (!editor->scriptingflag) {
+                terminal_color(&editor->term, 7, 0);
+                printf("\n");
+                fflush(stdout);
+            }
             int ret = system(parsed_line + 1);
             (void)ret;  // 返り値を使用（警告抑制）
-            terminal_color(&editor->term, 4, 0);
-            printf("[ Hit any key to return ]");
-            fflush(stdout);
-            terminal_getch();
-            terminal_clear(&editor->term);
+            
+            if (!editor->scriptingflag) {
+                terminal_color(&editor->term, 4, 0);
+                printf("[ Hit any key to return ]");
+                fflush(stdout);
+                terminal_getch();
+                terminal_clear(&editor->term);
+            }
         }
         return -1;
     }
@@ -1562,19 +1595,29 @@ int editor_commandline(BiEditor *editor, const char *line) {
                         (unsigned long long)v, s);
                 display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                 
-                // 2行目にバイナリ表示
-                terminal_locate(&editor->term, 0, BOTTOMLN + 1);
-                terminal_color(&editor->term, 6, 0);
-                printf("b");
-                for (int i = 63; i >= 0; i--) {
-                    if (i % 4 == 3) printf(" ");
-                    printf("%d", (int)((v >> i) & 1));
+                if (!editor->scriptingflag) {
+                    // インタラクティブモードのみバイナリ表示してキー入力待ち
+                    terminal_locate(&editor->term, 0, BOTTOMLN + 1);
+                    terminal_color(&editor->term, 6, 0);
+                    printf("b");
+                    for (int i = 63; i >= 0; i--) {
+                        if (i % 4 == 3) printf(" ");
+                        printf("%d", (int)((v >> i) & 1));
+                    }
+                    fflush(stdout);
+                    terminal_getch();
+                    terminal_locate(&editor->term, 0, BOTTOMLN + 1);
+                    printf("%*s", 80, "");
+                    fflush(stdout);
+                } else {
+                    // スクリプトモードではバイナリ表示のみ
+                    printf("b");
+                    for (int i = 63; i >= 0; i--) {
+                        if (i % 4 == 3) printf(" ");
+                        printf("%d", (int)((v >> i) & 1));
+                    }
+                    printf("\n");
                 }
-                fflush(stdout);
-                terminal_getch();
-                terminal_locate(&editor->term, 0, BOTTOMLN + 1);
-                printf("%*s", 80, "");
-                fflush(stdout);
             }
         }
         return -1;
@@ -1638,6 +1681,47 @@ int editor_commandline(BiEditor *editor, const char *line) {
                     display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                 } else {
                     display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
+                }
+            }
+        }
+        return -1;
+    }
+    
+    // ファイル読み込み（範囲なし）
+    else if (parsed_line[0] == 'r') {
+        if (strlen(parsed_line) < 2) {
+            char msg[256];
+            bool success = filemgr_readfile(&editor->filemgr, editor->filemgr.filename, msg, sizeof(msg));
+            if (msg[0]) {
+                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            } else {
+                display_stdmm(&editor->display, "Original file read.", 
+                             editor->scriptingflag, editor->verbose);
+            }
+            return -1;
+        }
+    }
+    
+    // スクリプト実行（T/tコマンド）
+    else if (parsed_line[0] == 'T' || parsed_line[0] == 't') {
+        if (strlen(parsed_line) >= 2) {
+            bool old_verbose = editor->verbose;
+            bool old_scripting = editor->scriptingflag;
+            
+            editor->verbose = (parsed_line[0] == 'T');
+            
+            const char *scriptfile = parsed_line + 1;
+            while (*scriptfile == ' ') scriptfile++;
+            
+            if (*scriptfile) {
+                printf("\n");
+                int result = editor_scripting(editor, scriptfile);
+                
+                editor->verbose = old_verbose;
+                editor->scriptingflag = old_scripting;
+                
+                if (result == 0 || result == 1) {
+                    return result;
                 }
             }
         }
@@ -1753,6 +1837,63 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         return -1;
     }
     
+    // read file (r/R commands)
+    if (line[idx] == 'r' || line[idx] == 'R') {
+        char cmd = line[idx];
+        idx++;
+        idx = parser_skipspc(line, idx);
+        
+        if (idx >= strlen(line)) {
+            display_stderr(&editor->display, "File name not specified.", 
+                          editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+        
+        const char *filename = line + idx;
+        FILE *f = fopen(filename, "rb");
+        if (!f) {
+            display_stderr(&editor->display, "File read error.", 
+                          editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+        
+        // ファイルサイズを取得
+        fseek(f, 0, SEEK_END);
+        long fsize = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        
+        if (fsize > 0) {
+            uint8_t *buffer = malloc(fsize);
+            if (buffer) {
+                size_t read_size = fread(buffer, 1, fsize, f);
+                fclose(f);
+                
+                editor_save_undo_state(editor);
+                if (cmd == 'r') {
+                    // overwrite
+                    memory_overwrite(&editor->memory, x, buffer, read_size);
+                } else {
+                    // insert
+                    memory_insert(&editor->memory, x, buffer, read_size);
+                }
+                
+                char msg[256];
+                snprintf(msg, sizeof(msg), "%zu bytes read from %s", read_size, filename);
+                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+                display_jump(&editor->display, x + read_size);
+                
+                free(buffer);
+            } else {
+                fclose(f);
+                display_stderr(&editor->display, "Memory allocation error.", 
+                              editor->scriptingflag, editor->verbose);
+            }
+        } else {
+            fclose(f);
+        }
+        return -1;
+    }
+    
     // delete
     if (line[idx] == 'd') {
         editor_save_undo_state(editor);
@@ -1802,8 +1943,465 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         return -1;
     }
     
+    // substitute (s command)
+    if (line[idx] == 's') {
+        editor_save_undo_state(editor);
+        return editor_scommand(editor, x, x2, xf, xf2, line, idx + 1);
+    }
+    
+    // NOT (~command)
+    if (line[idx] == '~') {
+        editor_save_undo_state(editor);
+        editor_openot(editor, x, x2);
+        display_jump(&editor->display, x2 + 1);
+        return -1;
+    }
+    
+    // Shift/Rotate (<, > commands)
+    if (line[idx] == '<' || line[idx] == '>') {
+        char direction = line[idx];
+        idx++;
+        bool multibyte = false;
+        
+        if (idx < strlen(line) && line[idx] == direction) {
+            multibyte = true;
+            idx++;
+        }
+        
+        int times = 1;
+        idx = parser_skipspc(line, idx);
+        uint64_t t = parser_expression(&editor->parser, line, &idx);
+        if (t != UNKNOWN) {
+            times = (int)t;
+        }
+        
+        int bit = -1;
+        idx = parser_skipspc(line, idx);
+        if (idx < strlen(line) && line[idx] == ',') {
+            idx++;
+            uint64_t b = parser_expression(&editor->parser, line, &idx);
+            if (b != UNKNOWN) {
+                bit = (int)b;
+            }
+        }
+        
+        editor_save_undo_state(editor);
+        editor_shift_rotate(editor, x, x2, times, bit, multibyte, direction);
+        return -1;
+    }
+    
+    // コマンド文字を探す
+    char cmd = 0;
+    size_t cmd_idx = idx;
+    while (cmd_idx < strlen(line)) {
+        char ch = line[cmd_idx];
+        if (ch == 'c' || ch == 'C' || ch == 'v' || ch == '&' || ch == '|' || ch == '^') {
+            cmd = ch;
+            idx = cmd_idx + 1;
+            break;
+        }
+        cmd_idx++;
+    }
+    
+    if (cmd == 0) {
+        return -1;
+    }
+    
+    // 第3引数を取得
+    idx = parser_skipspc(line, idx);
+    uint64_t x3 = parser_expression(&editor->parser, line, &idx);
+    if (x3 == UNKNOWN) {
+        display_stderr(&editor->display, "Invalid parameter.", 
+                      editor->scriptingflag, editor->verbose);
+        return -1;
+    }
+    
+    // copy/Copy (c/C commands)
+    if (cmd == 'c' || cmd == 'C') {
+        editor_save_undo_state(editor);
+        
+        ByteArray m;
+        bytearray_init(&m);
+        
+        // データを読み出し
+        for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+            bytearray_push(&m, editor->memory.mem.data[i]);
+        }
+        
+        // yankバッファにも保存
+        bytearray_free(&editor->memory.yank);
+        editor->memory.yank = bytearray_copy(&m);
+        
+        if (cmd == 'c') {
+            // overwrite
+            memory_overwrite(&editor->memory, x3, m.data, m.size);
+            char msg[256];
+            snprintf(msg, sizeof(msg), "%llu bytes copied.", (unsigned long long)(x2 - x + 1));
+            display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            display_jump(&editor->display, x3 + m.size);
+        } else {
+            // insert
+            memory_insert(&editor->memory, x3, m.data, m.size);
+            char msg[256];
+            snprintf(msg, sizeof(msg), "%llu bytes inserted.", (unsigned long long)m.size);
+            display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            display_jump(&editor->display, x3 + m.size);
+        }
+        
+        bytearray_free(&m);
+        return -1;
+    }
+    
+    // move (v command)
+    if (cmd == 'v') {
+        editor_save_undo_state(editor);
+        uint64_t xp = editor_movmem(editor, x, x2, x3);
+        display_jump(&editor->display, xp);
+        return -1;
+    }
+    
+    // ビット演算
+    if (cmd == '&') {
+        editor_save_undo_state(editor);
+        editor_opeand(editor, x, x2, x3);
+        display_jump(&editor->display, x2 + 1);
+        return -1;
+    }
+    if (cmd == '|') {
+        editor_save_undo_state(editor);
+        editor_opeor(editor, x, x2, x3);
+        display_jump(&editor->display, x2 + 1);
+        return -1;
+    }
+    if (cmd == '^') {
+        editor_save_undo_state(editor);
+        editor_opexor(editor, x, x2, x3);
+        display_jump(&editor->display, x2 + 1);
+        return -1;
+    }
+    
     display_stderr(&editor->display, "Unrecognized command.", editor->scriptingflag, editor->verbose);
     return -1;
+}
+
+/* ========================================================================
+ * 編集操作関数の実装
+ * ======================================================================== */
+
+void editor_opeand(BiEditor *editor, uint64_t x, uint64_t x2, uint64_t x3) {
+    for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+        memory_set(&editor->memory, i, memory_read(&editor->memory, i) & (x3 & 0xFF));
+    }
+    char msg[256];
+    snprintf(msg, sizeof(msg), "%llu bytes anded.", (unsigned long long)(x2 - x + 1));
+    display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+}
+
+void editor_opeor(BiEditor *editor, uint64_t x, uint64_t x2, uint64_t x3) {
+    for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+        memory_set(&editor->memory, i, memory_read(&editor->memory, i) | (x3 & 0xFF));
+    }
+    char msg[256];
+    snprintf(msg, sizeof(msg), "%llu bytes ored.", (unsigned long long)(x2 - x + 1));
+    display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+}
+
+void editor_opexor(BiEditor *editor, uint64_t x, uint64_t x2, uint64_t x3) {
+    for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+        memory_set(&editor->memory, i, memory_read(&editor->memory, i) ^ (x3 & 0xFF));
+    }
+    char msg[256];
+    snprintf(msg, sizeof(msg), "%llu bytes xored.", (unsigned long long)(x2 - x + 1));
+    display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+}
+
+void editor_openot(BiEditor *editor, uint64_t x, uint64_t x2) {
+    for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+        memory_set(&editor->memory, i, (~memory_read(&editor->memory, i)) & 0xFF);
+    }
+    char msg[256];
+    snprintf(msg, sizeof(msg), "%llu bytes noted.", (unsigned long long)(x2 - x + 1));
+    display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+}
+
+uint64_t editor_movmem(BiEditor *editor, uint64_t start, uint64_t end, uint64_t dest) {
+    if (start <= dest && dest <= end) {
+        return end + 1;
+    }
+    
+    size_t len = editor->memory.mem.size;
+    if (start >= len) {
+        return dest;
+    }
+    
+    // データを読み出し
+    ByteArray m;
+    bytearray_init(&m);
+    for (uint64_t i = start; i <= end && i < len; i++) {
+        bytearray_push(&m, editor->memory.mem.data[i]);
+    }
+    
+    // 元の位置から削除（yankにも保存）
+    memory_delete(&editor->memory, start, end, true, memory_yank);
+    
+    uint64_t xp;
+    if (dest > len) {
+        memory_overwrite(&editor->memory, dest, m.data, m.size);
+        xp = dest + m.size;
+    } else {
+        if (dest > start) {
+            memory_insert(&editor->memory, dest - (end - start + 1), m.data, m.size);
+            xp = dest - (end - start) + m.size - 1;
+        } else {
+            memory_insert(&editor->memory, dest, m.data, m.size);
+            xp = dest + m.size;
+        }
+    }
+    
+    char msg[256];
+    snprintf(msg, sizeof(msg), "%llu bytes moved.", (unsigned long long)(end - start + 1));
+    display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+    
+    bytearray_free(&m);
+    return xp;
+}
+
+void editor_shift_rotate(BiEditor *editor, uint64_t x, uint64_t x2, int times, 
+                        int bit, bool multibyte, char direction) {
+    for (int t = 0; t < times; t++) {
+        if (!multibyte) {
+            // バイト単位
+            if (bit != 0 && bit != 1) {
+                // ローテート
+                if (direction == '<') {
+                    for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+                        uint8_t m = memory_read(&editor->memory, i);
+                        uint8_t c = (m & 0x80) >> 7;
+                        memory_set(&editor->memory, i, (m << 1) | c);
+                    }
+                } else {
+                    for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+                        uint8_t m = memory_read(&editor->memory, i);
+                        uint8_t c = (m & 0x01) << 7;
+                        memory_set(&editor->memory, i, (m >> 1) | c);
+                    }
+                }
+            } else {
+                // シフト
+                uint8_t carry = bit & 1;
+                if (direction == '<') {
+                    for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+                        memory_set(&editor->memory, i, (memory_read(&editor->memory, i) << 1) | carry);
+                    }
+                } else {
+                    for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+                        memory_set(&editor->memory, i, (memory_read(&editor->memory, i) >> 1) | (carry << 7));
+                    }
+                }
+            }
+        } else {
+            // マルチバイト
+            uint64_t len = x2 - x + 1;
+            if (len == 0 || x >= editor->memory.mem.size) continue;
+            
+            // 値を読み出し
+            uint64_t v = 0;
+            for (uint64_t i = x2; i >= x && i < editor->memory.mem.size; i--) {
+                v = (v << 8) | memory_read(&editor->memory, i);
+                if (i == 0) break;
+            }
+            
+            if (bit != 0 && bit != 1) {
+                // ローテート
+                if (direction == '<') {
+                    uint64_t c = (v & (1ULL << (len * 8 - 1))) ? 1 : 0;
+                    v = (v << 1) | c;
+                } else {
+                    uint64_t c = (v & 1) ? 1 : 0;
+                    v = (v >> 1) | (c << (len * 8 - 1));
+                }
+            } else {
+                // シフト
+                uint64_t carry = bit & 1;
+                if (direction == '<') {
+                    v = (v << 1) | carry;
+                } else {
+                    v = (v >> 1) | (carry << (len * 8 - 1));
+                }
+            }
+            
+            // 値を書き戻し
+            for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+                memory_set(&editor->memory, i, v & 0xFF);
+                v >>= 8;
+            }
+        }
+    }
+}
+
+size_t editor_searchnextnoloop(BiEditor *editor, size_t fp) {
+    if (!editor->search.regexp && editor->search.smem.size == 0) {
+        return (size_t)-1;
+    }
+    
+    size_t curpos = fp;
+    while (curpos < editor->memory.mem.size) {
+        int f = editor->search.regexp ? 
+                search_hitre(&editor->search, curpos) : 
+                search_hit(&editor->search, curpos);
+        
+        if (f == 1) {
+            return curpos;
+        } else if (f < 0) {
+            return (size_t)-1;
+        }
+        curpos++;
+    }
+    return (size_t)-1;
+}
+
+int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end, 
+                    bool xf, bool xf2, const char *line, size_t idx) {
+    editor->search.nff = false;
+    size_t pos = display_fpos(&editor->display);
+    
+    idx = parser_skipspc(line, idx);
+    if (!xf && !xf2) {
+        start = 0;
+        end = editor->memory.mem.size > 0 ? editor->memory.mem.size - 1 : 0;
+    }
+    
+    // 検索パターンを取得
+    if (idx < strlen(line) && line[idx] == '/') {
+        idx++;
+        if (idx < strlen(line) && line[idx] != '/') {
+            // 正規表現
+            char pattern[1024];
+            idx = parser_get_restr(line, idx, pattern);
+            editor->search.regexp = true;
+            strncpy(editor->search.remem, pattern, sizeof(editor->search.remem) - 1);
+            editor->search.remem[sizeof(editor->search.remem) - 1] = '\0';
+            editor->search.span = strlen(pattern);
+        } else if (idx < strlen(line) && line[idx] == '/') {
+            // 16進数
+            ByteArray sm;
+            idx = parser_get_hexs(&editor->parser, line, idx + 1, &sm);
+            bytearray_free(&editor->search.smem);
+            editor->search.smem = sm;
+            editor->search.regexp = false;
+            editor->search.remem[0] = '\0';
+            editor->search.span = sm.size;
+        } else {
+            display_stderr(&editor->display, "Invalid syntax.", 
+                          editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+    }
+    
+    if (editor->search.span == 0) {
+        display_stderr(&editor->display, "Specify search object.", 
+                      editor->scriptingflag, editor->verbose);
+        return -1;
+    }
+    
+    // 置換テキストを取得
+    ByteArray replacement;
+    bytearray_init(&replacement);
+    
+    idx = parser_skipspc(line, idx);
+    if (idx < strlen(line) && line[idx] == '/') {
+        idx++;
+        if (line[idx] == '/') {
+            // 16進数
+            idx = parser_get_hexs(&editor->parser, line, idx + 1, &replacement);
+        } else {
+            // 文字列
+            char str[1024];
+            idx = parser_get_restr(line, idx, str);
+            for (size_t i = 0; str[i]; i++) {
+                bytearray_push(&replacement, str[i]);
+            }
+        }
+    }
+    
+    // 置換実行
+    int cnt = 0;
+    display_jump(&editor->display, start);
+    
+    while (true) {
+        size_t found_pos = editor_searchnextnoloop(editor, display_fpos(&editor->display));
+        
+        if (found_pos == (size_t)-1) {
+            break;
+        }
+        
+        display_jump(&editor->display, found_pos);
+        size_t i = display_fpos(&editor->display);
+        
+        if (i <= end) {
+            memory_delete(&editor->memory, i, i + editor->search.span - 1, false, memory_yank);
+            if (replacement.size > 0) {
+                memory_insert(&editor->memory, i, replacement.data, replacement.size);
+            }
+            pos = i + replacement.size;
+            cnt++;
+            display_jump(&editor->display, pos);
+        } else {
+            break;
+        }
+    }
+    
+    display_jump(&editor->display, pos);
+    char msg[256];
+    snprintf(msg, sizeof(msg), "  %d times replaced.", cnt);
+    display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+    
+    bytearray_free(&replacement);
+    return -1;
+}
+
+/* ========================================================================
+ * スクリプト実行
+ * ======================================================================== */
+
+int editor_scripting(BiEditor *editor, const char *scriptfile) {
+    FILE *f = fopen(scriptfile, "r");
+    if (!f) {
+        display_stderr(&editor->display, "Script file open error.", 
+                      editor->scriptingflag, editor->verbose);
+        return -1;
+    }
+    
+    char line[4096];
+    int flag = -1;
+    editor->scriptingflag = true;
+    
+    while (fgets(line, sizeof(line), f)) {
+        // 改行を削除
+        size_t len = strlen(line);
+        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
+            line[--len] = '\0';
+        }
+        
+        if (line[0] == '\0') continue;  // 空行をスキップ
+        
+        if (editor->verbose) {
+            printf("%s\n", line);
+        }
+        
+        flag = editor_commandline(editor, line);
+        
+        if (flag == 0) {
+            fclose(f);
+            return 0;
+        } else if (flag == 1) {
+            fclose(f);
+            return 1;
+        }
+    }
+    
+    fclose(f);
+    return 0;
 }
 
 /* ========================================================================
@@ -1811,30 +2409,49 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
  * ======================================================================== */
 
 int main(int argc, char *argv[]) {
-    // コマンドライン引数処理（簡易版）
+    // コマンドライン引数処理
     const char *filename = NULL;
+    const char *scriptfile = NULL;
     const char *termcol = "black";
+    bool verbose = false;
+    bool write_on_exit = false;
     
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <file> [-t termcolor]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <file> [-s script.bi] [-t termcolor] [-v] [-w]\n", argv[0]);
+        fprintf(stderr, "Options:\n");
+        fprintf(stderr, "  -s <script>  Execute script file\n");
+        fprintf(stderr, "  -t <color>   Terminal color (black/white)\n");
+        fprintf(stderr, "  -v           Verbose mode (show commands when scripting)\n");
+        fprintf(stderr, "  -w           Write file when exiting script\n");
         return 1;
     }
     
     filename = argv[1];
     
     for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
+            scriptfile = argv[++i];
+        } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
             termcol = argv[++i];
+        } else if (strcmp(argv[i], "-v") == 0) {
+            verbose = true;
+        } else if (strcmp(argv[i], "-w") == 0) {
+            write_on_exit = true;
         }
     }
     
     // エディタ初期化
     BiEditor editor;
     editor_init(&editor, termcol);
+    editor.verbose = verbose;
     strncpy(editor.filemgr.filename, filename, sizeof(editor.filemgr.filename) - 1);
     
-    // 画面クリア
-    terminal_clear(&editor.term);
+    // 画面クリア（スクリプトモード以外）
+    if (!scriptfile) {
+        terminal_clear(&editor.term);
+    } else {
+        editor.scriptingflag = true;
+    }
     
     // ファイル読み込み
     char msg[256];
@@ -1847,14 +2464,30 @@ int main(int argc, char *argv[]) {
         display_stdmm(&editor.display, msg, editor.scriptingflag, editor.verbose);
     }
     
-    // エディタ実行
-    editor_fedit(&editor);
-    
-    // 終了処理
-    terminal_color(&editor.term, 7, 0);
-    terminal_dispcursor(&editor.term);
-    terminal_locate(&editor.term, 0, 23);
-    
-    editor_free(&editor);
-    return 0;
+    // スクリプト実行またはインタラクティブモード
+    if (scriptfile) {
+        int result = editor_scripting(&editor, scriptfile);
+        
+        if (write_on_exit && editor.memory.lastchange) {
+            char write_msg[256];
+            success = filemgr_writefile(&editor.filemgr, filename, write_msg, sizeof(write_msg));
+            if (success && editor.verbose) {
+                printf("%s\n", write_msg);
+            }
+        }
+        
+        editor_free(&editor);
+        return result;
+    } else {
+        // インタラクティブモード
+        editor_fedit(&editor);
+        
+        // 終了処理
+        terminal_color(&editor.term, 7, 0);
+        terminal_dispcursor(&editor.term);
+        terminal_locate(&editor.term, 0, 23);
+        
+        editor_free(&editor);
+        return 0;
+    }
 }
