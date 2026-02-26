@@ -1,2356 +1,1860 @@
-/* 
- * Complete C port of bi.go (a terminal hex editor) - FULL VERSION
- * This is a complete, feature-compatible translation from Go to C.
- *
- * Build:
- *   gcc -o bi bi.c
+/*
+ * bi - Binary Editor
+ * Version 3.4.5
+ * C implementation converted from Python version
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
-#include <unistd.h>
-#include <termios.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <fcntl.h>
-#include <regex.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <math.h>
-#include <errno.h>
+#include "bi.h"
 
-#define ESC "\033["
-#define LENONSCR (19 * 16)
-#define BOTTOMLN 22
-#define RELEN 128
-#define UNKNOWN ((int64_t)1LL << 62)
-#define MAX_MEM_SIZE (1024LL * 1024 * 1024 *10)  // 10GB limit
-#define MAX_LINE 4096
-#define MAX_HISTORY 100
-#define MAX_FILENAME 256
+/* ========================================================================
+ * readline代替実装（readlineライブラリがない環境用）
+ * ======================================================================== */
 
-// Global variables
-static unsigned char *mem = NULL;
-static int64_t mem_len = 0;
-static int64_t mem_cap = 0;
-static unsigned char *yank = NULL;
-static int64_t yank_len = 0;
-static int64_t yank_cap = 0;
-static int coltab[] = {0, 1, 4, 5, 2, 6, 3, 7};
-static char filename[MAX_FILENAME] = "";
-static char termcol[16] = "black";
-static bool lastchange = false;
-static bool modified = false;
-static bool newfile = false;
-static int64_t homeaddr = 0;
-static bool utf8mode = false;
-static bool insmod = false;
-static int curx = 0;
-static int cury = 0;
-static int64_t mark[26];
-static unsigned char *smem = NULL;
-static int64_t smem_len = 0;
-static int64_t smem_cap = 0;
-static bool regexpMode = false;
-static int repsw = 0;
-static char remem[MAX_LINE] = "";
-static int span = 0;
-static bool nff = true;
-static bool verbose = false;
-static bool scriptingflag = false;
-static int64_t cp = 0;
-static regex_t reObj;
-static bool reObj_compiled = false;
-
-// Stack for script nesting
-typedef struct {
-    void **items;
-    int count;
-    int capacity;
-} Stack;
-
-static Stack stack = {NULL, 0, 0};
-
-// History structure
-typedef struct {
-    char **items;
-    int count;
-    int capacity;
-} History;
-
-static History cmd_history = {NULL, 0, 0};
-static History search_history = {NULL, 0, 0};
-
-// Terminal state
-static struct termios orig_termios;
-static bool raw_mode_active = false;
-
-// Forward declarations
-static void clrmm(void);
-static void stdmm(const char *msg);
-static void stderr_msg(const char *msg);
-static int64_t expression(const char *line, int idx, int *new_idx);
-static int64_t get_value(const char *s, int idx, int *new_idx);
-static void jump(int64_t addr);
-static int64_t fpos(void);
-static void repaint(void);
-static bool searchnext(int64_t fp);
-static bool searchlast(int64_t fp);
-
-// Terminal control helpers
-static void escnocursor(void)          { if (scriptingflag) return; printf("%s?25l", ESC); fflush(stdout); }
-static void escdispcursor(void)        { if (scriptingflag) return; printf("%s?25h", ESC); fflush(stdout); }
-static void escup(int n)               { if (scriptingflag) return; printf("%s%dA", ESC, n); }
-static void escdown(int n)             { if (scriptingflag) return; printf("%s%dB", ESC, n); }
-static void escright(int n)            { if (scriptingflag) return; printf("%s%dC", ESC, n); }
-static void escleft(int n)             { if (scriptingflag) return; printf("%s%dD", ESC, n); }
-static void esclocate(int x, int y)    { if (scriptingflag) return; printf("%s%d;%dH", ESC, y + 1, x + 1); }
-static void escscrollup(int n)         { if (scriptingflag) return; printf("%s%dS", ESC, n); }
-static void escscrolldown(int n)       { if (scriptingflag) return; printf("%s%dT", ESC, n); }
-static void escclear(void)             { if (scriptingflag) return; printf("%s2J", ESC); esclocate(0, 0); }
-static void escclraftcur(void)         { if (scriptingflag) return; printf("%s0J", ESC); }
-static void escclrline(void)           { if (scriptingflag) return; printf("%s2K", ESC); }
-
-static void esccolor(int col1, int col2) {
-    if (scriptingflag) return;
-    if (strcmp(termcol, "black") == 0) {
-        printf("%s3%dm%s4%dm", ESC, coltab[col1], ESC, coltab[col2]);
-    } else {
-        printf("%s3%dm%s4%dm", ESC, coltab[0], ESC, coltab[7]);
-    }
-}
-
-static void escresetcolor(void) { if (scriptingflag) return; printf("%s0m", ESC); }
-
-// Raw-mode handling
-static void disable_raw_mode(void) {
-    if (raw_mode_active) {
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
-        raw_mode_active = false;
-    }
-}
-
-static void enable_raw_mode(void) {
-    if (!raw_mode_active) {
-        tcgetattr(STDIN_FILENO, &orig_termios);
-        struct termios raw = orig_termios;
-        raw.c_lflag &= ~(ECHO | ICANON);
-        raw.c_cc[VMIN] = 1;
-        raw.c_cc[VTIME] = 0;
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-        raw_mode_active = true;
-    }
-}
-
-static unsigned char getch_byte(void) {
-    enable_raw_mode();
-    unsigned char c;
-    if (read(STDIN_FILENO, &c, 1) != 1) {
-        c = 0;
-    }
-    disable_raw_mode();
-    return c;
-}
-
-// Memory management helpers
-static void ensure_mem_capacity(int64_t needed) {
-    if (needed > MAX_MEM_SIZE) {
-        fprintf(stderr, "Memory limit exceeded\n");
-        exit(1);
-    }
-    if (needed > mem_cap) {
-        int64_t new_cap = mem_cap == 0 ? 4096 : mem_cap * 2;
-        while (new_cap < needed) new_cap *= 2;
-        if (new_cap > MAX_MEM_SIZE) new_cap = MAX_MEM_SIZE;
-        mem = realloc(mem, new_cap);
-        if (!mem) {
-            perror("Memory allocation failed");
-            exit(1);
-        }
-        mem_cap = new_cap;
-    }
-}
-
-static void ensure_yank_capacity(int64_t needed) {
-    if (needed > yank_cap) {
-        int64_t new_cap = yank_cap == 0 ? 1024 : yank_cap * 2;
-        while (new_cap < needed) new_cap *= 2;
-        yank = realloc(yank, new_cap);
-        if (!yank) {
-            perror("Yank buffer allocation failed");
-            exit(1);
-        }
-        yank_cap = new_cap;
-    }
-}
-
-static void ensure_smem_capacity(int64_t needed) {
-    if (needed > smem_cap) {
-        int64_t new_cap = smem_cap == 0 ? 256 : smem_cap * 2;
-        while (new_cap < needed) new_cap *= 2;
-        smem = realloc(smem, new_cap);
-        if (!smem) {
-            perror("Search buffer allocation failed");
-            exit(1);
-        }
-        smem_cap = new_cap;
-    }
-}
-
-// String helpers
-static int skipspc(const char *s, int idx) {
-    while (s[idx] == ' ' && s[idx] != '\0') idx++;
-    return idx;
-}
-
-// Message display
-static void stderr_msg(const char *msg) {
-    if (scriptingflag) {
-        fprintf(stderr, "%s\n", msg);
-    } else {
-        clrmm();
-        esccolor(3, 0);
-        esclocate(0, BOTTOMLN);
-        printf(" %s", msg);
-        for (size_t i = strlen(msg) + 1; i < 80; i++) printf(" ");
+#ifndef HAVE_READLINE
+char* readline(const char *prompt) {
+    if (prompt) {
+        printf("%s", prompt);
         fflush(stdout);
     }
-}
-
-static void stdmm(const char *msg) {
-    if (scriptingflag) {
-        if (verbose) {
-            printf("%s\n", msg);
-        }
-    } else {
-        clrmm();
-        esccolor(4, 0);
-        esclocate(0, BOTTOMLN);
-        printf(" %s", msg);
-        for (size_t i = strlen(msg) + 1; i < 80; i++) printf(" ");
-        fflush(stdout);
-    }
-}
-
-static void stdmm_wait(const char *msg) {
-    /* スクリプティング中（-v含む）は常に抑制 */
-    if (scriptingflag) return;
-    clrmm();
-    esccolor(4, 0);
-    esclocate(0, BOTTOMLN);
-    printf(" %s", msg);
-    for (size_t i = strlen(msg) + 1; i < 80; i++) printf(" ");
-    fflush(stdout);
-}
-
-static void clrmm(void) {
-    esclocate(0, BOTTOMLN);
-    esccolor(6, 0);
-    escclrline();
-    fflush(stdout);
-}
-
-// Position helpers
-static int64_t fpos(void) {
-    return homeaddr + (int64_t)(cury * 16 + curx / 2);
-}
-
-static void jump(int64_t addr) {
-    if (addr < homeaddr || addr >= homeaddr + LENONSCR) {
-        homeaddr = addr & ~0xffLL;  // align to 256 bytes
-    }
-    int64_t i = addr - homeaddr;
-    curx = (int)((i & 0xf) * 2);
-    cury = (int)(i / 16);
-}
-
-static void scrup(void) {
-    if (homeaddr >= 16) {
-        homeaddr -= 16;
-    }
-}
-
-static void scrdown(void) {
-    homeaddr += 16;
-}
-
-static void inccurx(void) {
-    if (curx < 31) {
-        curx++;
-    } else {
-        curx = 0;
-        if (cury < LENONSCR / 16 - 1) {
-            cury++;
-        } else {
-            scrdown();
-        }
-    }
-}
-
-// Memory operations
-static int readmem(int64_t addr) {
-    if (addr < 0 || addr >= mem_len) return 0;
-    return mem[addr] & 0xff;
-}
-
-static void setmem(int64_t addr, int data) {
-    if (addr < 0) return;
-    ensure_mem_capacity(addr + 1);
     
-    if (addr >= mem_len) {
-        int64_t padding = addr - mem_len + 1;
-        if (padding > 0) {
-            memset(mem + mem_len, 0, padding);
-            mem_len = addr + 1;
-        }
-    }
+    char *line = malloc(4096);
+    if (!line) return NULL;
     
-    if (data >= 0 && data <= 255) {
-        mem[addr] = (unsigned char)data;
-    } else {
-        mem[addr] = 0;
-    }
-    modified = true;
-    lastchange = true;
-}
-
-static void insmem(int64_t start, const unsigned char *mem2, int64_t len2) {
-    if (len2 <= 0) return;
-    ensure_mem_capacity(mem_len + len2);
-    
-    if (start >= mem_len) {
-        if (start > mem_len) {
-            memset(mem + mem_len, 0, start - mem_len);
-        }
-        memcpy(mem + start, mem2, len2);
-        mem_len = start + len2;
-    } else {
-        memmove(mem + start + len2, mem + start, mem_len - start);
-        memcpy(mem + start, mem2, len2);
-        mem_len += len2;
-    }
-    modified = true;
-    lastchange = true;
-}
-
-static void delmem(int64_t start, int64_t end, bool yf);
-
-static void yankmem(int64_t start, int64_t end) {
-    int64_t length = end - start + 1;
-    if (length <= 0 || start >= mem_len) {
-        stderr_msg("Invalid range.");
-        return;
-    }
-    
-    ensure_yank_capacity(length);
-    yank_len = 0;
-    
-    for (int64_t j = start; j <= end && j < mem_len; j++) {
-        yank[yank_len++] = mem[j] & 0xff;
-    }
-    
-    char msg[128];
-    snprintf(msg, sizeof(msg), "%lld bytes yanked.", (long long)yank_len);
-    stdmm(msg);
-}
-
-static void delmem(int64_t start, int64_t end, bool yf) {
-    int64_t length = end - start + 1;
-    if (length <= 0 || start >= mem_len) {
-        stderr_msg("Invalid range.");
-        return;
-    }
-    if (yf) {
-        yankmem(start, end);
-    }
-    if (start < 0) start = 0;
-    if (end >= mem_len) end = mem_len - 1;
-    
-    memmove(mem + start, mem + end + 1, mem_len - end - 1);
-    mem_len -= (end - start + 1);
-    lastchange = true;
-    modified = true;
-}
-
-static void ovwmem(int64_t start, const unsigned char *mem0, int64_t len0) {
-    if (len0 == 0) return;
-    ensure_mem_capacity(start + len0);
-    
-    if (start + len0 > mem_len) {
-        if (start > mem_len) {
-            memset(mem + mem_len, 0, start - mem_len);
-        }
-        mem_len = start + len0;
-    }
-    
-    for (int64_t j = 0; j < len0; j++) {
-        mem[start + j] = mem0[j] & 0xff;
-    }
-    lastchange = true;
-    modified = true;
-}
-
-static unsigned char *redmem(int64_t start, int64_t end, int64_t *out_len) {
-    int64_t len = end - start + 1;
-    unsigned char *m = malloc(len);
-    if (!m) {
-        *out_len = 0;
+    if (fgets(line, 4096, stdin) == NULL) {
+        free(line);
         return NULL;
     }
     
-    *out_len = 0;
-    for (int64_t i = start; i <= end; i++) {
-        if (i >= 0 && i < mem_len) {
-            m[(*out_len)++] = mem[i] & 0xff;
-        } else {
-            m[(*out_len)++] = 0;
-        }
-    }
-    return m;
-}
-
-static void cpymem(int64_t start, int64_t end, int64_t dest) {
-    int64_t len;
-    unsigned char *m = redmem(start, end, &len);
-    if (m) {
-        ovwmem(dest, m, len);
-        free(m);
-    }
-}
-
-static int64_t movmem(int64_t start, int64_t end, int64_t dest) {
-    if (start <= dest && dest <= end) {
-        return end + 1;
-    }
-    int64_t l = mem_len;
-    if (start >= l) {
-        return dest;
-    }
-    
-    int64_t len;
-    unsigned char *m = redmem(start, end, &len);
-    yankmem(start, end);
-    delmem(start, end, false);
-    
-    if (dest > l) {
-        ovwmem(dest, m, len);
-        free(m);
-        return dest + len;
-    } else {
-        if (dest > start) {
-            insmem(dest - (end - start + 1), m, len);
-            int64_t ret = dest - (end - start) + len - 1;
-            free(m);
-            return ret;
-        } else {
-            insmem(dest, m, len);
-            int64_t ret = dest + len;
-            free(m);
-            return ret;
-        }
-    }
-}
-
-// UTF-8 validation helper
-static bool is_valid_utf8_seq(const unsigned char *s, int len, int64_t max_check) {
-    if (len == 2 && max_check >= 2) {
-        return (s[0] >= 0xc0 && s[0] <= 0xdf) && (s[1] >= 0x80 && s[1] <= 0xbf);
-    } else if (len == 3 && max_check >= 3) {
-        return (s[0] >= 0xe0 && s[0] <= 0xef) && 
-               (s[1] >= 0x80 && s[1] <= 0xbf) &&
-               (s[2] >= 0x80 && s[2] <= 0xbf);
-    } else if (len == 4 && max_check >= 4) {
-        return (s[0] >= 0xf0 && s[0] <= 0xf7) &&
-               (s[1] >= 0x80 && s[1] <= 0xbf) &&
-               (s[2] >= 0x80 && s[2] <= 0xbf) &&
-               (s[3] >= 0x80 && s[3] <= 0xbf);
-    }
-    return false;
-}
-
-static int printchar(int64_t a) {
-    if (a >= mem_len) {
-        printf("~");
-        return 1;
-    }
-    
-    if (utf8mode) {
-        unsigned char b = mem[a];
-        if (b < 0x80 || (b >= 0x80 && b <= 0xbf) || (b >= 0xf8 && b <= 0xff)) {
-            if (b >= 0x20 && b <= 0x7e) {
-                printf("%c", b);
-            } else {
-                printf(".");
-            }
-            return 1;
-        } else if (b >= 0xc0 && b <= 0xdf) {
-            if (a + 1 < mem_len && is_valid_utf8_seq(mem + a, 2, mem_len - a)) {
-                printf("%c%c", mem[a], mem[a + 1]);
-                return 2;
-            }
-            printf(".");
-            return 1;
-        } else if (b >= 0xe0 && b <= 0xef) {
-            if (a + 2 < mem_len && is_valid_utf8_seq(mem + a, 3, mem_len - a)) {
-                printf("%c%c%c ", mem[a], mem[a + 1], mem[a + 2]);
-                return 3;
-            }
-            printf(".");
-            return 1;
-        } else if (b >= 0xf0 && b <= 0xf7) {
-            if (a + 3 < mem_len && is_valid_utf8_seq(mem + a, 4, mem_len - a)) {
-                printf("%c%c%c%c  ", mem[a], mem[a + 1], mem[a + 2], mem[a + 3]);
-                return 4;
-            }
-            printf(".");
-            return 1;
-        }
-    }
-    
-    // ASCII fallback
-    unsigned char ch = mem[a];
-    if (ch >= 0x20 && ch <= 0x7e) {
-        printf("%c", ch);
-    } else {
-        printf(".");
-    }
-    return 1;
-}
-
-static void print_title(void) {
-    esclocate(0, 0);
-    esccolor(6, 0);
-    const char *mode = insmod ? "insert   " : "overwrite";
-    char utf8str[16];
-    if (utf8mode) {
-        snprintf(utf8str, sizeof(utf8str), "%d", repsw);
-    } else {
-        strcpy(utf8str, "off");
-    }
-    printf("bi C version 3.4.4 by Taisuke Maekawa           utf8mode:%s     %s   \n", 
-           utf8str, mode);
-    
-    esccolor(5, 0);
-    char fn[40];
-    strncpy(fn, filename, 35);
-    fn[35] = '\0';
-    const char *mod = modified ? "modified" : "not modified";
-    printf("file:[%-35s] length:%lld bytes [%s]    \n", fn, (long long)mem_len, mod);
-}
-
-static void repaint(void) {
-    print_title();
-    escnocursor();
-    esclocate(0, 2);
-    esccolor(4, 0);
-    printf("OFFSET       +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF ");
-    esccolor(7, 0);
-    
-    int64_t addr = homeaddr;
-    for (int y = 0; y < LENONSCR / 16; y++) {
-        esccolor(5, 0);
-        esclocate(0, 3 + y);
-        printf("%012llX ", (unsigned long long)((addr + y * 16) & 0xffffffffffffLL));
-        esccolor(7, 0);
-        
-        for (int i = 0; i < 16; i++) {
-            int64_t pos = addr + y * 16 + i;
-            if (pos >= mem_len) {
-                printf("~~ ");
-            } else {
-                printf("%02X ", mem[pos] & 0xff);
-            }
-        }
-        
-        esccolor(6, 0);
-        int64_t a = addr + y * 16;
-        int by = 0;
-        while (by < 16) {
-            int c = printchar(a);
-            a += c;
-            by += c;
-        }
-        printf("  ");
-    }
-    esccolor(0, 0);
-    escdispcursor();
-    fflush(stdout);
-}
-
-static void printdata(void) {
-    int64_t addr = fpos();
-    int a = readmem(addr);
-    esclocate(0, 23);
-    esccolor(6, 0);
-    
-    char s[16];
-    if (a < 0x20) {
-        snprintf(s, sizeof(s), "^%c", a + '@');
-    } else if (a >= 0x7e) {
-        strcpy(s, ".");
-    } else {
-        snprintf(s, sizeof(s), "'%c'", a);
-    }
-    
-    if (addr < mem_len) {
-        printf("%012llX : 0x%02X 0b", (unsigned long long)addr, a);
-        for (int i = 7; i >= 0; i--) {
-            printf("%d", (a >> i) & 1);
-        }
-        printf(" 0o%03o %d %s      ", a, a, s);
-    } else {
-        printf("%012llX : ~~                                                   ",
-               (unsigned long long)addr);
-    }
-    fflush(stdout);
-}
-
-static void disp_curpos(void) {
-    esccolor(4, 0);
-    esclocate(curx / 2 * 3 + 12, cury + 3);
-    printf("[");
-    esclocate(curx / 2 * 3 + 15, cury + 3);
-    printf("]");
-    fflush(stdout);
-}
-
-static void erase_curpos(void) {
-    esccolor(7, 0);
-    esclocate(curx / 2 * 3 + 12, cury + 3);
-    printf(" ");
-    esclocate(curx / 2 * 3 + 15, cury + 3);
-    printf(" ");
-    fflush(stdout);
-}
-
-static void disp_marks(void) {
-    int j = 0;
-    esclocate(0, BOTTOMLN);
-    esccolor(7, 0);
-    for (int i = 0; i < 26; i++) {
-        if (mark[i] == UNKNOWN) {
-            printf("%c = unknown         ", 'a' + i);
-        } else {
-            printf("%c = %012llX    ", 'a' + i, (unsigned long long)mark[i]);
-        }
-        j++;
-        if (j % 3 == 0) {
-            printf("\n");
-        }
-    }
-    esccolor(4, 0);
-    printf("[ hit any key ]");
-    fflush(stdout);
-    getch_byte();
-    escclear();
-}
-
-static void invoke_shell(const char *line) {
-    esccolor(7, 0);
-    printf("\n");
-    fflush(stdout);
-    
-    // Execute shell command
-    int ret = system(line);
-    (void)ret;  // Suppress warning
-    
-    esccolor(4, 0);
-    printf("[ Hit any key to return ]");
-    fflush(stdout);
-    getch_byte();
-    escclear();
-}
-
-// Expression and value parsing
-static int64_t get_value(const char *s, int idx, int *new_idx) {
-    if (idx >= (int)strlen(s)) {
-        *new_idx = idx;
-        return UNKNOWN;
-    }
-    idx = skipspc(s, idx);
-    if (idx >= (int)strlen(s)) {
-        *new_idx = idx;
-        return UNKNOWN;
-    }
-    
-    char ch = s[idx];
-    
-    // '$' = end of memory
-    if (ch == '$') {
-        idx++;
-        *new_idx = idx;
-        if (mem_len != 0) {
-            return mem_len - 1;
-        }
-        return 0;
-    }
-    
-    // '{...}' = expression evaluation
-    if (ch == '{') {
-        idx++;
-        char u[MAX_LINE] = "";
-        int ui = 0;
-        while (idx < (int)strlen(s) && s[idx] != '}') {
-            u[ui++] = s[idx++];
-        }
-        u[ui] = '\0';
-        if (s[idx] == '}') idx++;
-        
-        if (strlen(u) == 0) {
-            stderr_msg("Invalid eval expression.");
-            *new_idx = idx;
-            return UNKNOWN;
-        }
-        
-        // Parse as integer (supports 0x prefix)
-        char *endptr;
-        int64_t v = strtoll(u, &endptr, 0);
-        if (*endptr != '\0') {
-            stderr_msg("Invalid eval expression.");
-            *new_idx = idx;
-            return UNKNOWN;
-        }
-        if (v < 0) v = 0;
-        *new_idx = idx;
-        return v;
-    }
-    
-    // '.' = current position
-    if (ch == '.') {
-        idx++;
-        *new_idx = idx;
-        return fpos();
-    }
-    
-    // 'mark
-    if (ch == '\'' && idx + 1 < (int)strlen(s) && s[idx + 1] >= 'a' && s[idx + 1] <= 'z') {
-        idx++;
-        int64_t v = mark[s[idx] - 'a'];
-        if (v == UNKNOWN) {
-            stderr_msg("Unknown mark.");
-            *new_idx = idx;
-            return UNKNOWN;
-        }
-        idx++;
-        *new_idx = idx;
-        return v;
-    }
-    
-    // Hex number (default base 16)
-    if (strchr("0123456789abcdefABCDEF", ch)) {
-        int64_t x = 0;
-        while (idx < (int)strlen(s) && strchr("0123456789abcdefABCDEF", s[idx])) {
-            char d = s[idx];
-            int val;
-            if (d >= '0' && d <= '9') val = d - '0';
-            else if (d >= 'a' && d <= 'f') val = d - 'a' + 10;
-            else val = d - 'A' + 10;
-            x = 16 * x + val;
-            idx++;
-        }
-        if (x < 0) x = 0;
-        *new_idx = idx;
-        return x;
-    }
-    
-    // Decimal number with % prefix
-    if (ch == '%') {
-        idx++;
-        int64_t x = 0;
-        while (idx < (int)strlen(s) && s[idx] >= '0' && s[idx] <= '9') {
-            x = x * 10 + (s[idx] - '0');
-            idx++;
-        }
-        if (x < 0) x = 0;
-        *new_idx = idx;
-        return x;
-    }
-    
-    *new_idx = idx;
-    return UNKNOWN;
-}
-
-static int64_t expression(const char *s, int idx, int *new_idx) {
-    int64_t x = get_value(s, idx, &idx);
-    
-    if (idx < (int)strlen(s) && x != UNKNOWN && s[idx] == '+') {
-        int64_t y = get_value(s, idx + 1, &idx);
-        x = x + y;
-    } else if (idx < (int)strlen(s) && x != UNKNOWN && s[idx] == '-') {
-        int64_t y = get_value(s, idx + 1, &idx);
-        x = x - y;
-        if (x < 0) x = 0;
-    }
-    
-    *new_idx = idx;
-    return x;
-}
-
-// Search helpers
-static int hit(int64_t addr) {
-    for (int64_t i = 0; i < smem_len; i++) {
-        if (addr + i < mem_len && mem[addr + i] == smem[i]) {
-            continue;
-        } else {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static int hitre(int64_t addr) {
-    if (remem[0] == '\0') {
-        return -1;
-    }
-    span = 0;
-    
-    unsigned char m[RELEN + 1];
-    int64_t m_len = 0;
-    
-    if (addr < mem_len - RELEN) {
-        memcpy(m, mem + addr, RELEN);
-        m_len = RELEN;
-    } else if (addr < mem_len) {
-        m_len = mem_len - addr;
-        memcpy(m, mem + addr, m_len);
-    } else {
-        return 0;
-    }
-    m[m_len] = '\0';
-    
-    // Compile regex if not already compiled
-    if (!reObj_compiled || strcmp(remem, "") != 0) {
-        if (reObj_compiled) {
-            regfree(&reObj);
-        }
-        int ret = regcomp(&reObj, remem, REG_EXTENDED);
-        if (ret != 0) {
-            stderr_msg("Bad regular expression.");
-            return -1;
-        }
-        reObj_compiled = true;
-    }
-    
-    // Match at the beginning only
-    regmatch_t pmatch[1];
-    int ret = regexec(&reObj, (char *)m, 1, pmatch, 0);
-    if (ret == REG_NOMATCH) {
-        return 0;
-    }
-    if (ret != 0) {
-        return -1;
-    }
-    
-    // Check if match is at beginning
-    if (pmatch[0].rm_so != 0) {
-        return 0;
-    }
-    
-    span = pmatch[0].rm_eo - pmatch[0].rm_so;
-    return 1;
-}
-
-static int searchnextnoloop(int64_t fp) {
-    int64_t curPos = fp;
-    if (!regexpMode && smem_len == 0) {
-        return 0;
-    }
-    stdmm_wait("Wait.");
-    while (1) {
-        int f;
-        if (regexpMode) {
-            f = hitre(curPos);
-        } else {
-            f = hit(curPos);
-        }
-        
-        if (f == 1) {
-            jump(curPos);
-            clrmm();
-            return 1;
-        } else if (f < 0) {
-            clrmm();
-            return -1;
-        }
-        
-        curPos++;
-        if (curPos >= mem_len) {
-            jump(mem_len);
-            clrmm();
-            return 0;
-        }
-    }
-}
-
-static bool searchnext(int64_t fp) {
-    int64_t curpos = fp;
-    int64_t start = fp;
-    
-    if (!regexpMode && smem_len == 0) {
-        clrmm();
-        return false;
-    }
-    stdmm_wait("Wait.");
-    while (1) {
-        int f;
-        if (regexpMode) {
-            f = hitre(curpos);
-        } else {
-            f = hit(curpos);
-        }
-        
-        if (f == 1) {
-            jump(curpos);
-            clrmm();
-            return true;
-        } else if (f < 0) {
-            clrmm();
-            return false;
-        }
-        
-        curpos++;
-        if (curpos >= mem_len) {
-            if (nff) {
-                stdmm("Search reached to bottom, continuing from top.");
-            }
-            curpos = 0;
-            esccolor(0, 0);
-        }
-        
-        if (curpos == start) {
-            if (nff) {
-                stdmm("Not found.");
-            }
-            clrmm();
-            return false;
-        }
-    }
-}
-
-static bool searchlast(int64_t fp) {
-    int64_t curpos = fp;
-    int64_t start = fp;
-    
-    if (!regexpMode && smem_len == 0) {
-        return false;
-    }
-    stdmm_wait("Wait.");
-    while (1) {
-        int f;
-        if (regexpMode) {
-            f = hitre(curpos);
-        } else {
-            f = hit(curpos);
-        }
-        
-        if (f == 1) {
-            jump(curpos);
-            clrmm();
-            return true;
-        } else if (f < 0) {
-            clrmm();
-            return false;
-        }
-        
-        curpos--;
-        if (curpos < 0) {
-            stdmm("Search reached to top, continuing from bottom.");
-            esccolor(0, 0);
-            curpos = mem_len - 1;
-        }
-        
-        if (curpos == start) {
-            stdmm("Not found.");
-            clrmm();
-            return false;
-        }
-    }
-    clrmm();
-}
-
-// String parsing helpers
-static int get_restr(const char *s, int idx, char *out, int *new_idx) {
-    int out_idx = 0;
-    while (idx < (int)strlen(s)) {
-        if (s[idx] == '/') {
-            break;
-        }
-        if (idx + 1 < (int)strlen(s) && s[idx] == '\\' && s[idx + 1] == '\\') {
-            out[out_idx++] = '\\';
-            out[out_idx++] = '\\';
-            idx += 2;
-        } else if (idx + 1 < (int)strlen(s) && s[idx] == '\\' && s[idx + 1] == '/') {
-            out[out_idx++] = '/';
-            idx += 2;
-        } else if (s[idx] == '\\' && idx + 1 == (int)strlen(s)) {
-            idx++;
-            break;
-        } else {
-            out[out_idx++] = s[idx];
-            idx++;
-        }
-    }
-    out[out_idx] = '\0';
-    *new_idx = idx;
-    return out_idx;
-}
-
-static int get_hexs(const char *s, int idx, unsigned char *out, int *new_idx) {
-    int out_len = 0;
-    while (idx < (int)strlen(s)) {
-        int64_t v = expression(s, idx, &idx);
-        if (v == UNKNOWN) {
-            break;
-        }
-        out[out_len++] = (unsigned char)(v & 0xff);
-    }
-    *new_idx = idx;
-    return out_len;
-}
-
-static void comment(const char *s, char *out) {
-    int idx = 0;
-    int out_idx = 0;
-    
-    while (idx < (int)strlen(s)) {
-        if (s[idx] == '#') {
-            break;
-        }
-        if (idx + 1 < (int)strlen(s) && s[idx] == '\\' && s[idx + 1] == '#') {
-            out[out_idx++] = '#';
-            idx += 2;
-            continue;
-        }
-        if (idx + 1 < (int)strlen(s) && s[idx] == '\\' && s[idx + 1] == 'n') {
-            out[out_idx++] = '\n';
-            idx += 2;
-            continue;
-        }
-        out[out_idx++] = s[idx];
-        idx++;
-    }
-    out[out_idx] = '\0';
-}
-
-static bool searchstr(const char *s) {
-    if (s[0] != '\0') {
-        regexpMode = true;
-        strncpy(remem, s, sizeof(remem) - 1);
-        remem[sizeof(remem) - 1] = '\0';
-        
-        if (reObj_compiled) {
-            regfree(&reObj);
-            reObj_compiled = false;
-        }
-        
-        return searchnext(fpos());
-    }
-    return false;
-}
-
-static bool searchhex(const unsigned char *sm, int64_t sm_len) {
-    remem[0] = '\0';
-    regexpMode = false;
-    if (sm_len > 0) {
-        ensure_smem_capacity(sm_len);
-        memcpy(smem, sm, sm_len);
-        smem_len = sm_len;
-        return searchnext(fpos());
-    }
-    return false;
-}
-
-static bool searchsub(const char *line) {
-    if (strlen(line) > 2 && line[0] == '/' && line[1] == '/') {
-        unsigned char sm[MAX_LINE];
-        int idx;
-        int sm_len = get_hexs(line, 2, sm, &idx);
-        return searchhex(sm, sm_len);
-    } else if (strlen(line) > 1 && line[0] == '/') {
-        char m[MAX_LINE];
-        int idx;
-        get_restr(line, 1, m, &idx);
-        return searchstr(m);
-    }
-    return false;
-}
-
-static char *getln(const char *prompt, const char *mode) {
-    static char line[MAX_LINE];
-    
-    if (scriptingflag) {
-        // In scripting mode, just read from stdin
-        if (!fgets(line, sizeof(line), stdin)) {
-            line[0] = '\0';
-            return line;
-        }
-    } else {
-        printf("%s", prompt);
-        fflush(stdout);
-        
-        if (!fgets(line, sizeof(line), stdin)) {
-            line[0] = '\0';
-            return line;
-        }
-    }
-    
-    // Remove newline
+    // 改行削除
     size_t len = strlen(line);
-    if (len > 0 && line[len - 1] == '\n') {
-        line[len - 1] = '\0';
-    }
-    if (len > 1 && line[len - 2] == '\r') {
-        line[len - 2] = '\0';
+    if (len > 0 && line[len-1] == '\n') {
+        line[len-1] = '\0';
     }
     
     return line;
 }
 
-static void search(void) {
-    disp_curpos();
-    esclocate(0, BOTTOMLN);
-    esccolor(7, 0);
-    printf("/");
+void add_history(const char *line) {
+    (void)line;  // 未使用警告を抑制
+}
+
+void clear_history(void) {
+    // 何もしない
+}
+#endif
+
+/* ========================================================================
+ * 動的配列の実装
+ * ======================================================================== */
+
+void bytearray_init(ByteArray *arr) {
+    arr->data = NULL;
+    arr->size = 0;
+    arr->capacity = 0;
+}
+
+void bytearray_push(ByteArray *arr, uint8_t val) {
+    if (arr->size >= arr->capacity) {
+        size_t new_cap = arr->capacity == 0 ? 16 : arr->capacity * 2;
+        uint8_t *new_data = realloc(arr->data, new_cap);
+        if (!new_data) {
+            fprintf(stderr, "Memory allocation failed\n");
+            exit(1);
+        }
+        arr->data = new_data;
+        arr->capacity = new_cap;
+    }
+    arr->data[arr->size++] = val;
+}
+
+void bytearray_insert(ByteArray *arr, size_t pos, const uint8_t *data, size_t len) {
+    if (len == 0) return;
+    
+    size_t new_size = arr->size + len;
+    if (new_size > arr->capacity) {
+        size_t new_cap = arr->capacity == 0 ? 16 : arr->capacity;
+        while (new_cap < new_size) new_cap *= 2;
+        uint8_t *new_data = realloc(arr->data, new_cap);
+        if (!new_data) {
+            fprintf(stderr, "Memory allocation failed\n");
+            exit(1);
+        }
+        arr->data = new_data;
+        arr->capacity = new_cap;
+    }
+    
+    if (pos < arr->size) {
+        memmove(arr->data + pos + len, arr->data + pos, arr->size - pos);
+    }
+    memcpy(arr->data + pos, data, len);
+    arr->size = new_size;
+}
+
+void bytearray_delete(ByteArray *arr, size_t start, size_t end) {
+    if (start >= arr->size || end >= arr->size || start > end) return;
+    
+    size_t len = end - start + 1;
+    if (end + 1 < arr->size) {
+        memmove(arr->data + start, arr->data + end + 1, arr->size - end - 1);
+    }
+    arr->size -= len;
+}
+
+void bytearray_free(ByteArray *arr) {
+    if (arr->data) {
+        free(arr->data);
+        arr->data = NULL;
+    }
+    arr->size = 0;
+    arr->capacity = 0;
+}
+
+ByteArray bytearray_copy(const ByteArray *src) {
+    ByteArray dst;
+    bytearray_init(&dst);
+    if (src->size > 0) {
+        dst.data = malloc(src->size);
+        if (!dst.data) {
+            fprintf(stderr, "Memory allocation failed\n");
+            exit(1);
+        }
+        memcpy(dst.data, src->data, src->size);
+        dst.size = src->size;
+        dst.capacity = src->size;
+    }
+    return dst;
+}
+
+void matcharray_init(MatchArray *arr) {
+    arr->data = NULL;
+    arr->size = 0;
+    arr->capacity = 0;
+}
+
+void matcharray_push(MatchArray *arr, Match match) {
+    if (arr->size >= arr->capacity) {
+        size_t new_cap = arr->capacity == 0 ? 16 : arr->capacity * 2;
+        Match *new_data = realloc(arr->data, new_cap * sizeof(Match));
+        if (!new_data) {
+            fprintf(stderr, "Memory allocation failed\n");
+            exit(1);
+        }
+        arr->data = new_data;
+        arr->capacity = new_cap;
+    }
+    arr->data[arr->size++] = match;
+}
+
+void matcharray_clear(MatchArray *arr) {
+    arr->size = 0;
+}
+
+void matcharray_free(MatchArray *arr) {
+    if (arr->data) {
+        free(arr->data);
+        arr->data = NULL;
+    }
+    arr->size = 0;
+    arr->capacity = 0;
+}
+
+void undostack_init(UndoStack *stack) {
+    stack->data = NULL;
+    stack->size = 0;
+    stack->capacity = 0;
+}
+
+void undostack_push(UndoStack *stack, const UndoState *state) {
+    if (stack->size >= stack->capacity) {
+        size_t new_cap = stack->capacity == 0 ? 16 : stack->capacity * 2;
+        UndoState *new_data = realloc(stack->data, new_cap * sizeof(UndoState));
+        if (!new_data) {
+            fprintf(stderr, "Memory allocation failed\n");
+            exit(1);
+        }
+        stack->data = new_data;
+        stack->capacity = new_cap;
+    }
+    stack->data[stack->size++] = *state;
+}
+
+UndoState* undostack_pop(UndoStack *stack) {
+    if (stack->size == 0) return NULL;
+    return &stack->data[--stack->size];
+}
+
+void undostack_free(UndoStack *stack) {
+    for (size_t i = 0; i < stack->size; i++) {
+        bytearray_free(&stack->data[i].mem);
+    }
+    if (stack->data) {
+        free(stack->data);
+        stack->data = NULL;
+    }
+    stack->size = 0;
+    stack->capacity = 0;
+}
+
+/* ========================================================================
+ * Terminal実装
+ * ======================================================================== */
+
+void terminal_init(Terminal *term, const char *termcol, BiEditor *editor) {
+    strncpy(term->termcol, termcol, sizeof(term->termcol) - 1);
+    term->termcol[sizeof(term->termcol) - 1] = '\0';
+    int coltab[] = {0, 1, 4, 5, 2, 6, 3, 7};
+    memcpy(term->coltab, coltab, sizeof(coltab));
+    term->editor = editor;
+}
+
+bool terminal_scripting(Terminal *term) {
+    return term->editor != NULL && term->editor->scriptingflag;
+}
+
+void terminal_nocursor(Terminal *term) {
+    if (terminal_scripting(term)) return;
+    printf("\x1b[?25l");
     fflush(stdout);
-    
-    char *s = getln("", "search");
-    
-    char commented[MAX_LINE];
-    comment(s, commented);
-    
-    // Prepend '/' to make searchsub happy
-    char full_search[MAX_LINE];
-    snprintf(full_search, sizeof(full_search), "/%s", commented);
-    searchsub(full_search);
-    
-    erase_curpos();
 }
 
-// Bitwise operations
-static void opeand(int64_t x, int64_t x2, int x3) {
-    for (int64_t i = x; i <= x2; i++) {
-        setmem(i, readmem(i) & (x3 & 0xff));
-    }
-    char msg[128];
-    snprintf(msg, sizeof(msg), "%lld bytes anded.", (long long)(x2 - x + 1));
-    stdmm(msg);
+void terminal_dispcursor(Terminal *term) {
+    if (terminal_scripting(term)) return;
+    printf("\x1b[?25h");
+    fflush(stdout);
 }
 
-static void opeor(int64_t x, int64_t x2, int x3) {
-    for (int64_t i = x; i <= x2; i++) {
-        setmem(i, readmem(i) | (x3 & 0xff));
-    }
-    char msg[128];
-    snprintf(msg, sizeof(msg), "%lld bytes ored.", (long long)(x2 - x + 1));
-    stdmm(msg);
+void terminal_locate(Terminal *term, int x, int y) {
+    if (terminal_scripting(term)) return;
+    printf("\x1b[%d;%dH", y + 1, x + 1);
+    fflush(stdout);
 }
 
-static void opexor(int64_t x, int64_t x2, int x3) {
-    for (int64_t i = x; i <= x2; i++) {
-        setmem(i, readmem(i) ^ (x3 & 0xff));
-    }
-    char msg[128];
-    snprintf(msg, sizeof(msg), "%lld bytes xored.", (long long)(x2 - x + 1));
-    stdmm(msg);
+void terminal_clear(Terminal *term) {
+    if (terminal_scripting(term)) return;
+    printf("\x1b[2J");
+    fflush(stdout);
+    terminal_locate(term, 0, 0);
 }
 
-static void openot(int64_t x, int64_t x2) {
-    for (int64_t i = x; i <= x2; i++) {
-        setmem(i, (~readmem(i)) & 0xff);
-    }
-    char msg[128];
-    snprintf(msg, sizeof(msg), "%lld bytes noted.", (long long)(x2 - x + 1));
-    stdmm(msg);
+void terminal_clrline(Terminal *term) {
+    if (terminal_scripting(term)) return;
+    printf("\x1b[2K");
+    fflush(stdout);
 }
 
-// Shift and rotate operations
-static void left_shift_byte(int64_t x, int64_t x2, int c) {
-    for (int64_t i = x; i <= x2; i++) {
-        setmem(i, (readmem(i) << 1) | (c & 1));
-    }
-}
-
-static void right_shift_byte(int64_t x, int64_t x2, int c) {
-    for (int64_t i = x; i <= x2; i++) {
-        setmem(i, (readmem(i) >> 1) | ((c & 1) << 7));
-    }
-}
-
-static void left_rotate_byte(int64_t x, int64_t x2) {
-    for (int64_t i = x; i <= x2; i++) {
-        int m = readmem(i);
-        int c = (m & 0x80) >> 7;
-        setmem(i, (m << 1) | c);
-    }
-}
-
-static void right_rotate_byte(int64_t x, int64_t x2) {
-    for (int64_t i = x; i <= x2; i++) {
-        int m = readmem(i);
-        int c = (m & 0x01) << 7;
-        setmem(i, (m >> 1) | c);
-    }
-}
-
-static int64_t get_multibyte_value(int64_t x, int64_t x2) {
-    int64_t v = 0;
-    for (int64_t i = x2; i >= x; i--) {
-        v = (v << 8) | (int64_t)readmem(i);
-    }
-    return v;
-}
-
-static void put_multibyte_value(int64_t x, int64_t x2, int64_t v) {
-    for (int64_t i = x; i <= x2; i++) {
-        setmem(i, (int)(v & 0xff));
-        v >>= 8;
-    }
-}
-
-static void left_shift_multibyte(int64_t x, int64_t x2, int c) {
-    int64_t v = get_multibyte_value(x, x2);
-    put_multibyte_value(x, x2, (v << 1) | (int64_t)c);
-}
-
-static void right_shift_multibyte(int64_t x, int64_t x2, int c) {
-    int64_t v = get_multibyte_value(x, x2);
-    put_multibyte_value(x, x2, (v >> 1) | ((int64_t)c << ((x2 - x) * 8 + 7)));
-}
-
-static void left_rotate_multibyte(int64_t x, int64_t x2) {
-    int64_t v = get_multibyte_value(x, x2);
-    int c = 0;
-    if (v & (1LL << ((x2 - x) * 8 + 7))) {
-        c = 1;
-    }
-    put_multibyte_value(x, x2, (v << 1) | (int64_t)c);
-}
-
-static void right_rotate_multibyte(int64_t x, int64_t x2) {
-    int64_t v = get_multibyte_value(x, x2);
-    int c = 0;
-    if (v & 0x1) {
-        c = 1;
-    }
-    put_multibyte_value(x, x2, (v >> 1) | ((int64_t)c << ((x2 - x) * 8 + 7)));
-}
-
-static void shift_rotate(int64_t x, int64_t x2, int64_t times, int64_t bit, bool multibyte, char direction) {
-    for (int64_t i = 0; i < times; i++) {
-        if (!multibyte) {
-            if (bit != 0 && bit != 1) {
-                if (direction == '<') {
-                    left_rotate_byte(x, x2);
-                } else {
-                    right_rotate_byte(x, x2);
-                }
-            } else {
-                if (direction == '<') {
-                    left_shift_byte(x, x2, (int)(bit & 1));
-                } else {
-                    right_shift_byte(x, x2, (int)(bit & 1));
-                }
-            }
-        } else {
-            if (bit != 0 && bit != 1) {
-                if (direction == '<') {
-                    left_rotate_multibyte(x, x2);
-                } else {
-                    right_rotate_multibyte(x, x2);
-                }
-            } else {
-                if (direction == '<') {
-                    left_shift_multibyte(x, x2, (int)(bit & 1));
-                } else {
-                    right_shift_multibyte(x, x2, (int)(bit & 1));
-                }
-            }
-        }
-    }
-}
-
-// Search and replace command
-static void scommand(int64_t start, int64_t end, bool xf, bool xf2, const char *line, int idx) {
-    nff = false;
-    int64_t pos = fpos();
-    idx = skipspc(line, idx);
-    
-    if (!xf && !xf2) {
-        start = 0;
-        end = mem_len - 1;
-    }
-    
-    if (idx < (int)strlen(line) && line[idx] == '/') {
-        idx++;
-        if (idx < (int)strlen(line) && line[idx] != '/') {
-            char m[MAX_LINE];
-            int idx2;
-            get_restr(line, idx, m, &idx2);
-            idx = idx2;
-            regexpMode = true;
-            strncpy(remem, m, sizeof(remem) - 1);
-            remem[sizeof(remem) - 1] = '\0';
-            span = strlen(m);
-            
-            if (reObj_compiled) {
-                regfree(&reObj);
-                reObj_compiled = false;
-            }
-            int ret = regcomp(&reObj, remem, REG_EXTENDED);
-            if (ret != 0) {
-                stderr_msg("Bad regular expression.");
-                return;
-            }
-            reObj_compiled = true;
-        } else if (idx < (int)strlen(line) && line[idx] == '/') {
-            unsigned char sm[MAX_LINE];
-            int idx2;
-            int sm_len = get_hexs(line, idx + 1, sm, &idx2);
-            idx = idx2;
-            regexpMode = false;
-            remem[0] = '\0';
-            ensure_smem_capacity(sm_len);
-            memcpy(smem, sm, sm_len);
-            smem_len = sm_len;
-            span = sm_len;
-        } else {
-            stderr_msg("Invalid syntax.");
-            return;
-        }
-    }
-    
-    if (span == 0) {
-        stderr_msg("Specify search object.");
-        return;
-    }
-    
-    // Get replacement
-    unsigned char n[MAX_LINE];
-    int n_len = 0;
-    idx = skipspc(line, idx);
-    if (idx < (int)strlen(line) && line[idx] == '/') {
-        idx++;
-        if (idx < (int)strlen(line) && line[idx] == '/') {
-            int idx2;
-            n_len = get_hexs(line, idx + 1, n, &idx2);
-            idx = idx2;
-        } else {
-            char s[MAX_LINE];
-            int idx2;
-            get_restr(line, idx, s, &idx2);
-            n_len = strlen(s);
-            memcpy(n, s, n_len);
-            idx = idx2;
-        }
-    }
-    
-    int64_t i = start;
-    int cnt = 0;
-    jump(i);
-    
-    while (1) {
-        int f = searchnextnoloop(fpos());
-        i = fpos();
-        if (f < 0) {
-            return;
-        } else if (i <= end && f == 1) {
-            delmem(i, i + span - 1, false);
-            insmem(i, n, n_len);
-            pos = i + n_len;
-            cnt++;
-            i = pos;
-            jump(i);
-        } else {
-            jump(pos);
-            char msg[128];
-            snprintf(msg, sizeof(msg), "  %d times replaced.", cnt);
-            stdmm(msg);
-            return;
-        }
-    }
-}
-
-// String/hex input parsing
-static int get_str_or_hexs(const char *line, int idx, unsigned char *out, int *new_idx) {
-    idx = skipspc(line, idx);
-    if (idx < (int)strlen(line) && line[idx] == '/') {
-        idx++;
-        if (idx < (int)strlen(line) && line[idx] == '/') {
-            return get_hexs(line, idx + 1, out, new_idx);
-        }
-        char s[MAX_LINE];
-        int idx2;
-        get_restr(line, idx, s, &idx2);
-        *new_idx = idx2;
-        int len = strlen(s);
-        memcpy(out, s, len);
-        return len;
-    }
-    *new_idx = idx;
-    return 0;
-}
-
-static int get_str(const char *line, int idx, unsigned char *out, int *new_idx) {
-    char s[MAX_LINE];
-    int idx2;
-    get_restr(line, idx, s, &idx2);
-    *new_idx = idx2;
-    int len = strlen(s);
-    memcpy(out, s, len);
-    return len;
-}
-
-// Print value in multiple formats
-static void split_every(const char *s, int n, char *out) {
-    int s_len = strlen(s);
-    int out_idx = 0;
-    for (int i = 0; i < s_len; i += n) {
-        if (i > 0) out[out_idx++] = ' ';
-        for (int j = 0; j < n && i + j < s_len; j++) {
-            out[out_idx++] = s[i + j];
-        }
-    }
-    out[out_idx] = '\0';
-}
-
-static void printvalue(const char *s) {
-    int idx;
-    int64_t v = expression(s, 0, &idx);
-    if (v == UNKNOWN) {
-        return;
-    }
-    
-    char vis[16];
-    if (v < 0x20) {
-        snprintf(vis, sizeof(vis), "^%c ", (char)(v + '@'));
-    } else if (v >= 0x7e) {
-        strcpy(vis, " . ");
+void terminal_color(Terminal *term, int col1, int col2) {
+    if (terminal_scripting(term)) return;
+    if (strcmp(term->termcol, "black") == 0) {
+        printf("\x1b[3%dm\x1b[4%dm", term->coltab[col1], term->coltab[col2]);
     } else {
-        snprintf(vis, sizeof(vis), "'%c'", (char)v);
+        printf("\x1b[3%dm\x1b[4%dm", term->coltab[0], term->coltab[7]);
     }
-    
-    char x[128], o[128], b[256];
-    snprintf(x, sizeof(x), "%016llX", (unsigned long long)v);
-    snprintf(o, sizeof(o), "%024llo", (unsigned long long)v);
-    snprintf(b, sizeof(b), "%064s", "");
-    
-    // Generate binary string
-    for (int i = 0; i < 64; i++) {
-        b[63 - i] = ((v >> i) & 1) ? '1' : '0';
-    }
-    b[64] = '\0';
-    
-    char spacedHex[256], spacedOct[256], spacedBin[512];
-    split_every(x, 4, spacedHex);
-    split_every(o, 4, spacedOct);
-    split_every(b, 4, spacedBin);
-    
-    char msg[1024];
-    snprintf(msg, sizeof(msg), "d%10lld  x%s  o%s %s\nb%s", 
-             (long long)v, spacedHex, spacedOct, vis, spacedBin);
-    
-    if (scriptingflag) {
-        if (verbose) {
-            printf("%s\n", msg);
-        }
-    } else {
-        clrmm();
-        esccolor(6, 0);
-        esclocate(0, BOTTOMLN);
-        printf("%s", msg);
-        fflush(stdout);
-        getch_byte();
-        esclocate(0, BOTTOMLN + 1);
-        for (int i = 0; i < 80; i++) printf(" ");
-        fflush(stdout);
-    }
+    fflush(stdout);
 }
 
-// File I/O
-static bool readfile(const char *fn) {
-    FILE *f = fopen(fn, "rb");
-    if (!f) {
-        newfile = true;
-        stdmm("<new file>");
-        mem_len = 0;
-        return true;
+void terminal_resetcolor(Terminal *term) {
+    if (terminal_scripting(term)) return;
+    printf("\x1b[0m");
+}
+
+void terminal_highlight_color(Terminal *term) {
+    if (terminal_scripting(term)) return;
+    printf("\x1b[1;96;44m");
+    fflush(stdout);
+}
+
+int terminal_getch(void) {
+    struct termios old_settings, new_settings;
+    int ch;
+    
+    tcgetattr(STDIN_FILENO, &old_settings);
+    new_settings = old_settings;
+    new_settings.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &new_settings);
+    
+    ch = getchar();
+    
+    tcsetattr(STDIN_FILENO, TCSANOW, &old_settings);
+    return ch;
+}
+
+/* ========================================================================
+ * MemoryBuffer実装
+ * ======================================================================== */
+
+void memory_init(MemoryBuffer *mem) {
+    bytearray_init(&mem->mem);
+    bytearray_init(&mem->yank);
+    for (int i = 0; i < 26; i++) {
+        mem->mark[i] = UNKNOWN;
+    }
+    mem->modified = false;
+    mem->lastchange = false;
+}
+
+uint8_t memory_read(MemoryBuffer *mem, size_t addr) {
+    if (addr >= mem->mem.size) return 0;
+    return mem->mem.data[addr];
+}
+
+void memory_set(MemoryBuffer *mem, size_t addr, uint8_t data) {
+    while (addr >= mem->mem.size) {
+        bytearray_push(&mem->mem, 0);
+    }
+    mem->mem.data[addr] = data & 0xFF;
+    mem->modified = true;
+    mem->lastchange = true;
+}
+
+void memory_insert(MemoryBuffer *mem, size_t start, const uint8_t *data, size_t len) {
+    bytearray_insert(&mem->mem, start, data, len);
+    mem->modified = true;
+    mem->lastchange = true;
+}
+
+bool memory_delete(MemoryBuffer *mem, size_t start, size_t end, bool yf,
+                   size_t (*yank_func)(MemoryBuffer*, size_t, size_t)) {
+    size_t length = end - start + 1;
+    if (length == 0 || start >= mem->mem.size) return false;
+    
+    if (yf && yank_func) {
+        yank_func(mem, start, end);
     }
     
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    
-    ensure_mem_capacity(size);
-    mem_len = fread(mem, 1, size, f);
-    fclose(f);
-    newfile = false;
+    bytearray_delete(&mem->mem, start, end);
+    mem->lastchange = true;
+    mem->modified = true;
     return true;
 }
 
-static void regulate_mem(void) {
-    for (int64_t i = 0; i < mem_len; i++) {
-        mem[i] = mem[i] & 0xff;
+size_t memory_yank(MemoryBuffer *mem, size_t start, size_t end) {
+    size_t length = end - start + 1;
+    if (length == 0 || start >= mem->mem.size) return 0;
+    
+    bytearray_free(&mem->yank);
+    bytearray_init(&mem->yank);
+    
+    size_t cnt = 0;
+    for (size_t j = start; j <= end && j < mem->mem.size; j++) {
+        bytearray_push(&mem->yank, mem->mem.data[j]);
+        cnt++;
     }
+    return cnt;
 }
 
-static bool writefile(const char *fn) {
-    regulate_mem();
-    FILE *f = fopen(fn, "wb");
-    if (!f) {
-        stderr_msg("Permission denied.");
-        return false;
+void memory_overwrite(MemoryBuffer *mem, size_t start, const uint8_t *data, size_t len) {
+    if (len == 0) return;
+    
+    while (start + len > mem->mem.size) {
+        bytearray_push(&mem->mem, 0);
     }
-    fwrite(mem, 1, mem_len, f);
-    fclose(f);
-    stdmm("File written.");
-    lastchange = false;
-    return true;
+    
+    memcpy(mem->mem.data + start, data, len);
+    mem->lastchange = true;
+    mem->modified = true;
 }
 
-static bool wrtfile(int64_t start, int64_t end, const char *fn) {
-    regulate_mem();
-    FILE *f = fopen(fn, "wb");
-    if (!f) {
-        stderr_msg("Permission denied.");
-        return false;
-    }
-    for (int64_t i = start; i <= end; i++) {
-        unsigned char byte;
-        if (i >= 0 && i < mem_len) {
-            byte = mem[i];
+void memory_free(MemoryBuffer *mem) {
+    bytearray_free(&mem->mem);
+    bytearray_free(&mem->yank);
+}
+
+/* ========================================================================
+ * SearchEngine実装
+ * ======================================================================== */
+
+void search_init(SearchEngine *search, MemoryBuffer *mem, Display *disp, BiEditor *editor) {
+    search->memory = mem;
+    search->display = disp;
+    search->editor = editor;
+    bytearray_init(&search->smem);
+    search->regexp = false;
+    search->remem[0] = '\0';
+    search->span = 0;
+    search->nff = true;
+}
+
+int search_hit(SearchEngine *search, size_t addr) {
+    for (size_t i = 0; i < search->smem.size; i++) {
+        if (addr + i < search->memory->mem.size &&
+            search->memory->mem.data[addr + i] == search->smem.data[i]) {
+            continue;
         } else {
-            byte = 0;
+            return 0;
         }
-        fwrite(&byte, 1, 1, f);
     }
-    fclose(f);
-    return true;
+    return 1;
 }
 
-// Scripting
-static int scripting(const char *scriptfile);
-static int commandline(const char *line);
-
-static int scripting(const char *scriptfile) {
-    FILE *fh = fopen(scriptfile, "r");
-    if (!fh) {
-        stderr_msg("Script file open error.");
+int search_hitre(SearchEngine *search, size_t addr) {
+    if (search->remem[0] == '\0') return -1;
+    
+    regex_t regex;
+    regmatch_t match[1];
+    int reti;
+    
+    // 検索範囲のデータを取得
+    size_t len = (addr < search->memory->mem.size - RELEN) ? 
+                 RELEN : search->memory->mem.size - addr;
+    if (len == 0) return -1;
+    
+    // バイナリデータをNULL文字を考慮して処理
+    // NULL文字を空白に置き換える
+    char *str = malloc(len + 1);
+    if (!str) return -1;
+    
+    for (size_t i = 0; i < len; i++) {
+        uint8_t byte = search->memory->mem.data[addr + i];
+        // NULL文字を空白に置き換え、それ以外はそのまま
+        str[i] = (byte == 0) ? ' ' : byte;
+    }
+    str[len] = '\0';
+    
+    // 正規表現コンパイル
+    reti = regcomp(&regex, search->remem, REG_EXTENDED);
+    if (reti) {
+        free(str);
         return -1;
     }
     
-    scriptingflag = true;
-    int flagv = -1;
-    char line[MAX_LINE];
+    // マッチング - 位置0から始まるマッチのみ
+    reti = regexec(&regex, str, 1, match, 0);
+    regfree(&regex);
     
-    while (fgets(line, sizeof(line), fh)) {
-        // Remove newline
-        size_t len = strlen(line);
-        if (len > 0 && line[len - 1] == '\n') line[len - 1] = '\0';
-        if (len > 1 && line[len - 2] == '\r') line[len - 2] = '\0';
+    if (reti == 0 && match[0].rm_so == 0) {
+        search->span = match[0].rm_eo - match[0].rm_so;
+        free(str);
+        return 1;
+    }
+    
+    free(str);
+    return 0;
+}
+
+size_t search_next(SearchEngine *search, size_t fp, size_t mem_len) {
+    size_t curpos = fp;
+    size_t start = fp;
+    
+    if (!search->regexp && search->smem.size == 0) {
+        return (size_t)-1;
+    }
+    
+    while (true) {
+        int f = search->regexp ? search_hitre(search, curpos) : search_hit(search, curpos);
         
-        // Trim
-        int start = 0;
-        while (line[start] == ' ' || line[start] == '\t') start++;
-        int end = strlen(line + start) - 1;
-        while (end >= 0 && (line[start + end] == ' ' || line[start + end] == '\t')) end--;
-        line[start + end + 1] = '\0';
-        
-        if (verbose) {
-            printf("%s\n", line + start);
+        if (f == 1) {
+            return curpos;
+        } else if (f < 0) {
+            return (size_t)-1;
         }
         
-        flagv = commandline(line + start);
-        if (flagv == 0) {
-            fclose(fh);
-            return 0;
-        } else if (flagv == 1) {
-            fclose(fh);
+        curpos++;
+        
+        if (curpos >= mem_len) {
+            if (search->nff) {
+                curpos = 0;
+            } else {
+                return (size_t)-1;
+            }
+        }
+        
+        if (curpos == start) {
+            return (size_t)-1;
+        }
+    }
+}
+
+size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
+    size_t curpos = fp;
+    size_t start = fp;
+    
+    if (!search->regexp && search->smem.size == 0) {
+        return (size_t)-1;
+    }
+    
+    while (true) {
+        int f = search->regexp ? search_hitre(search, curpos) : search_hit(search, curpos);
+        
+        if (f == 1) {
+            return curpos;
+        } else if (f < 0) {
+            return (size_t)-1;
+        }
+        
+        if (curpos == 0) {
+            curpos = mem_len - 1;
+        } else {
+            curpos--;
+        }
+        
+        if (curpos == start) {
+            return (size_t)-1;
+        }
+    }
+}
+
+void search_all(SearchEngine *search, size_t mem_len, MatchArray *matches) {
+    matcharray_clear(matches);
+    
+    if (!search->regexp && search->smem.size == 0) {
+        return;
+    }
+    
+    size_t curpos = 0;
+    size_t max_results = 10000;
+    
+    while (curpos < mem_len && matches->size < max_results) {
+        int f = search->regexp ? search_hitre(search, curpos) : search_hit(search, curpos);
+        
+        if (f == 1) {
+            Match m;
+            m.pos = curpos;
+            m.len = search->regexp ? search->span : search->smem.size;
+            matcharray_push(matches, m);
+            curpos += (m.len > 0) ? m.len : 1;
+        } else if (f < 0) {
+            break;
+        } else {
+            curpos++;
+        }
+    }
+}
+
+void search_free(SearchEngine *search) {
+    bytearray_free(&search->smem);
+}
+
+/* ========================================================================
+ * Display実装
+ * ======================================================================== */
+
+void display_init(Display *disp, Terminal *term, MemoryBuffer *mem) {
+    disp->term = term;
+    disp->memory = mem;
+    disp->homeaddr = 0;
+    disp->curx = 0;
+    disp->cury = 0;
+    disp->utf8 = false;
+    disp->repsw = 0;
+    disp->insmod = false;
+    matcharray_init(&disp->highlight_ranges);
+}
+
+size_t display_fpos(Display *disp) {
+    return disp->homeaddr + disp->curx / 2 + disp->cury * 16;
+}
+
+void display_jump(Display *disp, size_t addr) {
+    if (addr < disp->homeaddr || addr >= disp->homeaddr + LENONSCR) {
+        disp->homeaddr = addr & ~0xFF;
+    }
+    size_t i = addr - disp->homeaddr;
+    disp->curx = (i & 0xF) * 2;
+    disp->cury = i / 16;
+}
+
+bool display_is_highlighted(Display *disp, size_t addr) {
+    for (size_t i = 0; i < disp->highlight_ranges.size; i++) {
+        Match *m = &disp->highlight_ranges.data[i];
+        if (addr >= m->pos && addr < m->pos + m->len) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int display_printchar(Display *disp, size_t a) {
+    if (a >= disp->memory->mem.size) {
+        printf("~");
+        return 1;
+    }
+    
+    uint8_t byte = disp->memory->mem.data[a];
+    
+    if (disp->utf8) {
+        // UTF-8モード
+        if (byte < 0x80 || (byte >= 0x80 && byte <= 0xBF) || byte >= 0xF8) {
+            // ASCII or continuation byte or invalid
+            printf("%c", (byte >= 0x20 && byte <= 0x7E) ? byte : '.');
+            return 1;
+        } else if (byte >= 0xC0 && byte <= 0xDF) {
+            // 2-byte UTF-8
+            if (a + 1 < disp->memory->mem.size) {
+                uint8_t bytes[2] = {disp->memory->mem.data[a], disp->memory->mem.data[a + 1]};
+                // UTF-8として妥当かチェック
+                if ((bytes[1] & 0xC0) == 0x80) {
+                    // 妥当なUTF-8
+                    char utf8str[3] = {bytes[0], bytes[1], 0};
+                    printf("%s", utf8str);
+                    return 2;
+                }
+            }
+            printf(".");
+            return 1;
+        } else if (byte >= 0xE0 && byte <= 0xEF) {
+            // 3-byte UTF-8
+            if (a + 2 < disp->memory->mem.size) {
+                uint8_t bytes[3] = {
+                    disp->memory->mem.data[a],
+                    disp->memory->mem.data[a + 1],
+                    disp->memory->mem.data[a + 2]
+                };
+                if ((bytes[1] & 0xC0) == 0x80 && (bytes[2] & 0xC0) == 0x80) {
+                    char utf8str[4] = {bytes[0], bytes[1], bytes[2], 0};
+                    printf("%s ", utf8str);
+                    return 3;
+                }
+            }
+            printf(".");
+            return 1;
+        } else if (byte >= 0xF0 && byte <= 0xF7) {
+            // 4-byte UTF-8
+            if (a + 3 < disp->memory->mem.size) {
+                uint8_t bytes[4] = {
+                    disp->memory->mem.data[a],
+                    disp->memory->mem.data[a + 1],
+                    disp->memory->mem.data[a + 2],
+                    disp->memory->mem.data[a + 3]
+                };
+                if ((bytes[1] & 0xC0) == 0x80 && (bytes[2] & 0xC0) == 0x80 && (bytes[3] & 0xC0) == 0x80) {
+                    char utf8str[5] = {bytes[0], bytes[1], bytes[2], bytes[3], 0};
+                    printf("%s  ", utf8str);
+                    return 4;
+                }
+            }
+            printf(".");
             return 1;
         }
     }
     
-    fclose(fh);
-    return 0;
+    // 非UTF-8モードまたはUTF-8として無効
+    printf("%c", (byte >= 0x20 && byte <= 0x7E) ? byte : '.');
+    return 1;
 }
 
-// Main command line parser
-static int commandline_(const char *line);
-
-static int commandline(const char *line) {
-    // Simple error handling
-    return commandline_(line);
+void display_repaint(Display *disp, const char *filename) {
+    // Print title
+    terminal_locate(disp->term, 0, 0);
+    terminal_color(disp->term, 6, 0);
+    printf("bi version %s by Taisuke Maekawa             utf8mode:%s     %s   ",
+           VERSION, disp->utf8 ? (disp->repsw ? "on " : "off") : "off",
+           disp->insmod ? "insert   " : "overwrite");
+    
+    terminal_color(disp->term, 5, 0);
+    char fn[36];
+    strncpy(fn, filename, 35);
+    fn[35] = '\0';
+    printf("\nfile:[%-35s] length:%zu bytes [%smodified]    ",
+           fn, disp->memory->mem.size, disp->memory->modified ? "" : "not ");
+    
+    // Print header
+    terminal_nocursor(disp->term);
+    terminal_locate(disp->term, 0, 2);
+    terminal_color(disp->term, 4, 0);
+    printf("OFFSET       +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF ");
+    
+    // Print hex dump
+    terminal_color(disp->term, 7, 0);
+    for (int y = 0; y < LENONSCR / 16; y++) {
+        terminal_color(disp->term, 5, 0);
+        terminal_locate(disp->term, 0, 3 + y);
+        printf("%012zX ", disp->homeaddr + y * 16);
+        
+        // Hex part
+        for (int i = 0; i < 16; i++) {
+            size_t a = y * 16 + i + disp->homeaddr;
+            bool in_hl = disp->highlight_ranges.size > 0 && display_is_highlighted(disp, a);
+            
+            if (in_hl) {
+                terminal_highlight_color(disp->term);
+                if (a >= disp->memory->mem.size) {
+                    printf("~~");
+                } else {
+                    printf("%02X", disp->memory->mem.data[a]);
+                }
+                terminal_resetcolor(disp->term);
+                terminal_color(disp->term, 7, 0);
+                printf(" ");
+            } else {
+                terminal_color(disp->term, 7, 0);
+                if (a >= disp->memory->mem.size) {
+                    printf("~~ ");
+                } else {
+                    printf("%02X ", disp->memory->mem.data[a]);
+                }
+            }
+        }
+        
+        // ASCII/UTF-8 part - 黄色に変更
+        terminal_color(disp->term, 6, 0);  // 黄色（coltab[6]=3）
+        if (disp->utf8) {
+            // UTF-8モード
+            int col = 0;
+            for (int i = 0; i < 16 && col < 16; ) {
+                size_t a = y * 16 + i + disp->homeaddr;
+                int len = display_printchar(disp, a);
+                i += len;
+                col++;
+            }
+            // 残りを空白で埋める
+            while (col < 16) {
+                printf(" ");
+                col++;
+            }
+        } else {
+            // 通常モード
+            for (int i = 0; i < 16; i++) {
+                size_t a = y * 16 + i + disp->homeaddr;
+                display_printchar(disp, a);
+            }
+        }
+        printf(" ");
+    }
 }
 
-static int commandline_(const char *line) {
-    cp = fpos();
+void display_printdata(Display *disp) {
+    size_t addr = display_fpos(disp);
+    uint8_t a = memory_read(disp->memory, addr);
     
-    char commented[MAX_LINE];
-    comment(line, commented);
-    line = commented;
+    terminal_locate(disp->term, 0, 23);
+    terminal_color(disp->term, 6, 0);
     
-    if (strlen(line) == 0) {
-        return -1;
-    }
-    
-    // Quit commands
-    if (strcmp(line, "q") == 0) {
-        if (lastchange) {
-            stderr_msg("No write since last change. To overriding quit, use 'q!'.");
-            return -1;
-        }
-        return 0;
-    } else if (strcmp(line, "q!") == 0) {
-        return 0;
-    } else if (strcmp(line, "wq") == 0 || strcmp(line, "wq!") == 0) {
-        if (writefile(filename)) {
-            lastchange = false;
-            return 0;
-        }
-        return -1;
-    }
-    
-    // Write command
-    if (line[0] == 'w') {
-        if (strlen(line) >= 2 && line[1] != ' ') {
-            // Not a write command, continue parsing
-        } else {
-            if (strlen(line) >= 2) {
-                const char *fn = line + 1;
-                while (*fn == ' ') fn++;
-                writefile(fn);
-            } else {
-                writefile(filename);
-                lastchange = false;
-            }
-            return -1;
-        }
-    }
-    
-    // Read command
-    if (line[0] == 'r' && strlen(line) == 1) {
-        readfile(filename);
-        stdmm("Original file read.");
-        return -1;
-    }
-    
-    // Script execution
-    if (line[0] == 'T' || line[0] == 't') {
-        if (strlen(line) >= 2) {
-            const char *script_fn = line + 1;
-            while (*script_fn == ' ') script_fn++;
-            
-            // Save state
-            bool old_scripting = scriptingflag;
-            bool old_verbose = verbose;
-            
-            if (line[0] == 'T') {
-                verbose = true;
-            } else {
-                verbose = false;
-            }
-            
-            printf("\n");
-            scripting(script_fn);
-            
-            if (verbose) {
-                stdmm("[ Hit any key ]");
-                getch_byte();
-            }
-            
-            // Restore state
-            verbose = old_verbose;
-            scriptingflag = old_scripting;
-            escclear();
-            return -1;
-        } else {
-            stderr_msg("Specify script file name.");
-            return -1;
-        }
-    }
-    
-    // Search next/previous
-    if (line[0] == 'n' && strlen(line) == 1) {
-        searchnext(fpos() + 1);
-        return -1;
-    } else if (line[0] == 'N' && strlen(line) == 1) {
-        searchlast(fpos() - 1);
-        return -1;
-    }
-    
-    // Shell command
-    if (line[0] == '!') {
-        if (strlen(line) >= 2) {
-            invoke_shell(line + 1);
-            return -1;
-        }
-        return -1;
-    }
-    
-    // Print value
-    if (line[0] == '?') {
-        printvalue(line + 1);
-        return -1;
-    }
-    
-    // Search
-    if (line[0] == '/') {
-        searchsub(line);
-        return -1;
-    }
-    
-    // Parse address range
-    int idx = skipspc(line, 0);
-    int64_t x = expression(line, idx, &idx);
-    bool xf = false;
-    bool xf2 = false;
-    
-    if (x == UNKNOWN) {
-        x = fpos();
+    char s[4] = ".";  // サイズを3から4に変更
+    if (a < 0x20) {
+        snprintf(s, sizeof(s), "^%c", a + '@');
+    } else if (a >= 0x7E) {
+        strcpy(s, ".");
     } else {
-        xf = true;
+        snprintf(s, sizeof(s), "'%c'", a);
     }
     
-    int64_t x2 = x;
-    idx = skipspc(line, idx);
-    
-    if (idx < (int)strlen(line) && line[idx] == ',') {
-        idx = skipspc(line, idx + 1);
-        if (idx < (int)strlen(line) && line[idx] == '*') {
-            idx = skipspc(line, idx + 1);
-            int64_t t = expression(line, idx, &idx);
-            if (t == UNKNOWN) {
-                t = 1;
-            }
-            x2 = x + t - 1;
-        } else {
-            int64_t t = expression(line, idx, &idx);
-            if (t == UNKNOWN) {
-                x2 = x;
-            } else {
-                x2 = t;
-                xf2 = true;
-            }
+    if (addr < disp->memory->mem.size) {
+        printf("%012zX : 0x%02X 0b", addr, a);
+        for (int i = 7; i >= 0; i--) {
+            printf("%d", (a >> i) & 1);
+        }
+        printf(" 0o%03o %d %s      ", a, a, s);
+    } else {
+        printf("%012zX : ~~                                                   ", addr);
+    }
+    fflush(stdout);
+}
+
+void display_clrmm(Display *disp) {
+    terminal_locate(disp->term, 0, BOTTOMLN);
+    terminal_color(disp->term, 6, 0);
+    terminal_clrline(disp->term);
+}
+
+void display_stdmm(Display *disp, const char *msg, bool scripting, bool verbose) {
+    if (scripting) {
+        if (verbose) {
+            printf("%s\n", msg);
         }
     } else {
-        x2 = x;
+        display_clrmm(disp);
+        terminal_color(disp->term, 4, 0);
+        terminal_locate(disp->term, 0, BOTTOMLN);
+        printf(" %s", msg);
+        fflush(stdout);
     }
-    
-    if (x2 < x) {
-        x2 = x;
-    }
-    
-    idx = skipspc(line, idx);
-    
-    // Just address - jump
-    if (idx == (int)strlen(line)) {
-        jump(x);
-        return -1;
-    }
-    
-    // Yank
-    if (idx < (int)strlen(line) && line[idx] == 'y') {
-        idx++;
-        if (!xf && !xf2) {
-            unsigned char m[MAX_LINE];
-            int idx2;
-            int m_len = get_str_or_hexs(line, idx, m, &idx2);
-            ensure_yank_capacity(m_len);
-            memcpy(yank, m, m_len);
-            yank_len = m_len;
-        } else {
-            yankmem(x, x2);
-        }
-        char msg[128];
-        snprintf(msg, sizeof(msg), "%lld bytes yanked.", (long long)yank_len);
-        stdmm(msg);
-        return -1;
-    }
-    
-    // Paste overwrite
-    if (idx < (int)strlen(line) && line[idx] == 'p') {
-        if (yank && yank_len > 0) {
-            ovwmem(x, yank, yank_len);
-            jump(x + yank_len);
-        }
-        return -1;
-    }
-    
-    // Paste insert
-    if (idx < (int)strlen(line) && line[idx] == 'P') {
-        if (yank && yank_len > 0) {
-            insmem(x, yank, yank_len);
-            jump(x + yank_len);
-        }
-        return -1;
-    }
-    
-    // Mark
-    if (idx + 1 < (int)strlen(line) && line[idx] == 'm') {
-        if (line[idx + 1] >= 'a' && line[idx + 1] <= 'z') {
-            mark[line[idx + 1] - 'a'] = x;
-        }
-        return -1;
-    }
-    
-    // Read file
-    if (idx < (int)strlen(line) && (line[idx] == 'r' || line[idx] == 'R')) {
-        char ch = line[idx];
-        idx++;
-        if (idx >= (int)strlen(line)) {
-            stderr_msg("File name not specified.");
-            return -1;
-        }
-        
-        const char *fn = line + idx;
-        while (*fn == ' ') fn++;
-        
-        if (strlen(fn) == 0) {
-            stderr_msg("File name not specified.");
-        } else {
-            FILE *f = fopen(fn, "rb");
-            if (!f) {
-                stderr_msg("File read error.");
-            } else {
-                fseek(f, 0, SEEK_END);
-                long size = ftell(f);
-                fseek(f, 0, SEEK_SET);
-                
-                unsigned char *data = malloc(size);
-                fread(data, 1, size, f);
-                fclose(f);
-                
-                if (ch == 'r') {
-                    ovwmem(x, data, size);
-                } else {
-                    insmem(x, data, size);
-                }
-                
-                free(data);
-                jump(x + size);
-                return -1;
-            }
-        }
-    }
-    
-    // Get command character
-    char ch = 0;
-    if (idx < (int)strlen(line)) {
-        ch = line[idx];
-    }
-    
-    // Delete
-    if (ch == 'd') {
-        delmem(x, x2, true);
-        char msg[128];
-        snprintf(msg, sizeof(msg), "%lld bytes deleted.", (long long)(x2 - x + 1));
-        stdmm(msg);
-        jump(x);
-        return -1;
-    }
-    
-    // Write to file
-    if (ch == 'w') {
-        idx++;
-        const char *fn = line + idx;
-        while (*fn == ' ') fn++;
-        wrtfile(x, x2, fn);
-        return -1;
-    }
-    
-    // Search and replace
-    if (ch == 's') {
-        scommand(x, x2, xf, xf2, line, idx + 1);
-        return -1;
-    }
-    
-    // NOT operation
-    if (idx < (int)strlen(line) && line[idx] == '~') {
-        idx++;
-        openot(x, x2);
-        jump(x2 + 1);
-        return -1;
-    }
-    
-    // Complex operations
-    if (idx < (int)strlen(line) && strchr("fIivCc&|^<>", line[idx])) {
-        ch = line[idx];
-        idx++;
-        
-        // Shift/rotate
-        if (ch == '<' || ch == '>') {
-            bool multibyte = false;
-            if (idx < (int)strlen(line) && line[idx] == ch) {
-                idx++;
-                multibyte = true;
-            }
-            int64_t times = expression(line, idx, &idx);
-            if (times == UNKNOWN) {
-                times = 1;
-            }
-            int64_t bit = UNKNOWN;
-            if (idx < (int)strlen(line) && line[idx] == ',') {
-                bit = expression(line, idx + 1, &idx);
-            }
-            shift_rotate(x, x2, times, bit, multibyte, ch);
-            return -1;
-        }
-        
-        // Insert/overwrite data
-        if (ch == 'i') {
-            idx = skipspc(line, idx);
-            unsigned char m[MAX_LINE];
-            int m_len;
-            int idx2;
-            if (idx < (int)strlen(line) && line[idx] == '/') {
-                m_len = get_str(line, idx + 1, m, &idx2);
-                idx = idx2;
-            } else {
-                m_len = get_hexs(line, idx, m, &idx2);
-                idx = idx2;
-            }
-            
-            if (xf2) {
-                if (m_len > 0) {
-                    int total = (int)(x2 - x + 1);
-                    int rep = total / m_len;
-                    int rem = total % m_len;
-                    
-                    unsigned char *data = malloc(total);
-                    for (int i = 0; i < rep; i++) {
-                        memcpy(data + i * m_len, m, m_len);
-                    }
-                    memcpy(data + rep * m_len, m, rem);
-                    
-                    ovwmem(x, data, total);
-                    free(data);
-                    
-                    char msg[128];
-                    snprintf(msg, sizeof(msg), "%d bytes filled.", total);
-                    stdmm(msg);
-                    jump(x + total);
-                } else {
-                    stderr_msg("Invalid syntax.");
-                }
-                return -1;
-            }
-            
-            int64_t length = 1;
-            if (idx < (int)strlen(line) && line[idx] == '*') {
-                idx++;
-                length = expression(line, idx, &idx);
-            }
-            
-            int data_len = m_len * (int)length;
-            unsigned char *data = malloc(data_len);
-            for (int i = 0; i < (int)length; i++) {
-                memcpy(data + i * m_len, m, m_len);
-            }
-            
-            ovwmem(x, data, data_len);
-            free(data);
-            
-            char msg[128];
-            snprintf(msg, sizeof(msg), "%d bytes overwritten.", data_len);
-            stdmm(msg);
-            jump(x + data_len);
-            return -1;
-        }
-        
-        // Insert data
-        if (ch == 'I') {
-            idx = skipspc(line, idx);
-            unsigned char m[MAX_LINE];
-            int m_len;
-            int idx2;
-            if (idx < (int)strlen(line) && line[idx] == '/') {
-                m_len = get_str(line, idx + 1, m, &idx2);
-                idx = idx2;
-            } else {
-                m_len = get_hexs(line, idx, m, &idx2);
-                idx = idx2;
-            }
-            
-            if (idx < (int)strlen(line) && line[idx] == '*') {
-                idx++;
-                expression(line, idx, &idx);
-            }
-            
-            if (xf2) {
-                stderr_msg("Invalid syntax.");
-                return -1;
-            }
-            
-            insmem(x, m, m_len);
-            char msg[128];
-            snprintf(msg, sizeof(msg), "%d bytes inserted.", m_len);
-            stdmm(msg);
-            jump(x + m_len);
-            return -1;
-        }
-        
-        // Operations requiring third parameter
-        int64_t x3 = expression(line, idx, &idx);
-        if (x3 == UNKNOWN) {
-            stderr_msg("Invalid parameter.");
-            return -1;
-        }
-        
-        switch (ch) {
-            case 'c':  // Copy
-                yankmem(x, x2);
-                cpymem(x, x2, x3);
-                {
-                    char msg[128];
-                    snprintf(msg, sizeof(msg), "%lld bytes copied.", (long long)(x2 - x + 1));
-                    stdmm(msg);
-                }
-                jump(x3 + (x2 - x + 1));
-                return -1;
-                
-            case 'C':  // Copy with insert
-                {
-                    int64_t len;
-                    unsigned char *mm = redmem(x, x2, &len);
-                    yankmem(x, x2);
-                    insmem(x3, mm, len);
-                    free(mm);
-                    char msg[128];
-                    snprintf(msg, sizeof(msg), "%lld bytes inserted.", (long long)(x2 - x + 1));
-                    stdmm(msg);
-                    jump(x3 + len);
-                }
-                return -1;
-                
-            case 'v':  // Move
-                {
-                    int64_t xp = movmem(x, x2, x3);
-                    jump(xp);
-                }
-                return -1;
-                
-            case '&':  // AND
-                opeand(x, x2, (int)x3);
-                jump(x2 + 1);
-                return -1;
-                
-            case '|':  // OR
-                opeor(x, x2, (int)x3);
-                jump(x2 + 1);
-                return -1;
-                
-            case '^':  // XOR
-                opexor(x, x2, (int)x3);
-                jump(x2 + 1);
-                return -1;
-        }
-    }
-    
-    stderr_msg("Unrecognized command.");
-    return -1;
 }
 
-static int commandln(void) {
-    esclocate(0, BOTTOMLN);
-    esccolor(7, 0);
-    char *line = getln(":", "command");
-    
-    // Trim
-    int start = 0;
-    while (line[start] == ' ' || line[start] == '\t') start++;
-    int end = strlen(line + start) - 1;
-    while (end >= 0 && (line[start + end] == ' ' || line[start + end] == '\t')) end--;
-    line[start + end + 1] = '\0';
-    
-    return commandline(line + start);
+void display_stderr(Display *disp, const char *msg, bool scripting, bool verbose) {
+    if (scripting) {
+        fprintf(stderr, "%s\n", msg);
+    } else {
+        display_clrmm(disp);
+        terminal_color(disp->term, 3, 0);
+        terminal_locate(disp->term, 0, BOTTOMLN);
+        printf(" %s", msg);
+        fflush(stdout);
+    }
 }
 
-// Main editor loop
-static bool fedit(void) {
+void display_free(Display *disp) {
+    matcharray_free(&disp->highlight_ranges);
+}
+
+/* ========================================================================
+ * Parser実装
+ * ======================================================================== */
+
+void parser_init(Parser *parser, MemoryBuffer *mem, Display *disp) {
+    parser->memory = mem;
+    parser->display = disp;
+}
+
+size_t parser_skipspc(const char *s, size_t idx) {
+    while (s[idx] && s[idx] == ' ') {
+        idx++;
+    }
+    return idx;
+}
+
+uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
+    if (!s[*idx]) return UNKNOWN;
+    
+    *idx = parser_skipspc(s, *idx);
+    char ch = s[*idx];
+    uint64_t v = 0;
+    
+    if (ch == '$') {
+        (*idx)++;
+        v = parser->memory->mem.size > 0 ? parser->memory->mem.size - 1 : 0;
+    } else if (ch == '.') {
+        (*idx)++;
+        v = display_fpos(parser->display);
+    } else if (ch == '\'' && s[*idx + 1] >= 'a' && s[*idx + 1] <= 'z') {
+        (*idx)++;
+        v = parser->memory->mark[s[*idx] - 'a'];
+        if (v == UNKNOWN) {
+            (*idx)--;
+            return UNKNOWN;
+        }
+        (*idx)++;
+    } else if (isxdigit((unsigned char)ch)) {
+        while (isxdigit((unsigned char)s[*idx])) {
+            v = 16 * v + (isdigit((unsigned char)s[*idx]) ? 
+                         s[*idx] - '0' : 
+                         tolower((unsigned char)s[*idx]) - 'a' + 10);
+            (*idx)++;
+        }
+    } else if (ch == '%') {
+        (*idx)++;
+        while (isdigit((unsigned char)s[*idx])) {
+            v = 10 * v + (s[*idx] - '0');
+            (*idx)++;
+        }
+    } else {
+        return UNKNOWN;
+    }
+    
+    if ((int64_t)v < 0) v = 0;
+    return v;
+}
+
+uint64_t parser_expression(Parser *parser, const char *s, size_t *idx) {
+    uint64_t x = parser_get_value(parser, s, idx);
+    
+    if (s[*idx] && x != UNKNOWN && s[*idx] == '+') {
+        uint64_t y = parser_get_value(parser, s, idx + 1);
+        *idx += 1;
+        x = x + y;
+    } else if (s[*idx] && x != UNKNOWN && s[*idx] == '-') {
+        uint64_t y = parser_get_value(parser, s, idx + 1);
+        *idx += 1;
+        if (x < y) {
+            x = 0;
+        } else {
+            x = x - y;
+        }
+    }
+    
+    return x;
+}
+
+size_t parser_get_restr(const char *s, size_t idx, char *result) {
+    size_t j = 0;
+    while (s[idx]) {
+        if (s[idx] == '/') {
+            break;
+        }
+        if (s[idx] == '\\' && s[idx + 1] == '\\') {
+            result[j++] = '\\';
+            result[j++] = '\\';
+            idx += 2;
+        } else if (s[idx] == '\\' && s[idx + 1] == '/') {
+            result[j++] = '/';
+            idx += 2;
+        } else if (s[idx] == '\\' && !s[idx + 1]) {
+            idx++;
+            break;
+        } else {
+            result[j++] = s[idx++];
+        }
+    }
+    result[j] = '\0';
+    return idx;
+}
+
+size_t parser_get_hexs(Parser *parser, const char *s, size_t idx, ByteArray *result) {
+    bytearray_init(result);
+    while (s[idx]) {
+        uint64_t v = parser_expression(parser, s, &idx);
+        if (v == UNKNOWN) break;
+        bytearray_push(result, v & 0xFF);
+    }
+    return idx;
+}
+
+char* parser_comment(const char *s) {
+    static char result[4096];
+    size_t idx = 0, j = 0;
+    
+    while (s[idx] && j < sizeof(result) - 1) {
+        if (s[idx] == '#') {
+            break;
+        }
+        if (s[idx] == '\\' && s[idx + 1] == '#') {
+            result[j++] = '#';
+            idx += 2;
+        } else if (s[idx] == '\\' && s[idx + 1] == 'n') {
+            result[j++] = '\n';
+            idx += 2;
+        } else {
+            result[j++] = s[idx++];
+        }
+    }
+    result[j] = '\0';
+    return result;
+}
+
+/* ========================================================================
+ * HistoryManager実装
+ * ======================================================================== */
+
+void history_init(HistoryManager *hist) {
+    hist->command_history = NULL;
+    hist->command_count = 0;
+    hist->command_capacity = 0;
+    hist->search_history = NULL;
+    hist->search_count = 0;
+    hist->search_capacity = 0;
+}
+
+char* history_getln(HistoryManager *hist, const char *prompt, const char *mode) {
+    static char buffer[4096];
+    
+    // readline使用
+    char *line = readline(prompt);
+    if (!line) {
+        buffer[0] = '\0';
+        return buffer;
+    }
+    
+    if (line[0]) {
+        add_history(line);
+    }
+    
+    strncpy(buffer, line, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+    free(line);
+    
+    return buffer;
+}
+
+void history_free(HistoryManager *hist) {
+    clear_history();
+}
+
+/* ========================================================================
+ * FileManager実装
+ * ======================================================================== */
+
+void filemgr_init(FileManager *fmgr, MemoryBuffer *mem) {
+    fmgr->memory = mem;
+    fmgr->filename[0] = '\0';
+    fmgr->newfile = false;
+}
+
+bool filemgr_readfile(FileManager *fmgr, const char *filename, char *msg, size_t msg_size) {
+    FILE *f = fopen(filename, "rb");
+    if (!f) {
+        fmgr->newfile = true;
+        bytearray_init(&fmgr->memory->mem);
+        if (msg) snprintf(msg, msg_size, "<new file>");
+        return true;
+    }
+    
+    fmgr->newfile = false;
+    
+    // ファイルサイズ取得
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    if (fsize < 0) {
+        fclose(f);
+        if (msg) snprintf(msg, msg_size, "File read error.");
+        return false;
+    }
+    
+    // メモリ確保と読み込み
+    bytearray_init(&fmgr->memory->mem);
+    if (fsize > 0) {
+        uint8_t *buffer = malloc(fsize);
+        if (!buffer) {
+            fclose(f);
+            if (msg) snprintf(msg, msg_size, "Memory overflow.");
+            return false;
+        }
+        
+        size_t read_size = fread(buffer, 1, fsize, f);
+        for (size_t i = 0; i < read_size; i++) {
+            bytearray_push(&fmgr->memory->mem, buffer[i]);
+        }
+        free(buffer);
+    }
+    
+    fclose(f);
+    if (msg) msg[0] = '\0';
+    return true;
+}
+
+bool filemgr_writefile(FileManager *fmgr, const char *filename, char *msg, size_t msg_size) {
+    FILE *f = fopen(filename, "wb");
+    if (!f) {
+        if (msg) snprintf(msg, msg_size, "Permission denied.");
+        return false;
+    }
+    
+    if (fmgr->memory->mem.size > 0) {
+        fwrite(fmgr->memory->mem.data, 1, fmgr->memory->mem.size, f);
+    }
+    
+    fclose(f);
+    if (msg) snprintf(msg, msg_size, "File written.");
+    return true;
+}
+
+/* ========================================================================
+ * BiEditor実装
+ * ======================================================================== */
+
+void editor_init(BiEditor *editor, const char *termcol) {
+    editor->scriptingflag = false;
+    editor->verbose = false;
+    
+    terminal_init(&editor->term, termcol, editor);
+    memory_init(&editor->memory);
+    display_init(&editor->display, &editor->term, &editor->memory);
+    parser_init(&editor->parser, &editor->memory, &editor->display);
+    history_init(&editor->history);
+    search_init(&editor->search, &editor->memory, &editor->display, editor);
+    filemgr_init(&editor->filemgr, &editor->memory);
+    
+    undostack_init(&editor->undo_stack);
+    undostack_init(&editor->redo_stack);
+    editor->cp = 0;
+}
+
+void editor_save_undo_state(BiEditor *editor) {
+    if (editor->scriptingflag) return;
+    
+    UndoState state;
+    state.mem = bytearray_copy(&editor->memory.mem);
+    state.modified = editor->memory.modified;
+    state.lastchange = editor->memory.lastchange;
+    memcpy(state.mark, editor->memory.mark, sizeof(state.mark));
+    
+    undostack_push(&editor->undo_stack, &state);
+    
+    // スタックサイズ制限
+    if (editor->undo_stack.size > MAX_UNDO_LEVELS) {
+        bytearray_free(&editor->undo_stack.data[0].mem);
+        memmove(editor->undo_stack.data, editor->undo_stack.data + 1,
+                (editor->undo_stack.size - 1) * sizeof(UndoState));
+        editor->undo_stack.size--;
+    }
+    
+    // redoスタックをクリア
+    undostack_free(&editor->redo_stack);
+    undostack_init(&editor->redo_stack);
+}
+
+bool editor_undo(BiEditor *editor) {
+    if (editor->undo_stack.size == 0) {
+        display_stdmm(&editor->display, "No more undo.", editor->scriptingflag, editor->verbose);
+        return false;
+    }
+    
+    // 現在の状態をredoスタックに保存
+    UndoState current;
+    current.mem = bytearray_copy(&editor->memory.mem);
+    current.modified = editor->memory.modified;
+    current.lastchange = editor->memory.lastchange;
+    memcpy(current.mark, editor->memory.mark, sizeof(current.mark));
+    undostack_push(&editor->redo_stack, &current);
+    
+    // undoスタックから状態を復元
+    UndoState *state = undostack_pop(&editor->undo_stack);
+    bytearray_free(&editor->memory.mem);
+    editor->memory.mem = state->mem;
+    editor->memory.modified = state->modified;
+    editor->memory.lastchange = state->lastchange;
+    memcpy(editor->memory.mark, state->mark, sizeof(editor->memory.mark));
+    
+    // カーソル位置調整
+    size_t pos = display_fpos(&editor->display);
+    if (pos >= editor->memory.mem.size && editor->memory.mem.size > 0) {
+        display_jump(&editor->display, editor->memory.mem.size - 1);
+    } else if (editor->memory.mem.size == 0) {
+        display_jump(&editor->display, 0);
+    }
+    
+    char msg[256];
+    snprintf(msg, sizeof(msg), "Undo. (%zu more)", editor->undo_stack.size);
+    display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+    return true;
+}
+
+bool editor_redo(BiEditor *editor) {
+    if (editor->redo_stack.size == 0) {
+        display_stdmm(&editor->display, "No more redo.", editor->scriptingflag, editor->verbose);
+        return false;
+    }
+    
+    // 現在の状態をundoスタックに保存
+    UndoState current;
+    current.mem = bytearray_copy(&editor->memory.mem);
+    current.modified = editor->memory.modified;
+    current.lastchange = editor->memory.lastchange;
+    memcpy(current.mark, editor->memory.mark, sizeof(current.mark));
+    undostack_push(&editor->undo_stack, &current);
+    
+    // redoスタックから状態を復元
+    UndoState *state = undostack_pop(&editor->redo_stack);
+    bytearray_free(&editor->memory.mem);
+    editor->memory.mem = state->mem;
+    editor->memory.modified = state->modified;
+    editor->memory.lastchange = state->lastchange;
+    memcpy(editor->memory.mark, state->mark, sizeof(editor->memory.mark));
+    
+    // カーソル位置調整
+    size_t pos = display_fpos(&editor->display);
+    if (pos >= editor->memory.mem.size && editor->memory.mem.size > 0) {
+        display_jump(&editor->display, editor->memory.mem.size - 1);
+    } else if (editor->memory.mem.size == 0) {
+        display_jump(&editor->display, 0);
+    }
+    
+    char msg[256];
+    snprintf(msg, sizeof(msg), "Redo. (%zu more)", editor->redo_stack.size);
+    display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+    return true;
+}
+
+/* ========================================================================
+ * Editor fedit - フルスクリーンエディタモード
+ * ======================================================================== */
+
+void editor_fedit(BiEditor *editor) {
     bool stroke = false;
-    unsigned char ch;
-    repsw = 0;
+    int ch = 0;
+    editor->display.repsw = 0;
     
-    while (1) {
-        cp = fpos();
-        repaint();
-        printdata();
-        esclocate(curx / 2 * 3 + 13 + (curx & 1), cury + 3);
+    while (true) {
+        editor->cp = display_fpos(&editor->display);
+        display_repaint(&editor->display, editor->filemgr.filename);
+        display_printdata(&editor->display);
+        
+        // カーソル位置
+        terminal_locate(&editor->term,
+                       editor->display.curx / 2 * 3 + 13 + (editor->display.curx & 1),
+                       editor->display.cury + 3);
+        terminal_dispcursor(&editor->term);
         fflush(stdout);
         
-        ch = getch_byte();
-        clrmm();
-        nff = true;
+        ch = terminal_getch();
+        display_clrmm(&editor->display);
+        editor->search.nff = true;
         
-        // Arrow key handling
-        if (ch == 0x1b) {
-            unsigned char b2 = getch_byte();
-            unsigned char b3 = getch_byte();
-            if (b3 == 'A') ch = 'k';
-            else if (b3 == 'B') ch = 'j';
-            else if (b3 == 'C') ch = 'l';
-            else if (b3 == 'D') ch = 'h';
-            else if (b2 == '[' && b3 == '2') ch = 'i';
+        // ESCシーケンス処理
+        if (ch == 27) {
+            int c2 = terminal_getch();
+            if (c2 == '[') {
+                int c3 = terminal_getch();
+                if (c3 == 'A') ch = 'k';
+                else if (c3 == 'B') ch = 'j';
+                else if (c3 == 'C') ch = 'l';
+                else if (c3 == 'D') ch = 'h';
+                else if (c3 == '2') ch = 'i';
+            } else {
+                // ESC単独 - ハイライトクリア
+                matcharray_clear(&editor->display.highlight_ranges);
+                continue;
+            }
         }
         
-        // Search next/previous
+        // 検索コマンド
         if (ch == 'n') {
-            searchnext(fpos() + 1);
+            size_t pos = search_next(&editor->search, display_fpos(&editor->display) + 1,
+                                    editor->memory.mem.size);
+            if (pos != (size_t)-1) {
+                if (editor->display.highlight_ranges.size == 0) {
+                    search_all(&editor->search, editor->memory.mem.size,
+                             &editor->display.highlight_ranges);
+                }
+                display_jump(&editor->display, pos);
+            } else {
+                display_stdmm(&editor->display, "Not found.", editor->scriptingflag, editor->verbose);
+            }
             continue;
         } else if (ch == 'N') {
-            searchlast(fpos() - 1);
+            size_t pos = search_last(&editor->search, display_fpos(&editor->display) - 1,
+                                    editor->memory.mem.size);
+            if (pos != (size_t)-1) {
+                if (editor->display.highlight_ranges.size == 0) {
+                    search_all(&editor->search, editor->memory.mem.size,
+                             &editor->display.highlight_ranges);
+                }
+                display_jump(&editor->display, pos);
+            } else {
+                display_stdmm(&editor->display, "Not found.", editor->scriptingflag, editor->verbose);
+            }
             continue;
         }
         
-        // Page navigation
-        if (ch == 0x02) {  // ctrl-b
-            if (homeaddr >= 256) homeaddr -= 256;
-            else homeaddr = 0;
+        // Undo/Redo
+        else if (ch == 'u') {
+            editor_undo(editor);
             continue;
-        } else if (ch == 0x06) {  // ctrl-f
-            homeaddr += 256;
-            continue;
-        } else if (ch == 0x15) {  // ctrl-u
-            if (homeaddr >= 128) homeaddr -= 128;
-            else homeaddr = 0;
-            continue;
-        } else if (ch == 0x04) {  // ctrl-d
-            homeaddr += 128;
+        } else if (ch == 18) {  // Ctrl+R
+            editor_redo(editor);
             continue;
         }
         
-        // Line navigation
-        if (ch == '^') {
-            curx = 0;
+        // スクロール
+        else if (ch == 2) {  // Ctrl+B
+            if (editor->display.homeaddr >= 256) {
+                editor->display.homeaddr -= 256;
+            } else {
+                editor->display.homeaddr = 0;
+            }
+            continue;
+        } else if (ch == 6) {  // Ctrl+F
+            editor->display.homeaddr += 256;
+            continue;
+        } else if (ch == 21) {  // Ctrl+U
+            if (editor->display.homeaddr >= 128) {
+                editor->display.homeaddr -= 128;
+            } else {
+                editor->display.homeaddr = 0;
+            }
+            continue;
+        } else if (ch == 4) {  // Ctrl+D
+            editor->display.homeaddr += 128;
+            continue;
+        }
+        
+        // カーソル移動
+        else if (ch == '^') {
+            editor->display.curx = 0;
             continue;
         } else if (ch == '$') {
-            curx = 30;
+            editor->display.curx = 30;
             continue;
-        }
-        
-        // Cursor movement
-        if (ch == 'j') {
-            if (cury < LENONSCR / 16 - 1) cury++;
-            else scrdown();
+        } else if (ch == 'j') {
+            if (editor->display.cury < LENONSCR / 16 - 1) {
+                editor->display.cury++;
+            } else {
+                editor->display.homeaddr += 16;
+            }
             continue;
         } else if (ch == 'k') {
-            if (cury > 0) cury--;
-            else scrup();
+            if (editor->display.cury > 0) {
+                editor->display.cury--;
+            } else if (editor->display.homeaddr >= 16) {
+                editor->display.homeaddr -= 16;
+            }
             continue;
         } else if (ch == 'h') {
-            if (curx > 0) {
-                curx--;
-            } else {
-                if (fpos() != 0) {
-                    curx = 31;
-                    if (cury > 0) cury--;
-                    else scrup();
+            if (editor->display.curx > 0) {
+                editor->display.curx--;
+            } else if (display_fpos(&editor->display) != 0) {
+                editor->display.curx = 31;
+                if (editor->display.cury > 0) {
+                    editor->display.cury--;
+                } else if (editor->display.homeaddr >= 16) {
+                    editor->display.homeaddr -= 16;
                 }
             }
             continue;
         } else if (ch == 'l') {
-            inccurx();
-            continue;
-        }
-        
-        // UTF-8 mode toggle
-        if (ch == 0x19) {  // ctrl-y
-            utf8mode = !utf8mode;
-            escclear();
-            repaint();
-            continue;
-        }
-        
-        // Refresh screen
-        if (ch == 0x0c) {  // ctrl-l
-            escclear();
-            if (utf8mode) {
-                repsw = (repsw + 1) % 4;
-            }
-            repaint();
-            continue;
-        }
-        
-        // Write and quit
-        if (ch == 'Z') {
-            if (writefile(filename)) return true;
-            continue;
-        }
-        
-        // Quit
-        if (ch == 'q') {
-            if (lastchange) {
-                stdmm("No write since last change. To overriding quit, use 'q!'.");
-                continue;
-            }
-            return false;
-        }
-        
-        // Display marks
-        if (ch == 'M') {
-            disp_marks();
-            continue;
-        }
-        
-        // Set mark
-        if (ch == 'm') {
-            unsigned char c = getch_byte();
-            c = tolower(c);
-            if (c >= 'a' && c <= 'z') {
-                mark[c - 'a'] = fpos();
-            }
-            continue;
-        }
-        
-        // Search
-        if (ch == '/') {
-            search();
-            continue;
-        }
-        
-        // Jump to mark
-        if (ch == '\'') {
-            unsigned char c = getch_byte();
-            c = tolower(c);
-            if (c >= 'a' && c <= 'z') {
-                jump(mark[c - 'a']);
-            }
-            continue;
-        }
-        
-        // Paste overwrite
-        if (ch == 'p') {
-            if (yank && yank_len > 0) {
-                ovwmem(fpos(), yank, yank_len);
-                jump(fpos() + yank_len);
-            }
-            continue;
-        }
-        
-        // Paste insert
-        if (ch == 'P') {
-            if (yank && yank_len > 0) {
-                insmem(fpos(), yank, yank_len);
-                jump(fpos() + yank_len);
-            }
-            continue;
-        }
-        
-        // Toggle insert mode
-        if (ch == 'i') {
-            insmod = !insmod;
-            stroke = false;
-        }
-        // Hex input
-        else if (strchr("0123456789abcdefABCDEF", ch)) {
-            int64_t addr = fpos();
-            int cval;
-            if (ch >= '0' && ch <= '9') cval = ch - '0';
-            else if (ch >= 'a' && ch <= 'f') cval = ch - 'a' + 10;
-            else cval = ch - 'A' + 10;
-            
-            int sh = (curx & 1) ? 0 : 4;
-            int mask = (curx & 1) ? 0xf0 : 0x0f;
-            
-            if (insmod) {
-                if (!stroke && addr < mem_len) {
-                    unsigned char byte = cval << sh;
-                    insmem(addr, &byte, 1);
-                } else {
-                    setmem(addr, (readmem(addr) & mask) | (cval << sh));
-                }
-                if ((curx & 1) == 0) {
-                    stroke = !stroke;
-                } else {
-                    stroke = false;
-                }
+            if (editor->display.curx < 31) {
+                editor->display.curx++;
             } else {
-                setmem(addr, (readmem(addr) & mask) | (cval << sh));
+                editor->display.curx = 0;
+                if (editor->display.cury < LENONSCR / 16 - 1) {
+                    editor->display.cury++;
+                } else {
+                    editor->display.homeaddr += 16;
+                }
             }
-            inccurx();
+            continue;
         }
-        // Delete byte
-        else if (ch == 'x') {
-            delmem(fpos(), fpos(), false);
+        
+        // 検索開始
+        else if (ch == '/') {
+            terminal_locate(&editor->term, 0, BOTTOMLN);
+            terminal_color(&editor->term, 7, 0);
+            char *input = history_getln(&editor->history, "/", "search");
+            
+            if (input && input[0]) {
+                // 入力の先頭に / を追加してパースする
+                char line[4097];  // バッファサイズを1バイト増やす
+                snprintf(line, sizeof(line), "/%s", input);
+                line[sizeof(line) - 1] = '\0';  // 念のため
+                
+                // 検索処理
+                if (strlen(line) > 2 && line[0] == '/' && line[1] == '/') {
+                    // Hex検索 (//で始まる)
+                    ByteArray sm;
+                    parser_get_hexs(&editor->parser, line, 2, &sm);
+                    if (sm.size > 0) {
+                        bytearray_free(&editor->search.smem);
+                        editor->search.smem = sm;
+                        editor->search.regexp = false;
+                        editor->search.remem[0] = '\0';
+                        
+                        matcharray_clear(&editor->display.highlight_ranges);
+                        search_all(&editor->search, editor->memory.mem.size,
+                                  &editor->display.highlight_ranges);
+                        
+                        if (editor->display.highlight_ranges.size > 0) {
+                            display_jump(&editor->display, editor->display.highlight_ranges.data[0].pos);
+                            char msg[256];
+                            snprintf(msg, sizeof(msg), "Found %zu match(es)",
+                                    editor->display.highlight_ranges.size);
+                            display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+                        } else {
+                            display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
+                        }
+                    }
+                } else if (strlen(line) > 1 && line[0] == '/') {
+                    // 正規表現検索
+                    // 末尾の / を削除
+                    char pattern[1024];
+                    strncpy(pattern, line + 1, sizeof(pattern) - 1);
+                    pattern[sizeof(pattern) - 1] = '\0';
+                    
+                    // 末尾の / を探して削除
+                    size_t len = strlen(pattern);
+                    if (len > 0 && pattern[len - 1] == '/') {
+                        pattern[len - 1] = '\0';
+                    }
+                    
+                    if (pattern[0]) {
+                        strncpy(editor->search.remem, pattern, sizeof(editor->search.remem) - 1);
+                        editor->search.remem[sizeof(editor->search.remem) - 1] = '\0';
+                        editor->search.regexp = true;
+                        bytearray_free(&editor->search.smem);
+                        bytearray_init(&editor->search.smem);
+                        
+                        matcharray_clear(&editor->display.highlight_ranges);
+                        search_all(&editor->search, editor->memory.mem.size,
+                                  &editor->display.highlight_ranges);
+                        
+                        if (editor->display.highlight_ranges.size > 0) {
+                            display_jump(&editor->display, editor->display.highlight_ranges.data[0].pos);
+                            char msg[256];
+                            snprintf(msg, sizeof(msg), "Found %zu match(es)",
+                                    editor->display.highlight_ranges.size);
+                            display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+                        } else {
+                            display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
+                        }
+                    }
+                }
+            }
+            continue;
         }
-        // Command mode
-        else if (ch == ':') {
-            disp_curpos();
-            int f = commandln();
-            erase_curpos();
-            if (f == 1) return true;
-            else if (f == 0) return false;
+        
+        // 表示モード
+        else if (ch == 25) {  // Ctrl+Y
+            editor->display.utf8 = !editor->display.utf8;
+            terminal_clear(&editor->term);
+            display_repaint(&editor->display, editor->filemgr.filename);
+            continue;
+        }
+        
+        // ヤンク・ペースト
+        else if (ch == 'p') {
+            if (editor->memory.yank.size > 0) {
+                editor_save_undo_state(editor);
+                memory_overwrite(&editor->memory, display_fpos(&editor->display),
+                               editor->memory.yank.data, editor->memory.yank.size);
+                display_jump(&editor->display, display_fpos(&editor->display) + editor->memory.yank.size);
+            }
+            continue;
+        } else if (ch == 'P') {
+            if (editor->memory.yank.size > 0) {
+                editor_save_undo_state(editor);
+                matcharray_clear(&editor->display.highlight_ranges);
+                memory_insert(&editor->memory, display_fpos(&editor->display),
+                            editor->memory.yank.data, editor->memory.yank.size);
+                display_jump(&editor->display, display_fpos(&editor->display) + editor->memory.yank.size);
+            }
+            continue;
+        }
+        
+        // 編集モード
+        if (ch == 'i') {
+            editor->display.insmod = !editor->display.insmod;
+            stroke = false;
+        } else if (isxdigit(ch)) {
+            size_t addr = display_fpos(&editor->display);
+            int c = isdigit(ch) ? ch - '0' : tolower(ch) - 'a' + 10;
+            int sh = (editor->display.curx & 1) ? 0 : 4;
+            int mask = (editor->display.curx & 1) ? 0xF0 : 0x0F;
+            
+            if (editor->display.insmod) {
+                if (!stroke && addr < editor->memory.mem.size) {
+                    editor_save_undo_state(editor);
+                    matcharray_clear(&editor->display.highlight_ranges);
+                    uint8_t byte = c << sh;
+                    memory_insert(&editor->memory, addr, &byte, 1);
+                } else {
+                    if (!stroke) editor_save_undo_state(editor);
+                    memory_set(&editor->memory, addr, (memory_read(&editor->memory, addr) & mask) | (c << sh));
+                }
+                stroke = (editor->display.curx & 1) ? false : !stroke;
+            } else {
+                if ((editor->display.curx & 1) == 0) {
+                    editor_save_undo_state(editor);
+                }
+                memory_set(&editor->memory, addr, (memory_read(&editor->memory, addr) & mask) | (c << sh));
+            }
+            
+            // カーソル移動
+            if (editor->display.curx < 31) {
+                editor->display.curx++;
+            } else {
+                editor->display.curx = 0;
+                if (editor->display.cury < LENONSCR / 16 - 1) {
+                    editor->display.cury++;
+                } else {
+                    editor->display.homeaddr += 16;
+                }
+            }
+        } else if (ch == 'x') {
+            editor_save_undo_state(editor);
+            if (memory_delete(&editor->memory, display_fpos(&editor->display),
+                            display_fpos(&editor->display), false, memory_yank)) {
+                matcharray_clear(&editor->display.highlight_ranges);
+            }
+        } else if (ch == ':') {
+            // コマンドモード
+            size_t before_len = editor->memory.mem.size;
+            char *line = history_getln(&editor->history, ":", "command");
+            int f = editor_commandline(editor, line);
+            if (editor->memory.mem.size != before_len) {
+                matcharray_clear(&editor->display.highlight_ranges);
+            }
+            if (f == 1) return;
+            else if (f == 0) return;
         }
     }
 }
 
-// Main function
+void editor_free(BiEditor *editor) {
+    memory_free(&editor->memory);
+    search_free(&editor->search);
+    display_free(&editor->display);
+    history_free(&editor->history);
+    undostack_free(&editor->undo_stack);
+    undostack_free(&editor->redo_stack);
+}
+
+/* ========================================================================
+ * コマンドライン処理
+ * ======================================================================== */
+
+// 前方宣言
+int execute_command(BiEditor *editor, const char *line, size_t idx, 
+                    uint64_t x, uint64_t x2, bool xf, bool xf2);
+
+int editor_commandline(BiEditor *editor, const char *line) {
+    editor->cp = display_fpos(&editor->display);
+    const char *parsed_line = parser_comment(line);
+    
+    if (parsed_line[0] == '\0') return -1;
+    
+    // 終了コマンド
+    if (strcmp(parsed_line, "q") == 0) {
+        if (editor->memory.lastchange) {
+            display_stderr(&editor->display, "No write since last change. To overriding quit, use 'q!'.",
+                          editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+        return 0;
+    } else if (strcmp(parsed_line, "q!") == 0) {
+        return 0;
+    } else if (strcmp(parsed_line, "wq") == 0 || strcmp(parsed_line, "wq!") == 0) {
+        char msg[256];
+        bool success = filemgr_writefile(&editor->filemgr, editor->filemgr.filename, msg, sizeof(msg));
+        if (success) {
+            editor->memory.lastchange = false;
+            return 0;
+        } else {
+            return -1;
+        }
+    }
+    
+    // Undo/Redo
+    else if (strcmp(parsed_line, "u") == 0 || strcmp(parsed_line, "undo") == 0) {
+        editor_undo(editor);
+        return -1;
+    } else if (strcmp(parsed_line, "red") == 0 || strcmp(parsed_line, "redo") == 0) {
+        editor_redo(editor);
+        return -1;
+    }
+    
+    // ファイル書き込み
+    else if (parsed_line[0] == 'w') {
+        char msg[256];
+        const char *fname = editor->filemgr.filename;
+        if (strlen(parsed_line) >= 2) {
+            fname = parsed_line + 1;
+            while (*fname == ' ') fname++;
+        }
+        bool success = filemgr_writefile(&editor->filemgr, fname, msg, sizeof(msg));
+        if (strlen(parsed_line) < 2 && success) {
+            editor->memory.lastchange = false;
+        }
+        if (msg[0]) {
+            if (success) {
+                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            } else {
+                display_stderr(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            }
+        }
+        return -1;
+    }
+    
+    // 特殊コマンド
+    // シェルコマンド実行
+    else if (parsed_line[0] == '!') {
+        if (strlen(parsed_line) >= 2) {
+            terminal_color(&editor->term, 7, 0);
+            printf("\n");
+            fflush(stdout);
+            int ret = system(parsed_line + 1);
+            (void)ret;  // 返り値を使用（警告抑制）
+            terminal_color(&editor->term, 4, 0);
+            printf("[ Hit any key to return ]");
+            fflush(stdout);
+            terminal_getch();
+            terminal_clear(&editor->term);
+        }
+        return -1;
+    }
+    // 値の計算と表示
+    else if (parsed_line[0] == '?') {
+        if (strlen(parsed_line) >= 2) {
+            size_t idx = 1;
+            uint64_t v = parser_expression(&editor->parser, parsed_line, &idx);
+            if (v != UNKNOWN) {
+                char s[4] = ".";
+                if (v < 0x20) {
+                    snprintf(s, sizeof(s), "^%c", (char)(v + '@'));
+                } else if (v >= 0x7E) {
+                    strcpy(s, ".");
+                } else {
+                    snprintf(s, sizeof(s), "'%c'", (char)v);
+                }
+                
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                        "d%llu  x%016llX  o%024llo %s",
+                        (unsigned long long)v, (unsigned long long)v,
+                        (unsigned long long)v, s);
+                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+                
+                // 2行目にバイナリ表示
+                terminal_locate(&editor->term, 0, BOTTOMLN + 1);
+                terminal_color(&editor->term, 6, 0);
+                printf("b");
+                for (int i = 63; i >= 0; i--) {
+                    if (i % 4 == 3) printf(" ");
+                    printf("%d", (int)((v >> i) & 1));
+                }
+                fflush(stdout);
+                terminal_getch();
+                terminal_locate(&editor->term, 0, BOTTOMLN + 1);
+                printf("%*s", 80, "");
+                fflush(stdout);
+            }
+        }
+        return -1;
+    }
+    // 検索
+    else if (parsed_line[0] == '/') {
+        // 検索処理
+        if (strlen(parsed_line) > 2 && parsed_line[0] == '/' && parsed_line[1] == '/') {
+            // Hex検索 (//で始まる)
+            ByteArray sm;
+            parser_get_hexs(&editor->parser, parsed_line, 2, &sm);
+            if (sm.size > 0) {
+                bytearray_free(&editor->search.smem);
+                editor->search.smem = sm;
+                editor->search.regexp = false;
+                editor->search.remem[0] = '\0';
+                
+                matcharray_clear(&editor->display.highlight_ranges);
+                search_all(&editor->search, editor->memory.mem.size,
+                          &editor->display.highlight_ranges);
+                
+                if (editor->display.highlight_ranges.size > 0) {
+                    display_jump(&editor->display, editor->display.highlight_ranges.data[0].pos);
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "Found %zu match(es)",
+                            editor->display.highlight_ranges.size);
+                    display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+                } else {
+                    display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
+                }
+            }
+        } else if (strlen(parsed_line) > 1 && parsed_line[0] == '/') {
+            // 正規表現検索
+            // 末尾の / を削除
+            char pattern[1024];
+            strncpy(pattern, parsed_line + 1, sizeof(pattern) - 1);
+            pattern[sizeof(pattern) - 1] = '\0';
+            
+            // 末尾の / を探して削除
+            size_t len = strlen(pattern);
+            if (len > 0 && pattern[len - 1] == '/') {
+                pattern[len - 1] = '\0';
+            }
+            
+            if (pattern[0]) {
+                strncpy(editor->search.remem, pattern, sizeof(editor->search.remem) - 1);
+                editor->search.remem[sizeof(editor->search.remem) - 1] = '\0';
+                editor->search.regexp = true;
+                bytearray_free(&editor->search.smem);
+                bytearray_init(&editor->search.smem);
+                
+                matcharray_clear(&editor->display.highlight_ranges);
+                search_all(&editor->search, editor->memory.mem.size,
+                          &editor->display.highlight_ranges);
+                
+                if (editor->display.highlight_ranges.size > 0) {
+                    display_jump(&editor->display, editor->display.highlight_ranges.data[0].pos);
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "Found %zu match(es)",
+                            editor->display.highlight_ranges.size);
+                    display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+                } else {
+                    display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
+                }
+            }
+        }
+        return -1;
+    }
+    
+    // 検索（n/N）
+    else if (parsed_line[0] == 'n') {
+        size_t pos = search_next(&editor->search, display_fpos(&editor->display) + 1,
+                                editor->memory.mem.size);
+        if (pos != (size_t)-1) {
+            if (editor->display.highlight_ranges.size == 0) {
+                search_all(&editor->search, editor->memory.mem.size,
+                          &editor->display.highlight_ranges);
+            }
+            display_jump(&editor->display, pos);
+        }
+        return -1;
+    } else if (parsed_line[0] == 'N') {
+        size_t pos = search_last(&editor->search, display_fpos(&editor->display) - 1,
+                                editor->memory.mem.size);
+        if (pos != (size_t)-1) {
+            if (editor->display.highlight_ranges.size == 0) {
+                search_all(&editor->search, editor->memory.mem.size,
+                          &editor->display.highlight_ranges);
+            }
+            display_jump(&editor->display, pos);
+        }
+        return -1;
+    }
+    
+    // 範囲コマンドのパース
+    size_t idx = parser_skipspc(parsed_line, 0);
+    uint64_t x = parser_expression(&editor->parser, parsed_line, &idx);
+    bool xf = false, xf2 = false;
+    uint64_t x2 = x;
+    
+    if (x == UNKNOWN) {
+        x = display_fpos(&editor->display);
+    } else {
+        xf = true;
+    }
+    
+    idx = parser_skipspc(parsed_line, idx);
+    if (parsed_line[idx] == ',') {
+        idx = parser_skipspc(parsed_line, idx + 1);
+        if (parsed_line[idx] == '*') {
+            idx = parser_skipspc(parsed_line, idx + 1);
+            uint64_t t = parser_expression(&editor->parser, parsed_line, &idx);
+            if (t == UNKNOWN) t = 1;
+            x2 = x + t - 1;
+        } else {
+            uint64_t t = parser_expression(&editor->parser, parsed_line, &idx);
+            if (t != UNKNOWN) {
+                x2 = t;
+                xf2 = true;
+            }
+        }
+    }
+    
+    if (x2 < x) x2 = x;
+    idx = parser_skipspc(parsed_line, idx);
+    
+    if (parsed_line[idx] == '\0') {
+        display_jump(&editor->display, x);
+        return -1;
+    }
+    
+    return execute_command(editor, parsed_line, idx, x, x2, xf, xf2);
+}
+
+int execute_command(BiEditor *editor, const char *line, size_t idx, 
+                    uint64_t x, uint64_t x2, bool xf, bool xf2) {
+    // yank
+    if (line[idx] == 'y') {
+        idx++;
+        if (!xf && !xf2) {
+            ByteArray m;
+            idx = parser_get_hexs(&editor->parser, line, idx, &m);
+            bytearray_free(&editor->memory.yank);
+            editor->memory.yank = m;
+        } else {
+            memory_yank(&editor->memory, x, x2);
+        }
+        char msg[256];
+        snprintf(msg, sizeof(msg), "%zu bytes yanked.", editor->memory.yank.size);
+        display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+        return -1;
+    }
+    
+    // paste
+    if (line[idx] == 'p') {
+        if (editor->memory.yank.size > 0) {
+            editor_save_undo_state(editor);
+            memory_overwrite(&editor->memory, x, editor->memory.yank.data, editor->memory.yank.size);
+            display_jump(&editor->display, x + editor->memory.yank.size);
+        }
+        return -1;
+    }
+    
+    if (line[idx] == 'P') {
+        if (editor->memory.yank.size > 0) {
+            editor_save_undo_state(editor);
+            memory_insert(&editor->memory, x, editor->memory.yank.data, editor->memory.yank.size);
+            display_jump(&editor->display, x + editor->memory.yank.size);
+        }
+        return -1;
+    }
+    
+    // mark
+    if (line[idx] == 'm' && line[idx + 1] >= 'a' && line[idx + 1] <= 'z') {
+        editor->memory.mark[line[idx + 1] - 'a'] = x;
+        return -1;
+    }
+    
+    // delete
+    if (line[idx] == 'd') {
+        editor_save_undo_state(editor);
+        if (memory_delete(&editor->memory, x, x2, true, memory_yank)) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "%llu bytes deleted.", (unsigned long long)(x2 - x + 1));
+            display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            display_jump(&editor->display, x);
+        }
+        return -1;
+    }
+    
+    // insert/overwrite
+    if (line[idx] == 'i' || line[idx] == 'I') {
+        char ch = line[idx];
+        idx++;
+        idx = parser_skipspc(line, idx);
+        
+        ByteArray m;
+        if (line[idx] == '/') {
+            char str[1024];
+            idx = parser_get_restr(line, idx + 1, str);
+            bytearray_init(&m);
+            for (size_t i = 0; str[i]; i++) {
+                bytearray_push(&m, str[i]);
+            }
+        } else {
+            idx = parser_get_hexs(&editor->parser, line, idx, &m);
+        }
+        
+        if (m.size > 0) {
+            editor_save_undo_state(editor);
+            if (ch == 'i') {
+                memory_overwrite(&editor->memory, x, m.data, m.size);
+                char msg[256];
+                snprintf(msg, sizeof(msg), "%zu bytes overwritten.", m.size);
+                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            } else {
+                memory_insert(&editor->memory, x, m.data, m.size);
+                char msg[256];
+                snprintf(msg, sizeof(msg), "%zu bytes inserted.", m.size);
+                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            }
+            display_jump(&editor->display, x + m.size);
+        }
+        bytearray_free(&m);
+        return -1;
+    }
+    
+    display_stderr(&editor->display, "Unrecognized command.", editor->scriptingflag, editor->verbose);
+    return -1;
+}
+
+/* ========================================================================
+ * main関数
+ * ======================================================================== */
+
 int main(int argc, char *argv[]) {
-    // Initialize marks
-    for (int i = 0; i < 26; i++) {
-        mark[i] = UNKNOWN;
-    }
+    // コマンドライン引数処理（簡易版）
+    const char *filename = NULL;
+    const char *termcol = "black";
     
-    // Parse command-line arguments
-    char *script_file = NULL;
-    bool write_flag = false;
-    
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
-            script_file = argv[++i];
-        } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
-            strncpy(termcol, argv[++i], sizeof(termcol) - 1);
-        } else if (strcmp(argv[i], "-v") == 0) {
-            verbose = true;
-        } else if (strcmp(argv[i], "-w") == 0) {
-            write_flag = true;
-        } else if (argv[i][0] != '-') {
-            strncpy(filename, argv[i], sizeof(filename) - 1);
-        }
-    }
-    
-    if (strlen(filename) == 0) {
-        fprintf(stderr, "Usage: bi [options] file\n");
-        fprintf(stderr, "Options:\n");
-        fprintf(stderr, "  -s <script>  Execute script file\n");
-        fprintf(stderr, "  -t <color>   Terminal background color (black/white)\n");
-        fprintf(stderr, "  -v           Verbose mode\n");
-        fprintf(stderr, "  -w           Write file when exiting script\n");
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <file> [-t termcolor]\n", argv[0]);
         return 1;
     }
     
-    if (!script_file) {
-        escclear();
-    } else {
-        scriptingflag = true;
-    }
+    filename = argv[1];
     
-    if (!readfile(filename)) {
-        return 1;
-    }
-    
-    // Error handling for crashes
-    if (script_file) {
-        scripting(script_file);
-        if (write_flag && lastchange) {
-            writefile(filename);
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
+            termcol = argv[++i];
         }
-    } else {
-        fedit();
     }
     
-    esccolor(7, 0);
-    escdispcursor();
-    esclocate(0, 23);
-    printf("\n");
+    // エディタ初期化
+    BiEditor editor;
+    editor_init(&editor, termcol);
+    strncpy(editor.filemgr.filename, filename, sizeof(editor.filemgr.filename) - 1);
     
-    // Cleanup
-    if (mem) free(mem);
-    if (yank) free(yank);
-    if (smem) free(smem);
-    if (reObj_compiled) regfree(&reObj);
+    // 画面クリア
+    terminal_clear(&editor.term);
     
+    // ファイル読み込み
+    char msg[256];
+    bool success = filemgr_readfile(&editor.filemgr, filename, msg, sizeof(msg));
+    if (!success) {
+        fprintf(stderr, "%s\n", msg);
+        editor_free(&editor);
+        return 1;
+    } else if (msg[0]) {
+        display_stdmm(&editor.display, msg, editor.scriptingflag, editor.verbose);
+    }
+    
+    // エディタ実行
+    editor_fedit(&editor);
+    
+    // 終了処理
+    terminal_color(&editor.term, 7, 0);
+    terminal_dispcursor(&editor.term);
+    terminal_locate(&editor.term, 0, 23);
+    
+    editor_free(&editor);
     return 0;
 }
