@@ -4,6 +4,7 @@
  * C implementation converted from Python version
  */
 
+#define _POSIX_C_SOURCE 200809L
 #include "bi.h"
 
 /* ========================================================================
@@ -434,17 +435,23 @@ int search_hitre(SearchEngine *search, size_t addr) {
 size_t search_next(SearchEngine *search, size_t fp, size_t mem_len) {
     size_t curpos = fp;
     size_t start = fp;
+    bool wrapped = false;
     
     if (!search->regexp && search->smem.size == 0) {
         return (size_t)-1;
     }
     
+    // Wait.メッセージを表示
+    display_stdmm_wait(search->display, "Wait.", search->editor->scriptingflag, search->editor->verbose);
+    
     while (true) {
         int f = search->regexp ? search_hitre(search, curpos) : search_hit(search, curpos);
         
         if (f == 1) {
+            display_clrmm(search->display);
             return curpos;
         } else if (f < 0) {
+            display_clrmm(search->display);
             return (size_t)-1;
         }
         
@@ -452,13 +459,23 @@ size_t search_next(SearchEngine *search, size_t fp, size_t mem_len) {
         
         if (curpos >= mem_len) {
             if (search->nff) {
+                if (!wrapped) {
+                    // 最初のwrap around
+                    display_stdmm_wait(search->display, 
+                        "reached BOTTOM, wrap around to TOP", 
+                        search->editor->scriptingflag,
+                        search->editor->verbose);
+                    wrapped = true;
+                }
                 curpos = 0;
             } else {
+                display_clrmm(search->display);
                 return (size_t)-1;
             }
         }
         
         if (curpos == start) {
+            display_clrmm(search->display);
             return (size_t)-1;
         }
     }
@@ -467,27 +484,42 @@ size_t search_next(SearchEngine *search, size_t fp, size_t mem_len) {
 size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
     size_t curpos = fp;
     size_t start = fp;
+    bool wrapped = false;
     
     if (!search->regexp && search->smem.size == 0) {
         return (size_t)-1;
     }
     
+    // Wait.メッセージを表示
+    display_stdmm_wait(search->display, "Wait.", search->editor->scriptingflag, search->editor->verbose);
+    
     while (true) {
         int f = search->regexp ? search_hitre(search, curpos) : search_hit(search, curpos);
         
         if (f == 1) {
+            display_clrmm(search->display);
             return curpos;
         } else if (f < 0) {
+            display_clrmm(search->display);
             return (size_t)-1;
         }
         
         if (curpos == 0) {
-            curpos = mem_len - 1;
+            if (!wrapped && mem_len > 0) {
+                // 最初のwrap around
+                display_stdmm_wait(search->display, 
+                    "reached TOP, wrap around to BOTTOM", 
+                    search->editor->scriptingflag,
+                    search->editor->verbose);
+                wrapped = true;
+            }
+            curpos = mem_len > 0 ? mem_len - 1 : 0;
         } else {
             curpos--;
         }
         
         if (curpos == start) {
+            display_clrmm(search->display);
             return (size_t)-1;
         }
     }
@@ -499,6 +531,9 @@ void search_all(SearchEngine *search, size_t mem_len, MatchArray *matches) {
     if (!search->regexp && search->smem.size == 0) {
         return;
     }
+    
+    // Wait.メッセージを表示
+    display_stdmm_wait(search->display, "Wait.", search->editor->scriptingflag, search->editor->verbose);
     
     size_t curpos = 0;
     size_t max_results = 10000;
@@ -518,6 +553,8 @@ void search_all(SearchEngine *search, size_t mem_len, MatchArray *matches) {
             curpos++;
         }
     }
+    
+    display_clrmm(search->display);
 }
 
 void search_free(SearchEngine *search) {
@@ -636,7 +673,7 @@ void display_repaint(Display *disp, const char *filename) {
     // Print title
     terminal_locate(disp->term, 0, 0);
     terminal_color(disp->term, 6, 0);
-    printf("bi C version %s by Taisuke Maekawa           utf8mode:%s     %s   ",
+    printf("bi version %s by Taisuke Maekawa             utf8mode:%s     %s   ",
            VERSION, disp->utf8 ? (disp->repsw ? "on " : "off") : "off",
            disp->insmod ? "insert   " : "overwrite");
     
@@ -692,7 +729,19 @@ void display_repaint(Display *disp, const char *filename) {
             int col = 0;
             for (int i = 0; i < 16 && col < 16; ) {
                 size_t a = y * 16 + i + disp->homeaddr;
+                bool in_hl = disp->highlight_ranges.size > 0 && display_is_highlighted(disp, a);
+                
+                if (in_hl) {
+                    terminal_highlight_color(disp->term);
+                }
+                
                 int len = display_printchar(disp, a);
+                
+                if (in_hl) {
+                    terminal_resetcolor(disp->term);
+                    terminal_color(disp->term, 6, 0);
+                }
+                
                 i += len;
                 col++;
             }
@@ -705,7 +754,18 @@ void display_repaint(Display *disp, const char *filename) {
             // 通常モード
             for (int i = 0; i < 16; i++) {
                 size_t a = y * 16 + i + disp->homeaddr;
+                bool in_hl = disp->highlight_ranges.size > 0 && display_is_highlighted(disp, a);
+                
+                if (in_hl) {
+                    terminal_highlight_color(disp->term);
+                }
+                
                 display_printchar(disp, a);
+                
+                if (in_hl) {
+                    terminal_resetcolor(disp->term);
+                    terminal_color(disp->term, 6, 0);
+                }
             }
         }
         printf(" ");
@@ -760,6 +820,21 @@ void display_stdmm(Display *disp, const char *msg, bool scripting, bool verbose)
     }
 }
 
+void display_stdmm_wait(Display *disp, const char *msg, bool scripting, bool verbose) {
+    if (scripting && !verbose) {
+        return;  // スクリプト中で非verboseの場合は表示しない
+    }
+    if (scripting && verbose) {
+        printf("%s\n", msg);
+    } else {
+        display_clrmm(disp);
+        terminal_color(disp->term, 4, 0);
+        terminal_locate(disp->term, 0, BOTTOMLN);
+        printf(" %s", msg);
+        fflush(stdout);
+    }
+}
+
 void display_stderr(Display *disp, const char *msg, bool scripting, bool verbose) {
     if (scripting) {
         fprintf(stderr, "%s\n", msg);
@@ -802,6 +877,47 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
     if (ch == '$') {
         (*idx)++;
         v = parser->memory->mem.size > 0 ? parser->memory->mem.size - 1 : 0;
+    } else if (ch == '{') {
+        // {} 構文 - Pythonのeval()を使用
+        (*idx)++;
+        char expr[1024];
+        size_t expr_idx = 0;
+        
+        while (s[*idx] && s[*idx] != '}' && expr_idx < sizeof(expr) - 1) {
+            expr[expr_idx++] = s[(*idx)++];
+        }
+        expr[expr_idx] = '\0';
+        
+        if (s[*idx] != '}') {
+            return UNKNOWN;
+        }
+        (*idx)++;
+        
+        // Pythonで評価
+        FILE *tmp = fopen("/tmp/bi_eval_tmp.py", "w");
+        if (tmp) {
+            fprintf(tmp, "print(int(%s))\n", expr);
+            fclose(tmp);
+            
+            FILE *pipe = popen("python3 /tmp/bi_eval_tmp.py 2>/dev/null", "r");
+            if (pipe) {
+                char result[64];
+                if (fgets(result, sizeof(result), pipe)) {
+                    v = strtoull(result, NULL, 10);
+                    pclose(pipe);
+                } else {
+                    pclose(pipe);
+                    unlink("/tmp/bi_eval_tmp.py");
+                    return UNKNOWN;
+                }
+            } else {
+                unlink("/tmp/bi_eval_tmp.py");
+                return UNKNOWN;
+            }
+            unlink("/tmp/bi_eval_tmp.py");
+        } else {
+            return UNKNOWN;
+        }
     } else if (ch == '.') {
         (*idx)++;
         v = display_fpos(parser->display);
@@ -837,13 +953,25 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
 uint64_t parser_expression(Parser *parser, const char *s, size_t *idx) {
     uint64_t x = parser_get_value(parser, s, idx);
     
-    if (s[*idx] && x != UNKNOWN && s[*idx] == '+') {
-        uint64_t y = parser_get_value(parser, s, idx + 1);
-        *idx += 1;
+    if (x == UNKNOWN) {
+        return UNKNOWN;
+    }
+    
+    *idx = parser_skipspc(s, *idx);
+    
+    if (s[*idx] == '+') {
+        *idx = parser_skipspc(s, *idx + 1);
+        uint64_t y = parser_get_value(parser, s, idx);
+        if (y == UNKNOWN) {
+            return UNKNOWN;
+        }
         x = x + y;
-    } else if (s[*idx] && x != UNKNOWN && s[*idx] == '-') {
-        uint64_t y = parser_get_value(parser, s, idx + 1);
-        *idx += 1;
+    } else if (s[*idx] == '-') {
+        *idx = parser_skipspc(s, *idx + 1);
+        uint64_t y = parser_get_value(parser, s, idx);
+        if (y == UNKNOWN) {
+            return UNKNOWN;
+        }
         if (x < y) {
             x = 0;
         } else {
@@ -1223,6 +1351,9 @@ void editor_fedit(BiEditor *editor) {
                 editor->display.homeaddr = 0;
             }
             continue;
+        } else if (ch == 12) {  // Ctrl+L
+            display_repaint(&editor->display, editor->filemgr.filename);
+            continue;
         } else if (ch == 6) {  // Ctrl+F
             editor->display.homeaddr += 256;
             continue;
@@ -1364,6 +1495,59 @@ void editor_fedit(BiEditor *editor) {
         // 表示モード
         else if (ch == 25) {  // Ctrl+Y
             editor->display.utf8 = !editor->display.utf8;
+            editor->display.repsw = !editor->display.repsw;  // repswも切り替え
+            terminal_clear(&editor->term);
+            display_repaint(&editor->display, editor->filemgr.filename);
+            continue;
+        }
+        
+        // ファイル操作 (Z command - 保存して終了)
+        else if (ch == 'Z') {
+            char msg[256];
+            bool success = filemgr_writefile(&editor->filemgr, editor->filemgr.filename, msg, sizeof(msg));
+            if (success) {
+                return;
+            } else {
+                display_stderr(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            }
+            continue;
+        }
+        
+        // 終了 (q command)
+        else if (ch == 'q') {
+            if (editor->memory.lastchange) {
+                display_stdmm(&editor->display, "No write since last change. To overriding quit, use 'q!'.",
+                             editor->scriptingflag, editor->verbose);
+            } else {
+                return;
+            }
+            continue;
+        }
+        
+        // マーク表示 (M command)
+        else if (ch == 'M') {
+            terminal_locate(&editor->term, 0, BOTTOMLN);
+            terminal_color(&editor->term, 7, 0);
+            
+            for (int i = 0; i < 26; i++) {
+                char mark_char = 'a' + i;
+                uint64_t mark_val = editor->memory.mark[i];
+                
+                if (mark_val == UNKNOWN) {
+                    printf("%c = unknown         ", mark_char);
+                } else {
+                    printf("%c = %012llX    ", mark_char, (unsigned long long)mark_val);
+                }
+                
+                if ((i + 1) % 3 == 0) {
+                    printf("\n");
+                }
+            }
+            
+            terminal_color(&editor->term, 4, 0);
+            printf("[ hit any key ]");
+            fflush(stdout);
+            terminal_getch();
             terminal_clear(&editor->term);
             display_repaint(&editor->display, editor->filemgr.filename);
             continue;
@@ -1551,6 +1735,43 @@ int editor_commandline(BiEditor *editor, const char *line) {
         return -1;
     }
     
+    // Python実行 (@コマンド)
+    else if (parsed_line[0] == '@') {
+        if (strlen(parsed_line) >= 2) {
+            const char *python_code = parsed_line + 1;
+            
+            // 一時ファイルにPythonコードを書き出し
+            FILE *tmp = fopen("/tmp/bi_python_tmp.py", "w");
+            if (tmp) {
+                fprintf(tmp, "%s\n", python_code);
+                fclose(tmp);
+                
+                if (!editor->scriptingflag) {
+                    display_clrmm(&editor->display);
+                    terminal_color(&editor->term, 7, 0);
+                    terminal_locate(&editor->term, 0, BOTTOMLN);
+                }
+                
+                int ret = system("python3 /tmp/bi_python_tmp.py 2>&1");
+                (void)ret;
+                
+                if (!editor->scriptingflag) {
+                    terminal_color(&editor->term, 4, 0);
+                    printf("[ Hit a key ]");
+                    fflush(stdout);
+                    terminal_getch();
+                    terminal_clear(&editor->term);
+                }
+                
+                unlink("/tmp/bi_python_tmp.py");
+            } else {
+                display_stderr(&editor->display, "Cannot create temporary file.", 
+                              editor->scriptingflag, editor->verbose);
+            }
+        }
+        return -1;
+    }
+    
     // 特殊コマンド
     // シェルコマンド実行
     else if (parsed_line[0] == '!') {
@@ -1600,9 +1821,11 @@ int editor_commandline(BiEditor *editor, const char *line) {
                     terminal_locate(&editor->term, 0, BOTTOMLN + 1);
                     terminal_color(&editor->term, 6, 0);
                     printf("b");
+                    bool first=true;
                     for (int i = 63; i >= 0; i--) {
-                        if (i % 4 == 3) printf(" ");
+                        if (i % 4 == 3 && !first) printf(" ");
                         printf("%d", (int)((v >> i) & 1));
+                        first=false;
                     }
                     fflush(stdout);
                     terminal_getch();

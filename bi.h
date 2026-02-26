@@ -215,6 +215,7 @@ void display_repaint(Display *disp, const char *filename);
 void display_printdata(Display *disp);
 void display_clrmm(Display *disp);
 void display_stdmm(Display *disp, const char *msg, bool scripting, bool verbose);
+void display_stdmm_wait(Display *disp, const char *msg, bool scripting, bool verbose);
 void display_stderr(Display *disp, const char *msg, bool scripting, bool verbose);
 void display_free(Display *disp);
 
