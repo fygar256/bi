@@ -162,7 +162,7 @@ Speed up
     If you need for bi to be higher speed, you can compile bi.py with
     pyinstaller like this: pyinstaller --onefile bi.py
 
-Partial edit
+Partial edit (not available now)
     -b and -e option set bi partial edit mode like this:
     bi sample -b 100 -e 1ff
     this edits offset of sample file from 0x100 to 0x1ff.
