@@ -166,9 +166,6 @@ Partial edit
     -b and -e option set bi partial edit mode like this:
     bi sample -b 100 -e 1ff
     this edits offset of sample file from 0x100 to 0x1ff.
-★Attention
-
-    It doesn't support undo command yet.
 
 Danger
     With '@' command, if you rewrite global variable of bi with 'global <var>'
@@ -242,6 +239,7 @@ w<file> commands.
 2025-05-09 version 3.4.4.7 stable.
 2025-05-09 version 3.4.4.7rel15 unified i command and f command.
 2025-12-28 version 3.4.4.8 unified i/I command and o/O command.
+2026-02-28 version 3.4.5.12 search command highlight and undo/redo command applied.
 --------------------
 
       I don't take any responsibility for the result of application of
