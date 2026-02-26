@@ -19,7 +19,10 @@ char* readline(const char *prompt) {
     }
     
     char *line = malloc(4096);
-    if (!line) return NULL;
+    if (!line) {
+        fprintf(stderr, "Fatal error: Memory allocation failed in readline\n");
+        return NULL;
+    }
     
     if (fgets(line, 4096, stdin) == NULL) {
         free(line);
@@ -59,7 +62,7 @@ void bytearray_push(ByteArray *arr, uint8_t val) {
         size_t new_cap = arr->capacity == 0 ? 16 : arr->capacity * 2;
         uint8_t *new_data = realloc(arr->data, new_cap);
         if (!new_data) {
-            fprintf(stderr, "Memory allocation failed\n");
+            fprintf(stderr, "Fatal error: Memory allocation failed in bytearray_push\n");
             exit(1);
         }
         arr->data = new_data;
@@ -77,7 +80,7 @@ void bytearray_insert(ByteArray *arr, size_t pos, const uint8_t *data, size_t le
         while (new_cap < new_size) new_cap *= 2;
         uint8_t *new_data = realloc(arr->data, new_cap);
         if (!new_data) {
-            fprintf(stderr, "Memory allocation failed\n");
+            fprintf(stderr, "Fatal error: Memory allocation failed in bytearray_insert\n");
             exit(1);
         }
         arr->data = new_data;
@@ -116,7 +119,7 @@ ByteArray bytearray_copy(const ByteArray *src) {
     if (src->size > 0) {
         dst.data = malloc(src->size);
         if (!dst.data) {
-            fprintf(stderr, "Memory allocation failed\n");
+            fprintf(stderr, "Fatal error: Memory allocation failed in bytearray_copy\n");
             exit(1);
         }
         memcpy(dst.data, src->data, src->size);
@@ -137,7 +140,7 @@ void matcharray_push(MatchArray *arr, Match match) {
         size_t new_cap = arr->capacity == 0 ? 16 : arr->capacity * 2;
         Match *new_data = realloc(arr->data, new_cap * sizeof(Match));
         if (!new_data) {
-            fprintf(stderr, "Memory allocation failed\n");
+            fprintf(stderr, "Fatal error: Memory allocation failed in matcharray_push\n");
             exit(1);
         }
         arr->data = new_data;
@@ -170,7 +173,7 @@ void undostack_push(UndoStack *stack, const UndoState *state) {
         size_t new_cap = stack->capacity == 0 ? 16 : stack->capacity * 2;
         UndoState *new_data = realloc(stack->data, new_cap * sizeof(UndoState));
         if (!new_data) {
-            fprintf(stderr, "Memory allocation failed\n");
+            fprintf(stderr, "Fatal error: Memory allocation failed in undostack_push\n");
             exit(1);
         }
         stack->data = new_data;
@@ -316,7 +319,7 @@ void memory_insert(MemoryBuffer *mem, size_t start, const uint8_t *data, size_t 
 bool memory_delete(MemoryBuffer *mem, size_t start, size_t end, bool yf,
                    size_t (*yank_func)(MemoryBuffer*, size_t, size_t)) {
     size_t length = end - start + 1;
-    if (length == 0 || start >= mem->mem.size) return false;
+    if (length == 0 || start >= mem->mem.size || end>(mem->mem.size-1)) return false;
     
     if (yf && yank_func) {
         yank_func(mem, start, end);
@@ -448,10 +451,12 @@ size_t search_next(SearchEngine *search, size_t fp, size_t mem_len) {
         int f = search->regexp ? search_hitre(search, curpos) : search_hit(search, curpos);
         
         if (f == 1) {
-            display_clrmm(search->display);
+            if (wrapped==false)
+                display_clrmm(search->display);
             return curpos;
         } else if (f < 0) {
-            display_clrmm(search->display);
+            if (wrapped==false)
+                display_clrmm(search->display);
             return (size_t)-1;
         }
         
@@ -462,7 +467,7 @@ size_t search_next(SearchEngine *search, size_t fp, size_t mem_len) {
                 if (!wrapped) {
                     // 最初のwrap around
                     display_stdmm_wait(search->display, 
-                        "reached BOTTOM, wrap around to TOP", 
+                        "Search reached BOTTOM, wrap around to TOP", 
                         search->editor->scriptingflag,
                         search->editor->verbose);
                     wrapped = true;
@@ -475,7 +480,7 @@ size_t search_next(SearchEngine *search, size_t fp, size_t mem_len) {
         }
         
         if (curpos == start) {
-            display_clrmm(search->display);
+            //display_clrmm(search->display);
             return (size_t)-1;
         }
     }
@@ -497,10 +502,12 @@ size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
         int f = search->regexp ? search_hitre(search, curpos) : search_hit(search, curpos);
         
         if (f == 1) {
-            display_clrmm(search->display);
+            if (wrapped==false)
+                display_clrmm(search->display);
             return curpos;
         } else if (f < 0) {
-            display_clrmm(search->display);
+            if (wrapped==false)
+                display_clrmm(search->display);
             return (size_t)-1;
         }
         
@@ -508,7 +515,7 @@ size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
             if (!wrapped && mem_len > 0) {
                 // 最初のwrap around
                 display_stdmm_wait(search->display, 
-                    "reached TOP, wrap around to BOTTOM", 
+                    "Search reached TOP, wrap around to BOTTOM", 
                     search->editor->scriptingflag,
                     search->editor->verbose);
                 wrapped = true;
@@ -519,7 +526,7 @@ size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
         }
         
         if (curpos == start) {
-            display_clrmm(search->display);
+            //display_clrmm(search->display);
             return (size_t)-1;
         }
     }
@@ -673,7 +680,7 @@ void display_repaint(Display *disp, const char *filename) {
     // Print title
     terminal_locate(disp->term, 0, 0);
     terminal_color(disp->term, 6, 0);
-    printf("bi version %s by Taisuke Maekawa             utf8mode:%s     %s   ",
+    printf("bi C version %s by Taisuke Maekawa           utf8mode:%s     %s   ",
            VERSION, disp->utf8 ? (disp->repsw ? "on " : "off") : "off",
            disp->insmod ? "insert   " : "overwrite");
     
@@ -840,7 +847,7 @@ void display_stderr(Display *disp, const char *msg, bool scripting, bool verbose
         fprintf(stderr, "%s\n", msg);
     } else {
         display_clrmm(disp);
-        terminal_color(disp->term, 3, 0);
+        terminal_color(disp->term, 3, 0);  // マゼンタ色でエラー表示
         terminal_locate(disp->term, 0, BOTTOMLN);
         printf(" %s", msg);
         fflush(stdout);
@@ -889,9 +896,15 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
         expr[expr_idx] = '\0';
         
         if (s[*idx] != '}') {
+            // 構文エラー: 閉じ括弧がない
             return UNKNOWN;
         }
         (*idx)++;
+        
+        if (expr_idx == 0) {
+            // 構文エラー: 空の式
+            return UNKNOWN;
+        }
         
         // Pythonで評価
         FILE *tmp = fopen("/tmp/bi_eval_tmp.py", "w");
@@ -929,6 +942,9 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
             return UNKNOWN;
         }
         (*idx)++;
+    } else if (ch == '\'' && s[*idx + 1]) {
+        // 構文エラー: 無効なマーク文字
+        return UNKNOWN;
     } else if (isxdigit((unsigned char)ch)) {
         while (isxdigit((unsigned char)s[*idx])) {
             v = 16 * v + (isdigit((unsigned char)s[*idx]) ? 
@@ -938,11 +954,16 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
         }
     } else if (ch == '%') {
         (*idx)++;
+        if (!isdigit((unsigned char)s[*idx])) {
+            // 構文エラー: %の後に数字がない
+            return UNKNOWN;
+        }
         while (isdigit((unsigned char)s[*idx])) {
             v = 10 * v + (s[*idx] - '0');
             (*idx)++;
         }
     } else {
+        // 構文エラー: 不正な文字
         return UNKNOWN;
     }
     
@@ -963,6 +984,7 @@ uint64_t parser_expression(Parser *parser, const char *s, size_t *idx) {
         *idx = parser_skipspc(s, *idx + 1);
         uint64_t y = parser_get_value(parser, s, idx);
         if (y == UNKNOWN) {
+            // 構文エラー: +の後に有効な値がない
             return UNKNOWN;
         }
         x = x + y;
@@ -970,6 +992,7 @@ uint64_t parser_expression(Parser *parser, const char *s, size_t *idx) {
         *idx = parser_skipspc(s, *idx + 1);
         uint64_t y = parser_get_value(parser, s, idx);
         if (y == UNKNOWN) {
+            // 構文エラー: -の後に有効な値がない
             return UNKNOWN;
         }
         if (x < y) {
@@ -1008,10 +1031,29 @@ size_t parser_get_restr(const char *s, size_t idx, char *result) {
 
 size_t parser_get_hexs(Parser *parser, const char *s, size_t idx, ByteArray *result) {
     bytearray_init(result);
+    idx = parser_skipspc(s, idx);
+
+    if (idx+1<strlen(s) && s[idx]=='/' && s[idx+1]=='/') {
+        idx+=2;
+        }
+    idx = parser_skipspc(s, idx);
+    
+    size_t start_idx = idx;
     while (s[idx]) {
         uint64_t v = parser_expression(parser, s, &idx);
-        if (v == UNKNOWN) break;
+        if (v == UNKNOWN) {
+            // 構文エラー: 無効な値を検出
+            if (idx == start_idx) {
+                // 何も読み取れなかった場合
+                break;
+            }
+            // 値の途中で失敗した場合は構文エラー
+            bytearray_free(result);
+            bytearray_init(result);
+            break;
+        }
         bytearray_push(result, v & 0xFF);
+        start_idx = idx;
     }
     return idx;
 }
@@ -1190,6 +1232,15 @@ void editor_save_undo_state(BiEditor *editor) {
     undostack_free(&editor->redo_stack);
     undostack_init(&editor->redo_stack);
 }
+
+bool editor_dec_undo(BiEditor *editor) {
+    if (editor->undo_stack.size == 0) {
+        return false;
+    }
+    UndoState *state = undostack_pop(&editor->undo_stack);
+    return true;
+}
+    
 
 bool editor_undo(BiEditor *editor) {
     if (editor->undo_stack.size == 0) {
@@ -1645,6 +1696,9 @@ void editor_fedit(BiEditor *editor) {
             if (memory_delete(&editor->memory, display_fpos(&editor->display),
                             display_fpos(&editor->display), false, memory_yank)) {
                 matcharray_clear(&editor->display.highlight_ranges);
+            } else {
+                display_stderr(&editor->display, "Invalid range.", editor->scriptingflag,editor->verbose);
+                editor_dec_undo(editor);
             }
         } else if (ch == ':') {
             // コマンドモード
@@ -1740,6 +1794,16 @@ int editor_commandline(BiEditor *editor, const char *line) {
         if (strlen(parsed_line) >= 2) {
             const char *python_code = parsed_line + 1;
             
+            // 空白をスキップ
+            while (*python_code == ' ') python_code++;
+            
+            if (*python_code == '\0') {
+                // 構文エラー: Pythonコードが空
+                display_stderr(&editor->display, "Syntax error: No Python code specified.",
+                              editor->scriptingflag, editor->verbose);
+                return -1;
+            }
+            
             // 一時ファイルにPythonコードを書き出し
             FILE *tmp = fopen("/tmp/bi_python_tmp.py", "w");
             if (tmp) {
@@ -1768,6 +1832,10 @@ int editor_commandline(BiEditor *editor, const char *line) {
                 display_stderr(&editor->display, "Cannot create temporary file.", 
                               editor->scriptingflag, editor->verbose);
             }
+        } else {
+            // 構文エラー: @の後に何もない
+            display_stderr(&editor->display, "Syntax error: No Python code specified.",
+                          editor->scriptingflag, editor->verbose);
         }
         return -1;
     }
@@ -1776,6 +1844,16 @@ int editor_commandline(BiEditor *editor, const char *line) {
     // シェルコマンド実行
     else if (parsed_line[0] == '!') {
         if (strlen(parsed_line) >= 2) {
+            const char *shell_cmd = parsed_line + 1;
+            while (*shell_cmd == ' ') shell_cmd++;
+            
+            if (*shell_cmd == '\0') {
+                // 構文エラー: シェルコマンドが空
+                display_stderr(&editor->display, "Syntax error: No shell command specified.",
+                              editor->scriptingflag, editor->verbose);
+                return -1;
+            }
+            
             if (!editor->scriptingflag) {
                 terminal_color(&editor->term, 7, 0);
                 printf("\n");
@@ -1791,6 +1869,10 @@ int editor_commandline(BiEditor *editor, const char *line) {
                 terminal_getch();
                 terminal_clear(&editor->term);
             }
+        } else {
+            // 構文エラー: !の後に何もない
+            display_stderr(&editor->display, "Syntax error: No shell command specified.",
+                          editor->scriptingflag, editor->verbose);
         }
         return -1;
     }
@@ -1799,6 +1881,11 @@ int editor_commandline(BiEditor *editor, const char *line) {
         if (strlen(parsed_line) >= 2) {
             size_t idx = 1;
             uint64_t v = parser_expression(&editor->parser, parsed_line, &idx);
+            if (v == UNKNOWN) {
+                display_stderr(&editor->display, "Syntax error: Invalid expression.",
+                              editor->scriptingflag, editor->verbose);
+                return -1;
+            }
             if (v != UNKNOWN) {
                 char s[4] = ".";
                 if (v < 0x20) {
@@ -1871,6 +1958,11 @@ int editor_commandline(BiEditor *editor, const char *line) {
                 } else {
                     display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
                 }
+            } else {
+                // 構文エラー: 検索パターンが無効
+                display_stderr(&editor->display, "Syntax error: Invalid hex search pattern.",
+                              editor->scriptingflag, editor->verbose);
+                return -1;
             }
         } else if (strlen(parsed_line) > 1 && parsed_line[0] == '/') {
             // 正規表現検索
@@ -1883,6 +1975,11 @@ int editor_commandline(BiEditor *editor, const char *line) {
             size_t len = strlen(pattern);
             if (len > 0 && pattern[len - 1] == '/') {
                 pattern[len - 1] = '\0';
+            } else {
+                // 構文エラー: 正規表現の終了/がない
+                display_stderr(&editor->display, "Syntax error: Missing closing '/' in regex.",
+                              editor->scriptingflag, editor->verbose);
+                return -1;
             }
             
             if (pattern[0]) {
@@ -1905,6 +2002,11 @@ int editor_commandline(BiEditor *editor, const char *line) {
                 } else {
                     display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
                 }
+            } else {
+                // 構文エラー: 空の正規表現
+                display_stderr(&editor->display, "Syntax error: Empty regex pattern.",
+                              editor->scriptingflag, editor->verbose);
+                return -1;
             }
         }
         return -1;
@@ -1946,7 +2048,17 @@ int editor_commandline(BiEditor *editor, const char *line) {
                 if (result == 0 || result == 1) {
                     return result;
                 }
+            } else {
+                // 構文エラー: スクリプトファイルが指定されていない
+                display_stderr(&editor->display, "Syntax error: No script file specified.",
+                              editor->scriptingflag, editor->verbose);
+                editor->verbose = old_verbose;
+                editor->scriptingflag = old_scripting;
             }
+        } else {
+            // 構文エラー: T/tの後に何もない
+            display_stderr(&editor->display, "Syntax error: No script file specified.",
+                          editor->scriptingflag, editor->verbose);
         }
         return -1;
     }
@@ -2055,9 +2167,17 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     }
     
     // mark
-    if (line[idx] == 'm' && line[idx + 1] >= 'a' && line[idx + 1] <= 'z') {
-        editor->memory.mark[line[idx + 1] - 'a'] = x;
-        return -1;
+    if (line[idx] == 'm') {
+        if (line[idx + 1] >= 'a' && line[idx + 1] <= 'z') {
+            editor->memory.mark[line[idx + 1] - 'a'] = x;
+            return -1;
+        } else if (line[idx + 1] != '\0') {
+            // 構文エラー: 無効なマーク文字
+            display_stderr(&editor->display, "Syntax error: Invalid mark character (use 'ma' to 'mz').",
+                          editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+        // 'm'だけの場合は次の処理へ（未認識コマンドとして処理される）
     }
     
     // read file (r/R commands)
@@ -2125,44 +2245,181 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             snprintf(msg, sizeof(msg), "%llu bytes deleted.", (unsigned long long)(x2 - x + 1));
             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
             display_jump(&editor->display, x);
+        } else {
+            display_stderr(&editor->display, "Invalid range.", editor->scriptingflag,editor->verbose);
+            editor_dec_undo(editor);
         }
         return -1;
     }
     
     // insert/overwrite
+    // execute_command() 内の i / I 処理部分を以下のように置き換え
+
     if (line[idx] == 'i' || line[idx] == 'I') {
         char ch = line[idx];
         idx++;
         idx = parser_skipspc(line, idx);
-        
-        ByteArray m;
+
+        // データ部分を読み込む
+        ByteArray pattern;
+        bytearray_init(&pattern);
+
+        bool is_repeat = false;
+        uint64_t repeat_count = 1;
+
+        // まずパターンを読む（/.../ か 16進数列）
         if (line[idx] == '/') {
             char str[1024];
             idx = parser_get_restr(line, idx + 1, str);
-            bytearray_init(&m);
             for (size_t i = 0; str[i]; i++) {
-                bytearray_push(&m, str[i]);
+                bytearray_push(&pattern, (uint8_t)str[i]);
             }
         } else {
-            idx = parser_get_hexs(&editor->parser, line, idx, &m);
+            idx = parser_get_hexs(&editor->parser, line, idx, &pattern);
         }
-        
-        if (m.size > 0) {
-            editor_save_undo_state(editor);
-            if (ch == 'i') {
-                memory_overwrite(&editor->memory, x, m.data, m.size);
-                char msg[256];
-                snprintf(msg, sizeof(msg), "%zu bytes overwritten.", m.size);
-                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+
+        if (pattern.size == 0) {
+            display_stderr(&editor->display, "No data specified.", 
+                           editor->scriptingflag, editor->verbose);
+            bytearray_free(&pattern);
+            return -1;
+        }
+
+        // * n のパターンをチェック
+        idx = parser_skipspc(line, idx);
+        if (line[idx] == '*') {
+            idx++;
+            idx = parser_skipspc(line, idx);
+            uint64_t n = parser_expression(&editor->parser, line, &idx);
+            if (n != UNKNOWN && n > 0) {
+                is_repeat = true;
+                repeat_count = n;
             } else {
-                memory_insert(&editor->memory, x, m.data, m.size);
-                char msg[256];
-                snprintf(msg, sizeof(msg), "%zu bytes inserted.", m.size);
-                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+                display_stderr(&editor->display, "Invalid repeat count.", 
+                               editor->scriptingflag, editor->verbose);
+                bytearray_free(&pattern);
+                return -1;
             }
-            display_jump(&editor->display, x + m.size);
         }
-        bytearray_free(&m);
+
+        // 範囲チェック（削除・上書き系で重要）
+        if (xf && xf2) {  // 範囲指定あり
+            if (x > x2) {
+                display_stderr(&editor->display, "Invalid range (start > end).", 
+                               editor->scriptingflag, editor->verbose);
+                bytearray_free(&pattern);
+                return -1;
+            }
+            if (x >= editor->memory.mem.size) {
+                display_stderr(&editor->display, "Invalid range.", 
+                               editor->scriptingflag, editor->verbose);
+                bytearray_free(&pattern);
+                return -1;
+            }
+            // endがファイルサイズを超えていたら縮める（要件3対応）
+            if (x2 >= editor->memory.mem.size) {
+                x2 = editor->memory.mem.size - 1;
+            }
+        } else {
+            // 範囲指定なし → カーソル位置から
+            x = display_fpos(&editor->display);
+            x2 = x;  // とりあえず1バイト扱い（後で調整）
+        }
+
+        editor_save_undo_state(editor);
+
+        if (ch == 'I') {  // insert (挿入)
+            ByteArray data_to_insert;
+            bytearray_init(&data_to_insert);
+
+            if (is_repeat) {
+                // * n の場合 → パターンをn回繰り返す
+                for (uint64_t r = 0; r < repeat_count; r++) {
+                    for (size_t k = 0; k < pattern.size; k++) {
+                        bytearray_push(&data_to_insert, pattern.data[k]);
+                    }
+                }
+            } else if (xf && xf2) {
+                // 範囲指定あり → 範囲長に合わせて繰り返し
+                uint64_t range_len = x2 - x + 1;
+                uint64_t full = range_len / pattern.size;
+                uint64_t rem  = range_len % pattern.size;
+
+                for (uint64_t r = 0; r < full; r++) {
+                    for (size_t k = 0; k < pattern.size; k++) {
+                        bytearray_push(&data_to_insert, pattern.data[k]);
+                    }
+                }
+                for (size_t k = 0; k < rem; k++) {
+                    bytearray_push(&data_to_insert, pattern.data[k]);
+                }
+            } else {
+                // 範囲なし → パターンをそのまま1回
+                for (size_t k = 0; k < pattern.size; k++) {
+                    bytearray_push(&data_to_insert, pattern.data[k]);
+                }
+            }
+
+            memory_insert(&editor->memory, x, data_to_insert.data, data_to_insert.size);
+            display_jump(&editor->display, x + data_to_insert.size);
+
+            char msg[256];
+            snprintf(msg, sizeof(msg), "%zu bytes inserted.", data_to_insert.size);
+            display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+
+            bytearray_free(&data_to_insert);
+        }
+        else {  // 'i' → overwrite
+            uint64_t range_len = 1;
+            if (!xf&&!xf2) {
+                range_len = pattern.size * repeat_count;
+            } else if (xf&&xf2) {
+                range_len=x2-x+1;
+            } else if (xf&&!xf2) {
+                range_len=pattern.size * repeat_count;
+            } else {
+                range_len=0;
+            }
+            ByteArray data_to_write;
+            bytearray_init(&data_to_write);
+
+            if (is_repeat) {
+                // * n の場合 → パターンをn回（範囲を超えてもOK）
+                for (uint64_t r = 0; r < repeat_count; r++) {
+                    for (size_t k = 0; k < pattern.size; k++) {
+                        bytearray_push(&data_to_write, pattern.data[k]);
+                    }
+                }
+                // 範囲より長い場合は切り捨て
+                if (data_to_write.size > range_len) {
+                    data_to_write.size = range_len;
+                }
+            } else {
+                // 範囲に合わせて繰り返し埋める
+                uint64_t full = range_len / pattern.size;
+                uint64_t rem  = range_len % pattern.size;
+
+                for (uint64_t r = 0; r < full; r++) {
+                    for (size_t k = 0; k < pattern.size; k++) {
+                        bytearray_push(&data_to_write, pattern.data[k]);
+                    }
+                }
+                for (size_t k = 0; k < rem; k++) {
+                    bytearray_push(&data_to_write, pattern.data[k]);
+                }
+            }
+
+            memory_overwrite(&editor->memory, x, data_to_write.data, data_to_write.size);
+            display_jump(&editor->display, x + data_to_write.size);
+
+            char msg[256];
+            snprintf(msg, sizeof(msg), "%zu bytes overwritten.", data_to_write.size);
+            display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+
+            bytearray_free(&data_to_write);
+        }
+
+        bytearray_free(&pattern);
         return -1;
     }
     
@@ -2227,6 +2484,12 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     }
     
     if (cmd == 0) {
+        // コマンド文字が見つからない場合
+        if (idx < strlen(line) && line[idx] != '\0' && line[idx] != ' ') {
+            // 未認識のコマンド文字がある
+            display_stderr(&editor->display, "Unrecognized command.", 
+                          editor->scriptingflag, editor->verbose);
+        }
         return -1;
     }
     
@@ -2534,6 +2797,13 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
     idx = parser_skipspc(line, idx);
     if (idx < strlen(line) && line[idx] == '/') {
         idx++;
+        if (idx >= strlen(line)) {
+            // 構文エラー: /の後に何もない
+            display_stderr(&editor->display, "Syntax error: Missing replacement pattern.", 
+                          editor->scriptingflag, editor->verbose);
+            bytearray_free(&replacement);
+            return -1;
+        }
         if (line[idx] == '/') {
             // 16進数
             idx = parser_get_hexs(&editor->parser, line, idx + 1, &replacement);
