@@ -80,7 +80,7 @@ bi file
 man bi
 ```
 
-##### Title
+# Title
 
 vi like binary editor 'bi'
 
