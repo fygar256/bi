@@ -1,9 +1,3 @@
-/*
- * bi - Binary Editor
- * Version 3.4.5
- * C implementation converted from Python version
- */
-
 #define _POSIX_C_SOURCE 200809L
 #include "bi.h"
 
@@ -680,8 +674,8 @@ void display_repaint(Display *disp, const char *filename) {
     // Print title
     terminal_locate(disp->term, 0, 0);
     terminal_color(disp->term, 6, 0);
-    printf("bi C version %s by Taisuke Maekawa           utf8mode:%s     %s   ",
-           VERSION, disp->utf8 ? (disp->repsw ? "on " : "off") : "off",
+    printf("bi C version 3.5.0 by Taisuke Maekawa           utf8mode:%s     %s   ",
+           disp->utf8 ? (disp->repsw ? "on " : "off") : "off",
            disp->insmod ? "insert   " : "overwrite");
     
     terminal_color(disp->term, 5, 0);
@@ -1105,6 +1099,156 @@ char* history_getln(HistoryManager *hist, const char *prompt, const char *mode) 
     
     if (line[0]) {
         add_history(line);
+    }
+    
+    strncpy(buffer, line, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+    free(line);
+    
+    return buffer;
+}
+
+
+/* ========================================================================
+ * Python版から移植: 履歴管理の改善
+ * コマンド履歴と検索履歴を分離管理する機能を追加
+ * ======================================================================== */
+
+/*
+ * 注: この実装は Python版の HistoryManager クラスの機能を C に移植したものです
+ * 
+ * Python版の特徴:
+ * - self.histories = {'command': [], 'search': []}
+ * - get_history_list(): readlineから履歴を取得
+ * - set_history_list(mode): モード別に履歴を設定
+ * - getln(s, mode): モードを切り替えて入力
+ * 
+ * C版での実装:
+ * - command_history[], search_history[] で分離管理
+ * - history_switch_mode() でモード切替
+ * - history_getln_with_mode() でモード対応入力
+ */
+
+#define HISTORY_MODE_COMMAND 0
+#define HISTORY_MODE_SEARCH  1
+
+typedef struct {
+    char **entries;      /* 履歴エントリ配列 */
+    size_t count;        /* 現在の履歴数 */
+    size_t capacity;     /* 配列の容量 */
+    size_t max_size;     /* 最大履歴数 */
+} HistoryStore;
+
+typedef struct {
+    HistoryStore command_hist;  /* コマンド履歴 */
+    HistoryStore search_hist;   /* 検索履歴 */
+    int current_mode;           /* 現在のモード */
+} HistoryManagerEx;
+
+void history_store_init(HistoryStore *store, size_t max_size) {
+    store->entries = NULL;
+    store->count = 0;
+    store->capacity = 0;
+    store->max_size = max_size;
+}
+
+void history_store_add(HistoryStore *store, const char *entry) {
+    if (!entry || entry[0] == '\0') return;
+    
+    /* 容量チェックと拡張 */
+    if (store->count >= store->capacity) {
+        size_t new_cap = store->capacity == 0 ? 16 : store->capacity * 2;
+        char **new_entries = realloc(store->entries, new_cap * sizeof(char*));
+        if (!new_entries) return;
+        store->entries = new_entries;
+        store->capacity = new_cap;
+    }
+    
+    /* 最大サイズチェック */
+    if (store->count >= store->max_size) {
+        /* 最古のエントリを削除 */
+        free(store->entries[0]);
+        memmove(store->entries, store->entries + 1, 
+                (store->count - 1) * sizeof(char*));
+        store->count--;
+    }
+    
+    /* エントリ追加 */
+    store->entries[store->count] = strdup(entry);
+    if (store->entries[store->count]) {
+        store->count++;
+    }
+}
+
+void history_store_free(HistoryStore *store) {
+    for (size_t i = 0; i < store->count; i++) {
+        free(store->entries[i]);
+    }
+    free(store->entries);
+    store->entries = NULL;
+    store->count = 0;
+    store->capacity = 0;
+}
+
+void history_manager_ex_init(HistoryManagerEx *mgr) {
+    history_store_init(&mgr->command_hist, 1000);
+    history_store_init(&mgr->search_hist, 1000);
+    mgr->current_mode = HISTORY_MODE_COMMAND;
+}
+
+void history_manager_ex_free(HistoryManagerEx *mgr) {
+    history_store_free(&mgr->command_hist);
+    history_store_free(&mgr->search_hist);
+}
+
+void history_manager_ex_add(HistoryManagerEx *mgr, const char *entry, int mode) {
+    /* Python版の histories[mode].append(entry) 相当 */
+    if (mode == HISTORY_MODE_SEARCH) {
+        history_store_add(&mgr->search_hist, entry);
+    } else {
+        history_store_add(&mgr->command_hist, entry);
+    }
+}
+
+void history_manager_ex_switch_mode(HistoryManagerEx *mgr, int mode) {
+    /* Python版の set_history_list(mode) 相当 */
+    mgr->current_mode = mode;
+    
+#ifdef HAVE_READLINE
+    /* readlineの履歴を切り替え */
+    clear_history();
+    
+    HistoryStore *store = (mode == HISTORY_MODE_SEARCH) ? 
+                          &mgr->search_hist : &mgr->command_hist;
+    
+    for (size_t i = 0; i < store->count; i++) {
+        add_history(store->entries[i]);
+    }
+#endif
+}
+
+char* history_manager_ex_getln(HistoryManagerEx *mgr, const char *prompt, int mode) {
+    /* Python版の getln(s, mode) 相当 */
+    static char buffer[4096];
+    
+    /* モード切替 */
+    if (mode != mgr->current_mode) {
+        history_manager_ex_switch_mode(mgr, mode);
+    }
+    
+    /* 入力取得 */
+    char *line = readline(prompt);
+    if (!line) {
+        buffer[0] = '\0';
+        return buffer;
+    }
+    
+    /* 履歴に追加 */
+    if (line[0]) {
+#ifdef HAVE_READLINE
+        add_history(line);
+#endif
+        history_manager_ex_add(mgr, line, mode);
     }
     
     strncpy(buffer, line, sizeof(buffer) - 1);

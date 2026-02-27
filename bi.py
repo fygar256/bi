@@ -8,7 +8,52 @@ import re
 import os
 import io
 import argparse
-import readline
+
+# ========================================================================
+# readline フォールバック実装 (C版の #ifndef HAVE_READLINE から移植)
+# ========================================================================
+try:
+    import readline
+    HAVE_READLINE = True
+except ImportError:
+    HAVE_READLINE = False
+    import sys
+    print("Warning: readline module not available. Using fallback implementation.", 
+          file=sys.stderr)
+    
+    class ReadlineFallback:
+        """
+        C版の readline 代替実装を Python に移植
+        readlineがない環境（Windowsなど）でも基本的な機能を提供
+        """
+        def __init__(self):
+            self._history = []
+        
+        def add_history(self, line):
+            """履歴に追加（重複は除く）"""
+            if line and (not self._history or self._history[-1] != line):
+                self._history.append(line)
+                # 履歴サイズの制限
+                if len(self._history) > 1000:
+                    self._history.pop(0)
+        
+        def clear_history(self):
+            """履歴をクリア"""
+            self._history = []
+        
+        def get_history_item(self, index):
+            """履歴項目を取得（1-indexed、readline互換）"""
+            if 1 <= index <= len(self._history):
+                return self._history[index - 1]
+            return None
+        
+        def get_current_history_length(self):
+            """現在の履歴数を取得"""
+            return len(self._history)
+    
+    readline = ReadlineFallback()
+
+
 
 
 class Terminal:
@@ -313,6 +358,7 @@ class SearchEngine:
     def searchnext(self, fp, mem_len):
         curpos = fp
         start = fp
+        wrapped = False
         if not self.regexp and not self.smem:
             return False
         self.stdmm_wait("Wait.")
@@ -320,16 +366,21 @@ class SearchEngine:
             f = self.hitre(curpos) if self.regexp else self.hit(curpos)
             
             if f == 1:
-                self.clrmm()
+                if not wrapped:
+                    self.clrmm()
                 return curpos
             elif f < 0:
-                self.clrmm()
+                if not wrapped:
+                    self.clrmm()
                 return None
             
             curpos += 1
             
             if curpos >= mem_len:
                 if self.nff:
+                    if not wrapped:
+                        self.stdmm_wait("Search reached BOTTOM, wrap around to TOP.")
+                        wrapped = True
                     curpos = 0
                 else:
                     self.clrmm()
@@ -342,6 +393,7 @@ class SearchEngine:
     def searchlast(self, fp, mem_len):
         curpos = fp
         start = fp
+        wrapped=False
         if not self.regexp and not self.smem:
             return False
         self.stdmm_wait("Wait.")
@@ -349,14 +401,19 @@ class SearchEngine:
             f = self.hitre(curpos) if self.regexp else self.hit(curpos)
             
             if f == 1:
-                self.clrmm()
+                if not wrapped:
+                    self.clrmm()
                 return curpos
             elif f < 0:
-                self.clrmm()
+                if not wrapped:
+                    self.clrmm()
                 return None
             
             curpos -= 1
             if curpos < 0:
+                if not wrapped:
+                    self.stdmm_wait("Search reached TOP, wrap around to BOTTOM.")
+                    wrapped = True
                 curpos = mem_len - 1
             
             if curpos == start:
@@ -485,7 +542,7 @@ class Display:
     def print_title(self, filename):
         self.term.locate(0, 0)
         self.term.color(6)
-        print(f'bi version 3.4.5 by Taisuke Maekawa             utf8mode:{"off" if not self.utf8 else self.repsw}     {"insert   " if self.insmod else "overwrite"}   ')
+        print(f'bi version 3.5.0 by Taisuke Maekawa             utf8mode:{"off" if not self.utf8 else self.repsw}     {"insert   " if self.insmod else "overwrite"}   ')
         self.term.color(5)
         if len(filename) > 35:
             fn = filename[0:35]
