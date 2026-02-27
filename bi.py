@@ -222,7 +222,7 @@ class MemoryBuffer:
     
     def delmem(self, start, end, yf, yankmem_func):
         length = end - start + 1
-        if length <= 0 or start >= len(self.mem):
+        if length <= 0 or start >= len(self.mem) or end>len(self.mem)-1:
             return False
         
         if yf:
@@ -915,6 +915,12 @@ class BiEditor:
         # 新しい編集が行われたのでredoスタックをクリア
         self.redo_stack = []
     
+    def dec_undo(self):
+        if not self.undo_stack:
+            self.stdmm("No more undo.")
+            return False
+        self.undo_stack.pop()
+        
     def undo(self):
         """undo実行"""
         if not self.undo_stack:
@@ -1280,6 +1286,9 @@ class BiEditor:
                 self.save_undo_state()
                 if self.memory.delmem(self.display.fpos(), self.display.fpos(), False, self.memory.yankmem):
                     self.display.highlight_ranges = []
+                else:
+                    self.stderr("Invalid range.")
+                    self.dec_undo()
             elif ch == ':':
                 self.display.disp_curpos()
                 # コマンド実行前のファイル長を保存
@@ -1612,6 +1621,8 @@ class BiEditor:
             if self.memory.delmem(x, x2, True, self.memory.yankmem):
                 self.stdmm(f"{x2 - x + 1} bytes deleted.")
                 self.display.jump(x)
+            else:
+                self.stderr("Invalid range.")
             return -1
         
         # write file
