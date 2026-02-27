@@ -56,6 +56,26 @@ except ImportError:
 
 
 
+# ========================================================================
+# グローバル変数: @コマンド(exec)や{}式(eval)からアクセス可能
+#   mem  -- 編集中ファイルのバイト列 (list[int])
+#   cp   -- 現在のカーソル位置 (int, current position)
+#   setmem(addr, data) -- memへの書き込みヘルパー
+# ========================================================================
+mem: list = []
+cp: int = 0
+
+def setmem(addr: int, data: int) -> None:
+    """グローバルな mem[] にバイト値を書き込む。
+    addr がリスト末尾を超える場合は自動的に拡張する。
+    BiEditor.call_exec() が実行後に self.memory.mem へ同期する。
+    """
+    global mem
+    while len(mem) <= addr:
+        mem.append(0)
+    mem[addr] = int(data) & 0xff
+
+
 class Terminal:
     """ターミナル制御を担当するクラス"""
     ESC = '['
@@ -1051,6 +1071,12 @@ class BiEditor:
         if len(line) <= 1:
             return
         line = line[1:]
+
+        # exec() 実行前にグローバルを最新状態に合わせる
+        global mem, cp
+        mem = self.memory.mem
+        cp  = self.cp
+
         try:
             if self.scriptingflag:
                 exec(line, globals())
@@ -1067,6 +1093,12 @@ class BiEditor:
                 self.display.repaint(self.filemgr.filename)
         except:
             self.stderr("python exec() error.")
+            return
+
+        # exec() がグローバルの mem を差し替えた場合も含めて書き戻す
+        self.memory.mem = mem
+        self.memory.modified   = True
+        self.memory.lastchange = True
 
     def fedit(self):
         """フルスクリーンエディタモード"""
@@ -1076,6 +1108,10 @@ class BiEditor:
         
         while True:
             self.cp = self.display.fpos()
+            # グローバル変数を最新状態に同期 (@exec / {}eval から参照可能)
+            global mem, cp
+            mem = self.memory.mem
+            cp  = self.cp
             self.display.repaint(self.filemgr.filename)
             self.display.printdata()
             self.term.locate(self.display.curx // 2 * 3 + 13 + (self.display.curx & 1), self.display.cury + 3)
@@ -1387,6 +1423,10 @@ class BiEditor:
     def commandline_(self, line):
         """コマンド処理メイン"""
         self.cp = self.display.fpos()
+        # グローバル変数を最新状態に同期 (@exec / {}eval から参照可能)
+        global mem, cp
+        mem = self.memory.mem
+        cp  = self.cp
         line = self.parser.comment(line)
         if line == '':
             return -1
