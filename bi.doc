@@ -25,7 +25,7 @@ Command Reference
    $                       ----- jump to the right end of line
    m[a-z]                  ----- mark currrent position
    '[a-z]                  ----- jump to marked point
-   ^R                      ----- redo
+   U,^R                    ----- redo
    u                       ----- undo
    n                       ----- search the next
    N                       ----- search the last
@@ -162,7 +162,7 @@ Speed up
     If you need for bi to be higher speed, you can compile bi.py with
     pyinstaller like this: pyinstaller --onefile bi.py
 
-Partial edit (not available now)
+Partial edit
     -b and -e option set bi partial edit mode like this:
     bi sample -b 100 -e 1ff
     this edits offset of sample file from 0x100 to 0x1ff.

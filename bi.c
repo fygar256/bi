@@ -1533,7 +1533,7 @@ void editor_fedit(BiEditor *editor) {
         else if (ch == 'u') {
             editor_undo(editor);
             continue;
-        } else if (ch == 18) {  // Ctrl+R
+        } else if (ch == 18||ch=='U') {  // Ctrl+R or 'U'
             editor_redo(editor);
             continue;
         }

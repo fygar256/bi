@@ -1169,7 +1169,7 @@ class BiEditor:
             elif ch == 'u':
                 self.undo()
                 continue
-            elif ch == chr(18):  # Ctrl+R
+            elif ch == chr(18) or ch=='U':  # Ctrl+R
                 self.redo()
                 continue
             
