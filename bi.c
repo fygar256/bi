@@ -793,7 +793,8 @@ void display_printdata(Display *disp) {
     /* ---- 行23: カーソル位置のバイト詳細 ---- */
     terminal_locate(disp->term, 0, 23);
     terminal_color(disp->term, 6, 0);
-    
+    printf("                                                                                ");
+    terminal_locate(disp->term, 0, 23);
     char s[4] = ".";
     if (a < 0x20) {
         snprintf(s, sizeof(s), "^%c", a + '@');
@@ -2403,6 +2404,9 @@ int editor_commandline(BiEditor *editor, const char *line) {
         }
 
         if (strlen(parsed_line) < 2) {
+            g_partial.active=false;
+            g_partial.offset=false;
+            g_partial.length=0;
             char msg[256];
             bool success = filemgr_readfile(&editor->filemgr, editor->filemgr.filename, msg, sizeof(msg));
             if (msg[0]) {
