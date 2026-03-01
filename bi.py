@@ -76,6 +76,18 @@ def setmem(addr: int, data: int) -> None:
     mem[addr] = int(data) & 0xff
 
 
+# ========================================================================
+# パーシャル編集の状態管理 (C版 g_partial 相当)
+# ========================================================================
+class _PartialState:
+    def __init__(self):
+        self.active = False   # パーシャルモード有効フラグ
+        self.offset = 0       # ファイル内の開始オフセット
+        self.length = 0       # 読み込んだバイト数
+
+g_partial = _PartialState()
+
+
 class Terminal:
     """ターミナル制御を担当するクラス"""
     ESC = '['
@@ -581,7 +593,7 @@ class Display:
         for y in range(self.LENONSCR // 16):
             self.term.color(5)
             self.term.locate(0, 3 + y)
-            print(f"{(addr + y * 16) & 0xffffffffffff:012X} ", end='')
+            print(f"{(addr + y * 16 + g_partial.offset) & 0xffffffffffff:012X} ", end='')
             self.term.color(7)
             for i in range(16):
                 a = y * 16 + i + addr
@@ -617,7 +629,9 @@ class Display:
     
     def printdata(self):
         addr = self.fpos()
+        file_addr = addr + g_partial.offset  # 実ファイル上のアドレス
         a = self.memory.readmem(addr)
+        # 行23: カーソル位置のバイト詳細（実ファイルアドレスで表示）
         self.term.locate(0, 23)
         self.term.color(6)
         s = '.'
@@ -628,9 +642,19 @@ class Display:
         else:
             s = "'" + chr(a) + "'"
         if addr < len(self.memory.mem):
-            print(f"{addr:012X} : 0x{a:02X} 0b{a:08b} 0o{a:03o} {a} {s}      ", end='', flush=True)
+            print(f"{file_addr:012X} : 0x{a:02X} 0b{a:08b} 0o{a:03o} {a} {s}      ", end='', flush=True)
         else:
-            print(f"{addr:012X} : ~~                                                   ", end='', flush=True)
+            print(f"{file_addr:012X} : ~~                                                   ", end='', flush=True)
+
+        # 行23(BOTTOMLN): PARTIAL ステータス常時表示
+        self.term.locate(0, self.BOTTOMLN+1)
+        if g_partial.active:
+            self.term.color(6)
+            print(
+                f" PARTIAL  file_offset:0x{g_partial.offset:012X}"
+                f"  length:0x{g_partial.length:X}({g_partial.length}) bytes   ",
+                end='', flush=True
+            )
     
     def disp_curpos(self):
         self.term.color(4)
@@ -880,6 +904,77 @@ class FileManager:
             return True, None
         except:
             return False, "Permission denied."
+    def readfile_partial(self, fn, offset, max_len=0):
+        """パーシャルリード: fn の offset から max_len バイト(0=EOF まで)を読む"""
+        global g_partial
+        try:
+            f = open(fn, "rb")
+        except OSError:
+            self.newfile = True
+            self.memory.mem = []
+            g_partial.active = True
+            g_partial.offset = offset
+            g_partial.length = 0
+            return True, "<new file>"
+        try:
+            fsize = f.seek(0, 2)
+        except OSError:
+            f.close()
+            return False, f"Partial read error: cannot seek '{fn}'."
+        if fsize <= offset:
+            f.close()
+            return False, f"Partial read error: offset 0x{offset:X} exceeds file size (0x{fsize:X})."
+        available = fsize - offset
+        read_len = available if (max_len == 0 or max_len > available) else max_len
+        try:
+            f.seek(offset)
+            data = f.read(read_len)
+            f.close()
+        except OSError:
+            try: f.close()
+            except: pass
+            return False, f"Partial read error: I/O error reading '{fn}'."
+        actually_read = len(data)
+        self.memory.mem = list(data)
+        g_partial.active = True
+        g_partial.offset = offset
+        g_partial.length = actually_read
+        self.newfile = False
+        self.memory.modified = False
+        self.memory.lastchange = False
+        if actually_read != read_len:
+            return True, f"Partial read warning: requested {read_len} bytes but only {actually_read} bytes read."
+        return True, f"Partial load: offset=0x{offset:X}, {actually_read} bytes read."
+
+    def writefile_partial(self, fn):
+        """パーシャルライト: g_partial.offset から上書き"""
+        global g_partial
+        if not g_partial.active:
+            return self.writefile(fn)
+        self.memory.regulate_mem()
+        try:
+            f = open(fn, "r+b")
+        except OSError:
+            try:
+                f = open(fn, "wb")
+                if g_partial.offset > 0:
+                    f.write(b'\x00' * g_partial.offset)
+                f.write(bytes(self.memory.mem))
+                f.close()
+                return True, f"Partial write: offset=0x{g_partial.offset:X}, {len(self.memory.mem)} bytes written (new file)."
+            except OSError:
+                return False, f"Partial write error: cannot create '{fn}'."
+        try:
+            f.seek(g_partial.offset)
+            written = f.write(bytes(self.memory.mem))
+            f.close()
+        except OSError:
+            try: f.close()
+            except: pass
+            return False, f"Partial write error: I/O error while writing '{fn}'."
+        if written != len(self.memory.mem):
+            return False, f"Partial write error: wrote {written}/{len(self.memory.mem)} bytes to '{fn}'."
+        return True, f"Partial write: offset=0x{g_partial.offset:X}, {written} bytes written."
 
 
 class BiEditor:
@@ -1239,14 +1334,16 @@ class BiEditor:
                 self.display.repaint(self.filemgr.filename)
                 continue
             
-            # ファイル操作
+            # ファイル操作 (Z: :wq! 相当、パーシャル対応、失敗でも終了)
             elif ch == 'Z':
-                success, msg = self.filemgr.writefile(self.filemgr.filename)
-                if success:
-                    return True
+                if g_partial.active:
+                    success, msg = self.filemgr.writefile_partial(self.filemgr.filename)
                 else:
+                    success, msg = self.filemgr.writefile(self.filemgr.filename)
+                self.memory.lastchange = False
+                if not success:
                     self.stderr(msg)
-                    continue
+                return True
             elif ch == 'q':
                 if self.memory.lastchange:
                     self.stdmm("No write since last change. To overriding quit, use 'q!'.")
@@ -1440,11 +1537,15 @@ class BiEditor:
         elif line == 'q!':
             return 0
         elif line == 'wq' or line == 'wq!':
-            success, msg = self.filemgr.writefile(self.filemgr.filename)
+            if g_partial.active:
+                success, msg = self.filemgr.writefile_partial(self.filemgr.filename)
+            else:
+                success, msg = self.filemgr.writefile(self.filemgr.filename)
             if success:
                 self.memory.lastchange = False
                 return 0
             else:
+                self.stderr(msg)
                 return -1
         
         # Undo/Redo
@@ -1457,9 +1558,24 @@ class BiEditor:
 
         # ファイル書き込み
         elif line[0] == 'w':
-            if len(line) >= 2:
-                s = line[1:].lstrip()
-                success, msg = self.filemgr.writefile(s)
+            # :wp [file] — 明示的パーシャルライト
+            if len(line) >= 2 and line[1] == 'p':
+                fname = line[2:].lstrip() or self.filemgr.filename
+                success, msg = self.filemgr.writefile_partial(fname)
+                if success:
+                    self.memory.lastchange = False
+                    self.stdmm(msg)
+                else:
+                    self.stderr(msg)
+                return -1
+            # :w / :w filename
+            fname_specified = len(line) >= 2 and line[1:].lstrip() != ''
+            if fname_specified:
+                success, msg = self.filemgr.writefile(line[1:].lstrip())
+            elif g_partial.active:
+                success, msg = self.filemgr.writefile_partial(self.filemgr.filename)
+                if success:
+                    self.memory.lastchange = False
             else:
                 success, msg = self.filemgr.writefile(self.filemgr.filename)
                 if success:
@@ -1473,13 +1589,62 @@ class BiEditor:
         
         # ファイル読み込み
         elif line[0] == 'r':
-            if len(line) < 2:
-                success, msg = self.filemgr.readfile(self.filemgr.filename)
-                if msg:
-                    self.stdmm(msg if success else msg)
+            # :rp <offset>[,<endoffset> | ,*<length>] — パーシャルリード
+            if len(line) >= 2 and line[1] == 'p':
+                arg = line[2:].lstrip()
+                if not arg:
+                    self.stderr("Usage: rp <offset>[,<endoffset> | ,*<length>]")
+                    return -1
+                start_off, idx = self.parser.expression(arg, 0)
+                if start_off == Parser.UNKNOWN:
+                    self.stderr("Invalid offset.")
+                    return -1
+                load_len = 0
+                idx = self.parser.skipspc(arg, idx)
+                if idx < len(arg) and arg[idx] == ',':
+                    idx += 1
+                    idx = self.parser.skipspc(arg, idx)
+                    if idx < len(arg) and arg[idx] == '*':
+                        idx += 1
+                        len_val, idx = self.parser.expression(arg, idx)
+                        if len_val == Parser.UNKNOWN or len_val == 0:
+                            self.stderr("Invalid length.")
+                            return -1
+                        load_len = len_val
+                    else:
+                        end_off, idx = self.parser.expression(arg, idx)
+                        if end_off == Parser.UNKNOWN or end_off < start_off:
+                            self.stderr("Invalid end offset.")
+                            return -1
+                        load_len = end_off - start_off + 1
+                success, msg = self.filemgr.readfile_partial(
+                    self.filemgr.filename, start_off, load_len)
+                if success:
+                    self.display.jump(0)
+                    self.display.highlight_ranges = []
+                    self.stdmm(msg)
                 else:
-                    self.stdmm("Original file read.")
+                    self.stderr(msg)
                 return -1
+            # :r / :r filename — パーシャル解除して通常リード
+            was_partial = g_partial.active
+            if was_partial:
+                g_partial.active = False
+                g_partial.offset = 0
+                g_partial.length = 0
+            rest = line[1:].lstrip() if len(line) >= 2 else ''
+            if rest:
+                self.filemgr.filename = rest
+            success, msg = self.filemgr.readfile(self.filemgr.filename)
+            if success:
+                self.display.jump(0)
+                self.display.highlight_ranges = []
+                base = msg if msg else "File read."
+                out = ("Partial edit released. " + base) if was_partial else base
+                self.stdmm(out)
+            else:
+                self.stderr(msg)
+            return -1
         
         # スクリプト実行
         elif line[0] == 'T' or line[0] == 't':
@@ -2044,49 +2209,92 @@ class BiEditor:
 
 def main():
     """メイン関数"""
-    parser = argparse.ArgumentParser()
-    parser.add_argument('file', help='file to edit')
-    parser.add_argument('-s', '--script', type=str, default='', metavar='script.bi', help='bi script file')
-    parser.add_argument('-t', '--termcolor', type=str, default='black', help='background color of terminal. default is \'black\' the others are white.')
-    parser.add_argument('-v', '--verbose', action='store_true', help='verbose when processing script')
-    parser.add_argument('-w', '--write', action='store_true', help='write file when exiting script')
-    args = parser.parse_args()
-    
+    ap = argparse.ArgumentParser(
+        usage='%(prog)s [-h] [options] <file> [options]',
+        description='Binary editor. Options can appear before or after <file>.'
+    )
+    ap.add_argument('file', help='file to edit')
+    ap.add_argument('-s', '--script', type=str, default='', metavar='script.bi',
+                    help='bi script file')
+    ap.add_argument('-t', '--termcolor', type=str, default='black',
+                    help="background color of terminal (default: 'black')")
+    ap.add_argument('-v', '--verbose', action='store_true',
+                    help='verbose when processing script')
+    ap.add_argument('-w', '--write', action='store_true',
+                    help='write file when exiting script')
+    ap.add_argument('-o', '--offset', type=lambda x: int(x, 16), default=None,
+                    metavar='OFFSET', help='partial edit: start offset (hex)')
+    ap.add_argument('-l', '--length', type=lambda x: int(x, 16), default=None,
+                    metavar='LENGTH', help='partial edit: length in bytes (hex)')
+    ap.add_argument('-e', '--end', type=lambda x: int(x, 16), default=None,
+                    metavar='END', help='partial edit: end offset inclusive (hex)')
+    args = ap.parse_args()
+
+    # パーシャルモードの判定・長さ計算
+    partial_mode = False
+    partial_offset = args.offset if args.offset is not None else 0
+    partial_length = 0  # 0 = EOF まで
+
+    if args.offset is not None:
+        partial_mode = True
+    if args.length is not None:
+        partial_length = args.length
+        partial_mode = True
+    if args.end is not None:
+        if args.end < partial_offset:
+            print(f"Error: -e value (0x{args.end:X}) is less than -o value (0x{partial_offset:X}).",
+                  file=sys.stderr)
+            return
+        partial_length = args.end - partial_offset + 1
+        partial_mode = True
+
     # エディタの初期化
     editor = BiEditor(termcol=args.termcolor)
     editor.filemgr.filename = args.file
     editor.verbose = args.verbose
-    
+
     # 画面クリア（スクリプトモード以外）
     if not args.script:
         editor.term.clear()
     else:
         editor.scriptingflag = True
-    
+
     # ファイル読み込み
-    success, msg = editor.filemgr.readfile(args.file)
+    if partial_mode:
+        success, msg = editor.filemgr.readfile_partial(args.file, partial_offset, partial_length)
+    else:
+        success, msg = editor.filemgr.readfile(args.file)
+
     if not success:
         print(msg, file=sys.stderr)
         return
     elif msg:
         editor.stdmm(msg)
-    
+
     # スクリプト実行またはインタラクティブモード
     if args.script:
         try:
-            f = editor.scripting(args.script)
+            editor.scripting(args.script)
             if args.write and editor.memory.lastchange:
-                editor.filemgr.writefile(args.file)
-        except:
+                if g_partial.active:
+                    ok, wmsg = editor.filemgr.writefile_partial(args.file)
+                else:
+                    ok, wmsg = editor.filemgr.writefile(args.file)
+                if ok:
+                    if editor.verbose:
+                        print(wmsg)
+                else:
+                    print(wmsg, file=sys.stderr)
+        except Exception as exc:
             editor.filemgr.writefile("file.save")
-            editor.stderr("Some error occured. memory saved to file.save.")
+            editor.stderr(f"Some error occured ({exc}). memory saved to file.save.")
     else:
         try:
             editor.fedit()
-        except:
+        except Exception as exc:
             editor.filemgr.writefile("file.save")
-            editor.stderr("Some error occured. memory saved to file.save.")
-    
+            editor.stderr(f"Some error occured ({exc}). memory saved to file.save.")
+
     # 終了処理
     editor.term.color(7)
     editor.term.dispcursor()

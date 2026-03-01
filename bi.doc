@@ -240,6 +240,7 @@ w<file> commands.
 2025-05-09 version 3.4.4.7rel15 unified i command and f command.
 2025-12-28 version 3.4.4.8 unified i/I command and o/O command.
 2026-02-28 version 3.4.5.12 search command highlight and undo/redo command applied.
+2026-03-01 version 3.4.5.13 partial edit functionaliti added.
 --------------------
 
       I don't take any responsibility for the result of application of

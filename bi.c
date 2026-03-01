@@ -2,6 +2,18 @@
 #include "bi.h"
 
 /* ========================================================================
+ * パーシャル編集の状態管理
+ * ======================================================================== */
+
+typedef struct {
+    bool   active;   /* パーシャルモード有効フラグ */
+    size_t offset;   /* ファイル内の開始オフセット */
+    size_t length;   /* 読み込んだバイト数（実際の値） */
+} PartialState;
+
+static PartialState g_partial = {false, 0, 0};
+
+/* ========================================================================
  * readline代替実装（readlineライブラリがない環境用）
  * ======================================================================== */
 
@@ -696,7 +708,7 @@ void display_repaint(Display *disp, const char *filename) {
     for (int y = 0; y < LENONSCR / 16; y++) {
         terminal_color(disp->term, 5, 0);
         terminal_locate(disp->term, 0, 3 + y);
-        printf("%012zX ", disp->homeaddr + y * 16);
+        printf("%012zX ", disp->homeaddr + y * 16 + g_partial.offset);
         
         // Hex part
         for (int i = 0; i < 16; i++) {
@@ -775,12 +787,14 @@ void display_repaint(Display *disp, const char *filename) {
 
 void display_printdata(Display *disp) {
     size_t addr = display_fpos(disp);
+    size_t file_addr = addr + g_partial.offset;  /* 実ファイル上のアドレス */
     uint8_t a = memory_read(disp->memory, addr);
     
+    /* ---- 行23: カーソル位置のバイト詳細 ---- */
     terminal_locate(disp->term, 0, 23);
     terminal_color(disp->term, 6, 0);
     
-    char s[4] = ".";  // サイズを3から4に変更
+    char s[4] = ".";
     if (a < 0x20) {
         snprintf(s, sizeof(s), "^%c", a + '@');
     } else if (a >= 0x7E) {
@@ -790,14 +804,23 @@ void display_printdata(Display *disp) {
     }
     
     if (addr < disp->memory->mem.size) {
-        printf("%012zX : 0x%02X 0b", addr, a);
+        printf("%012zX : 0x%02X 0b", file_addr, a);
         for (int i = 7; i >= 0; i--) {
             printf("%d", (a >> i) & 1);
         }
         printf(" 0o%03o %d %s      ", a, a, s);
     } else {
-        printf("%012zX : ~~                                                   ", addr);
+        printf("%012zX : ~~                                                   ", file_addr);
     }
+
+    /* 行23: PARTIALステータス（アクティブの場合常時表示・オーバーライト） */
+    terminal_locate(disp->term, 0, 23);
+    if (g_partial.active) {
+        terminal_color(disp->term, 6, 0);
+        printf(" PARTIAL  file_offset:0x%012zX  length:0x%zX(%zu) bytes   ",
+               g_partial.offset, g_partial.length, g_partial.length);
+    } 
+    
     fflush(stdout);
 }
 
@@ -1329,6 +1352,123 @@ bool filemgr_writefile(FileManager *fmgr, const char *filename, char *msg, size_
     
     fclose(f);
     if (msg) snprintf(msg, msg_size, "File written.");
+    return true;
+}
+
+/* パーシャルリード: ファイルの offset から max_len バイト（0なら末尾まで）を読む */
+bool filemgr_readfile_partial(FileManager *fmgr, const char *filename,
+                               size_t offset, size_t max_len,
+                               char *msg, size_t msg_size) {
+    FILE *f = fopen(filename, "rb");
+    if (!f) {
+        fmgr->newfile = true;
+        bytearray_init(&fmgr->memory->mem);
+        g_partial.active = true;
+        g_partial.offset = offset;
+        g_partial.length = 0;
+        if (msg) snprintf(msg, msg_size, "<new file>");
+        return true;
+    }
+
+    /* ファイルサイズ取得 */
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    if (fsize < 0 || (size_t)fsize <= offset) {
+        fclose(f);
+        if (msg) snprintf(msg, msg_size, "Offset 0x%zX exceeds file size.", offset);
+        return false;
+    }
+
+    /* 読み込む実際のバイト数を決定 */
+    size_t available = (size_t)fsize - offset;
+    size_t read_len  = (max_len == 0 || max_len > available) ? available : max_len;
+
+    fseek(f, (long)offset, SEEK_SET);
+
+    bytearray_free(&fmgr->memory->mem);
+    bytearray_init(&fmgr->memory->mem);
+
+    uint8_t *buffer = malloc(read_len);
+    if (!buffer) {
+        fclose(f);
+        if (msg) snprintf(msg, msg_size, "Memory overflow.");
+        return false;
+    }
+
+    size_t actually_read = fread(buffer, 1, read_len, f);
+    fclose(f);
+
+    for (size_t i = 0; i < actually_read; i++) {
+        bytearray_push(&fmgr->memory->mem, buffer[i]);
+    }
+    free(buffer);
+
+    g_partial.active = true;
+    g_partial.offset = offset;
+    g_partial.length = actually_read;
+
+    fmgr->newfile = false;
+    fmgr->memory->modified  = false;
+    fmgr->memory->lastchange = false;
+
+    if (msg) {
+        snprintf(msg, msg_size,
+                 "Partial load: offset=0x%zX, %zu bytes read.",
+                 offset, actually_read);
+    }
+    return true;
+}
+
+/* パーシャルライト: 元のファイルの g_partial.offset から上書き */
+bool filemgr_writefile_partial(FileManager *fmgr, const char *filename,
+                                char *msg, size_t msg_size) {
+    if (!g_partial.active) {
+        /* パーシャルモードでなければ通常書き込み */
+        return filemgr_writefile(fmgr, filename, msg, msg_size);
+    }
+
+    FILE *f = fopen(filename, "r+b");
+    if (!f) {
+        /* ファイルが存在しない場合は新規作成 */
+        f = fopen(filename, "wb");
+        if (!f) {
+            if (msg) snprintf(msg, msg_size, "Permission denied.");
+            return false;
+        }
+        /* 新規の場合は offset バイト分ゼロ埋め */
+        if (g_partial.offset > 0) {
+            uint8_t zero = 0;
+            for (size_t i = 0; i < g_partial.offset; i++) {
+                fwrite(&zero, 1, 1, f);
+            }
+        }
+        if (fmgr->memory->mem.size > 0) {
+            fwrite(fmgr->memory->mem.data, 1, fmgr->memory->mem.size, f);
+        }
+        fclose(f);
+        if (msg) snprintf(msg, msg_size,
+                          "Partial write: offset=0x%zX, %zu bytes written (new file).",
+                          g_partial.offset, fmgr->memory->mem.size);
+        return true;
+    }
+
+    if (fseek(f, (long)g_partial.offset, SEEK_SET) != 0) {
+        fclose(f);
+        if (msg) snprintf(msg, msg_size, "Seek error.");
+        return false;
+    }
+
+    size_t written = 0;
+    if (fmgr->memory->mem.size > 0) {
+        written = fwrite(fmgr->memory->mem.data, 1, fmgr->memory->mem.size, f);
+    }
+    fclose(f);
+
+    if (msg) {
+        snprintf(msg, msg_size,
+                 "Partial write: offset=0x%zX, %zu bytes written.",
+                 g_partial.offset, written);
+    }
     return true;
 }
 
@@ -1893,7 +2033,14 @@ int editor_commandline(BiEditor *editor, const char *line) {
         return 0;
     } else if (strcmp(parsed_line, "wq") == 0 || strcmp(parsed_line, "wq!") == 0) {
         char msg[256];
-        bool success = filemgr_writefile(&editor->filemgr, editor->filemgr.filename, msg, sizeof(msg));
+        bool success;
+        if (g_partial.active) {
+            success = filemgr_writefile_partial(&editor->filemgr,
+                          editor->filemgr.filename, msg, sizeof(msg));
+        } else {
+            success = filemgr_writefile(&editor->filemgr,
+                          editor->filemgr.filename, msg, sizeof(msg));
+        }
         if (success) {
             editor->memory.lastchange = false;
             return 0;
@@ -1913,6 +2060,24 @@ int editor_commandline(BiEditor *editor, const char *line) {
     
     // ファイル書き込み
     else if (parsed_line[0] == 'w') {
+        /* ---- pw: パーシャルライト ---- */
+        if (parsed_line[1] == 'p' || (parsed_line[1] == 'p' && parsed_line[2] == '\0')) {
+            /* :wp または :wp <filename> */
+            char msg[256];
+            const char *fname = editor->filemgr.filename;
+            const char *after = parsed_line + 2;
+            while (*after == ' ') after++;
+            if (*after) fname = after;
+
+            bool success = filemgr_writefile_partial(&editor->filemgr, fname, msg, sizeof(msg));
+            if (success) {
+                editor->memory.lastchange = false;
+                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            } else {
+                display_stderr(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            }
+            return -1;
+        }
         char msg[256];
         const char *fname = editor->filemgr.filename;
         if (strlen(parsed_line) >= 2) {
@@ -2158,6 +2323,77 @@ int editor_commandline(BiEditor *editor, const char *line) {
     
     // ファイル読み込み（範囲なし）
     else if (parsed_line[0] == 'r') {
+        /* ---- pr: パーシャルリード ---- */
+        if (parsed_line[1] == 'p') {
+            /*
+             * 書式: :rp <offset>[,<end> | ,*<length>]
+             *   offset   = 16進オフセット（例: 1000）
+             *   ,<end>   = 終端オフセット（inclusive）
+             *   ,*<len>  = 長さ指定
+             * 長さ/終端を省略した場合はEOFまで読む。
+             */
+            const char *arg = parsed_line + 2;
+            while (*arg == ' ') arg++;
+
+            if (*arg == '\0') {
+                display_stderr(&editor->display,
+                               "Usage: rp <offset>[,<endoffset> | ,*<length>]",
+                               editor->scriptingflag, editor->verbose);
+                return -1;
+            }
+
+            size_t aidx = 0;
+            uint64_t start_off = parser_expression(&editor->parser, arg, &aidx);
+            if (start_off == UNKNOWN) {
+                display_stderr(&editor->display, "Invalid offset.",
+                               editor->scriptingflag, editor->verbose);
+                return -1;
+            }
+
+            size_t load_len = 0; /* 0 = EOF まで */
+            aidx = parser_skipspc(arg, aidx);
+            if (arg[aidx] == ',') {
+                aidx++;
+                aidx = parser_skipspc(arg, aidx);
+                if (arg[aidx] == '*') {
+                    /* ,*<length> 形式 */
+                    aidx++;
+                    uint64_t len_val = parser_expression(&editor->parser, arg, &aidx);
+                    if (len_val == UNKNOWN || len_val == 0) {
+                        display_stderr(&editor->display, "Invalid length.",
+                                       editor->scriptingflag, editor->verbose);
+                        return -1;
+                    }
+                    load_len = (size_t)len_val;
+                } else {
+                    /* ,<endoffset> 形式（inclusive） */
+                    uint64_t end_off = parser_expression(&editor->parser, arg, &aidx);
+                    if (end_off == UNKNOWN || end_off < start_off) {
+                        display_stderr(&editor->display, "Invalid end offset.",
+                                       editor->scriptingflag, editor->verbose);
+                        return -1;
+                    }
+                    load_len = (size_t)(end_off - start_off + 1);
+                }
+            }
+
+            char msg[256];
+            bool success = filemgr_readfile_partial(
+                &editor->filemgr, editor->filemgr.filename,
+                (size_t)start_off, load_len, msg, sizeof(msg));
+
+            if (success) {
+                display_jump(&editor->display, 0);
+                matcharray_clear(&editor->display.highlight_ranges);
+                display_stdmm(&editor->display, msg,
+                              editor->scriptingflag, editor->verbose);
+            } else {
+                display_stderr(&editor->display, msg,
+                               editor->scriptingflag, editor->verbose);
+            }
+            return -1;
+        }
+
         if (strlen(parsed_line) < 2) {
             char msg[256];
             bool success = filemgr_readfile(&editor->filemgr, editor->filemgr.filename, msg, sizeof(msg));
@@ -3052,20 +3288,30 @@ int main(int argc, char *argv[]) {
     const char *termcol = "black";
     bool verbose = false;
     bool write_on_exit = false;
+    size_t partial_offset = 0;
+    size_t partial_length = 0;  /* 0 = EOF まで */
+    bool   partial_mode   = false;
     
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <file> [-s script.bi] [-t termcolor] [-v] [-w]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [options] <file> [options]\n", argv[0]);
+        fprintf(stderr, "  Options can appear before or after <file>.\n");
         fprintf(stderr, "Options:\n");
         fprintf(stderr, "  -s <script>  Execute script file\n");
         fprintf(stderr, "  -t <color>   Terminal color (black/white)\n");
         fprintf(stderr, "  -v           Verbose mode (show commands when scripting)\n");
         fprintf(stderr, "  -w           Write file when exiting script\n");
+        fprintf(stderr, "  -o <offset>  Partial edit: start offset (hex)\n");
+        fprintf(stderr, "  -l <length>  Partial edit: length in bytes (hex)\n");
+        fprintf(stderr, "  -e <end>     Partial edit: end offset inclusive (hex)\n");
         return 1;
     }
-    
-    filename = argv[1];
-    
-    for (int i = 2; i < argc; i++) {
+
+    /* -e の値を後処理するため別途保持 */
+    bool   has_end_opt    = false;
+    size_t end_offset_raw = 0;
+
+    /* 全引数を1パスで走査 — ファイル名は '-' で始まらない最初の引数 */
+    for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
             scriptfile = argv[++i];
         } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
@@ -3074,7 +3320,42 @@ int main(int argc, char *argv[]) {
             verbose = true;
         } else if (strcmp(argv[i], "-w") == 0) {
             write_on_exit = true;
+        } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+            partial_offset = (size_t)strtoull(argv[++i], NULL, 16);
+            partial_mode   = true;
+        } else if (strcmp(argv[i], "-l") == 0 && i + 1 < argc) {
+            partial_length = (size_t)strtoull(argv[++i], NULL, 16);
+            partial_mode   = true;
+        } else if (strcmp(argv[i], "-e") == 0 && i + 1 < argc) {
+            end_offset_raw = (size_t)strtoull(argv[++i], NULL, 16);
+            has_end_opt    = true;
+            partial_mode   = true;
+        } else if (argv[i][0] != '-') {
+            /* オプションでない引数 = ファイル名（最初の1つのみ採用） */
+            if (filename == NULL) {
+                filename = argv[i];
+            }
+        } else {
+            fprintf(stderr, "Unknown option: %s\n", argv[i]);
+            return 1;
         }
+    }
+
+    /* -e は -o が確定してから長さへ変換（指定順序に依存しない） */
+    if (has_end_opt) {
+        if (end_offset_raw >= partial_offset) {
+            partial_length = end_offset_raw - partial_offset + 1;
+        } else {
+            fprintf(stderr, "Error: -e value (0x%zX) is less than -o value (0x%zX).\n",
+                    end_offset_raw, partial_offset);
+            return 1;
+        }
+    }
+
+    if (filename == NULL) {
+        fprintf(stderr, "Error: No filename specified.\n");
+        fprintf(stderr, "Usage: %s [options] <file> [options]\n", argv[0]);
+        return 1;
     }
     
     // エディタ初期化
@@ -3092,7 +3373,14 @@ int main(int argc, char *argv[]) {
     
     // ファイル読み込み
     char msg[256];
-    bool success = filemgr_readfile(&editor.filemgr, filename, msg, sizeof(msg));
+    bool success;
+    if (partial_mode) {
+        success = filemgr_readfile_partial(&editor.filemgr, filename,
+                                           partial_offset, partial_length,
+                                           msg, sizeof(msg));
+    } else {
+        success = filemgr_readfile(&editor.filemgr, filename, msg, sizeof(msg));
+    }
     if (!success) {
         fprintf(stderr, "%s\n", msg);
         editor_free(&editor);
@@ -3107,7 +3395,13 @@ int main(int argc, char *argv[]) {
         
         if (write_on_exit && editor.memory.lastchange) {
             char write_msg[256];
-            success = filemgr_writefile(&editor.filemgr, filename, write_msg, sizeof(write_msg));
+            if (partial_mode || g_partial.active) {
+                success = filemgr_writefile_partial(&editor.filemgr, filename,
+                                                    write_msg, sizeof(write_msg));
+            } else {
+                success = filemgr_writefile(&editor.filemgr, filename,
+                                            write_msg, sizeof(write_msg));
+            }
             if (success && editor.verbose) {
                 printf("%s\n", write_msg);
             }
