@@ -2079,13 +2079,21 @@ int editor_commandline(BiEditor *editor, const char *line) {
             return -1;
         }
         char msg[256];
+        bool fname_specified = (strlen(parsed_line) >= 2);
         const char *fname = editor->filemgr.filename;
-        if (strlen(parsed_line) >= 2) {
+        if (fname_specified) {
             fname = parsed_line + 1;
             while (*fname == ' ') fname++;
+            if (*fname == '\0') fname_specified = false;
         }
-        bool success = filemgr_writefile(&editor->filemgr, fname, msg, sizeof(msg));
-        if (strlen(parsed_line) < 2 && success) {
+        bool success;
+        if (!fname_specified && g_partial.active) {
+            /* パーシャルモード中の :w はパーシャルライト */
+            success = filemgr_writefile_partial(&editor->filemgr, fname, msg, sizeof(msg));
+        } else {
+            success = filemgr_writefile(&editor->filemgr, fname, msg, sizeof(msg));
+        }
+        if (!fname_specified && success) {
             editor->memory.lastchange = false;
         }
         if (msg[0]) {
