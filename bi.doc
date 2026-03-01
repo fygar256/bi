@@ -102,10 +102,10 @@ On command line mode
 Option
     -s script.bi   scripting
     -v             verbose when scripting
-    -b <offset>    partial edit beginning offset
+    -o <offset>    partial edit beginning offset
     -e <offset>    partial edit ending offset
+    -l <length>    partial edit length
     -h             help
-    -f             fixed length edit when partial editing.
 Remarks
 
     Regular expression can be used for string search.
