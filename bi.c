@@ -3288,7 +3288,6 @@ int editor_scripting(BiEditor *editor, const char *scriptfile) {
 /* ========================================================================
  * main関数
  * ======================================================================== */
-
 int main(int argc, char *argv[]) {
     // コマンドライン引数処理
     const char *filename = NULL;
