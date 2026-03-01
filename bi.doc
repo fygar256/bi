@@ -60,6 +60,10 @@ On command line mode
    redo                    ----- redo
    n                       ----- search the next
    N                       ----- search the last
+   rp [offset]             ----- partial read
+   rp [offset],[end]       ----- partial read
+   rp [offset],*[length]   ----- partial read
+   wp             ----- partial write (overwrite from offset of original file)
    [offset]                ----- jump to the address
    [offset]m[a-z]          ----- mark position
    [offset]R<filename>     ----- read file and insert at [offset]
