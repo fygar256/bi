@@ -2357,25 +2357,31 @@ int editor_commandline(BiEditor *editor, const char *line) {
         }
 
         if (strlen(parsed_line) < 2) {
-            bool was_partial = g_partial.active;
-            g_partial.active = false;
-            g_partial.offset = 0;
-            g_partial.length = 0;
+            /* :r のみ — パーシャルモードを解除せず再読み込み
+             *   パーシャル中 → 同じオフセット・長さで再ロード
+             *   通常モード  → ファイル全体を再ロード            */
             char msg[256];
-            bool success = filemgr_readfile(&editor->filemgr, editor->filemgr.filename, msg, sizeof(msg));
-            char out[512];
-            if (was_partial) {
-                if (msg[0])
-                    snprintf(out, sizeof(out), "Partial mode released, %s", msg);
-                else
-                    snprintf(out, sizeof(out), "Partial mode released. Original file read.");
+            bool success;
+            if (g_partial.active) {
+                success = filemgr_readfile_partial(&editor->filemgr,
+                              editor->filemgr.filename,
+                              g_partial.offset, g_partial.length,
+                              msg, sizeof(msg));
             } else {
-                if (msg[0])
-                    snprintf(out, sizeof(out), "%s", msg);
-                else
-                    snprintf(out, sizeof(out), "Original file read.");
+                success = filemgr_readfile(&editor->filemgr,
+                              editor->filemgr.filename, msg, sizeof(msg));
             }
-            display_stdmm(&editor->display, out, editor->scriptingflag, editor->verbose);
+            display_jump(&editor->display, 0);
+            matcharray_clear(&editor->display.highlight_ranges);
+            if (success) {
+                display_stdmm(&editor->display,
+                              msg[0] ? msg : "Original file read.",
+                              editor->scriptingflag, editor->verbose);
+            } else {
+                display_stderr(&editor->display,
+                               msg[0] ? msg : "Read error.",
+                               editor->scriptingflag, editor->verbose);
+            }
             return -1;
         }
     }
@@ -2596,14 +2602,11 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         char cmd = line[idx];
         idx++;
         idx = parser_skipspc(line, idx);
-        
-        if (idx >= strlen(line)) {
-            display_stderr(&editor->display, "File name not specified.", 
-                          editor->scriptingflag, editor->verbose);
-            return -1;
-        }
-        
-        const char *filename = line + idx;
+
+        /* ファイル名省略時はカレントファイルを使う */
+        const char *filename = (idx >= strlen(line))
+                               ? editor->filemgr.filename
+                               : line + idx;
         FILE *f = fopen(filename, "rb");
         if (!f) {
             display_stderr(&editor->display, "File read error.", 

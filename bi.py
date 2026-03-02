@@ -1606,22 +1606,22 @@ class BiEditor:
                 else:
                     self.stderr(msg)
                 return -1
-            # :r / :r filename — パーシャル解除して通常リード
-            was_partial = g_partial.active
-            if was_partial:
-                g_partial.active = False
-                g_partial.offset = 0
-                g_partial.length = 0
+            # :r / :r filename — パーシャルモードを解除せず再読み込み
+            #   パーシャル中 → 同じオフセット・長さで再ロード
+            #   通常モード  → ファイル全体を再ロード
             rest = line[1:].lstrip() if len(line) >= 2 else ''
             if rest:
                 self.filemgr.filename = rest
-            success, msg = self.filemgr.readfile(self.filemgr.filename)
+            if g_partial.active:
+                success, msg = self.filemgr.readfile_partial(
+                    self.filemgr.filename,
+                    g_partial.offset, g_partial.length)
+            else:
+                success, msg = self.filemgr.readfile(self.filemgr.filename)
             if success:
                 self.display.jump(0)
                 self.display.highlight_ranges = []
-                base = msg if msg else "File read."
-                out = ("Partial edit released. " + base) if was_partial else base
-                self.stdmm(out)
+                self.stdmm(msg if msg else "Original file read.")
             else:
                 self.stderr(msg)
             return -1
@@ -1796,25 +1796,20 @@ class BiEditor:
                 self.stderr(msg)
             return -1
 
-        # read file
+        # read file — ファイル名省略時はカレントファイルを使う
         if idx < len(line) and (line[idx] == 'r' or line[idx] == 'R'):
             ch = line[idx]
             idx += 1
-            if idx >= len(line):
-                self.stderr("File name not specified.")
-                return -1
-            fn = line[idx:].lstrip()
-            if fn == "":
-                self.stderr("File name not specified.")
-            else:
-                try:
-                    f = open(fn, "rb")
-                    data = list(f.read())
-                    f.close()
-                except:
-                    data = []
-                    self.stderr("File read error.")
-            
+            fn = line[idx:].lstrip() if idx < len(line) else ''
+            if fn == '':
+                fn = self.filemgr.filename  # 省略時はカレントファイル
+            data = []
+            try:
+                f = open(fn, "rb")
+                data = list(f.read())
+                f.close()
+            except:
+                self.stderr("File read error.")
             if data:
                 self.save_undo_state()
                 if ch == 'r':
