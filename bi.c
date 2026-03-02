@@ -6,12 +6,14 @@
  * ======================================================================== */
 
 typedef struct {
-    bool   active;   /* パーシャルモード有効フラグ */
-    size_t offset;   /* ファイル内の開始オフセット */
-    size_t length;   /* 読み込んだバイト数（実際の値） */
+    bool   active;        /* パーシャルモード有効フラグ */
+    size_t offset;        /* ファイル内の開始オフセット */
+    size_t length;        /* 読み込んだバイト数（実際の値） */
+    size_t init_offset;   /* 起動時コマンドラインで指定したオフセット */
+    size_t init_length;   /* 起動時コマンドラインで指定した長さ（0=EOFまで） */
 } PartialState;
 
-static PartialState g_partial = {false, 0, 0};
+static PartialState g_partial = {false, 0, 0, 0, 0};
 
 /* ========================================================================
  * readline代替実装（readlineライブラリがない環境用）
@@ -2335,62 +2337,13 @@ int editor_commandline(BiEditor *editor, const char *line) {
         /* ---- pr: パーシャルリード ---- */
         if (parsed_line[1] == 'p') {
             /*
-             * 書式: :rp <offset>[,<end> | ,*<length>]
-             *   offset   = 16進オフセット（例: 1000）
-             *   ,<end>   = 終端オフセット（inclusive）
-             *   ,*<len>  = 長さ指定
-             * 長さ/終端を省略した場合はEOFまで読む。
+             * :rp — 起動時コマンドラインで指定した範囲を再ロード
              */
-            const char *arg = parsed_line + 2;
-            while (*arg == ' ') arg++;
-
-            if (*arg == '\0') {
-                display_stderr(&editor->display,
-                               "Usage: rp <offset>[,<endoffset> | ,*<length>]",
-                               editor->scriptingflag, editor->verbose);
-                return -1;
-            }
-
-            size_t aidx = 0;
-            uint64_t start_off = parser_expression(&editor->parser, arg, &aidx);
-            if (start_off == UNKNOWN) {
-                display_stderr(&editor->display, "Invalid offset.",
-                               editor->scriptingflag, editor->verbose);
-                return -1;
-            }
-
-            size_t load_len = 0; /* 0 = EOF まで */
-            aidx = parser_skipspc(arg, aidx);
-            if (arg[aidx] == ',') {
-                aidx++;
-                aidx = parser_skipspc(arg, aidx);
-                if (arg[aidx] == '*') {
-                    /* ,*<length> 形式 */
-                    aidx++;
-                    uint64_t len_val = parser_expression(&editor->parser, arg, &aidx);
-                    if (len_val == UNKNOWN || len_val == 0) {
-                        display_stderr(&editor->display, "Invalid length.",
-                                       editor->scriptingflag, editor->verbose);
-                        return -1;
-                    }
-                    load_len = (size_t)len_val;
-                } else {
-                    /* ,<endoffset> 形式（inclusive） */
-                    uint64_t end_off = parser_expression(&editor->parser, arg, &aidx);
-                    if (end_off == UNKNOWN || end_off < start_off) {
-                        display_stderr(&editor->display, "Invalid end offset.",
-                                       editor->scriptingflag, editor->verbose);
-                        return -1;
-                    }
-                    load_len = (size_t)(end_off - start_off + 1);
-                }
-            }
-
             char msg[256];
             bool success = filemgr_readfile_partial(
                 &editor->filemgr, editor->filemgr.filename,
-                (size_t)start_off, load_len, msg, sizeof(msg));
-
+                g_partial.init_offset, g_partial.init_length,
+                msg, sizeof(msg));
             if (success) {
                 display_jump(&editor->display, 0);
                 matcharray_clear(&editor->display.highlight_ranges);
@@ -2404,17 +2357,25 @@ int editor_commandline(BiEditor *editor, const char *line) {
         }
 
         if (strlen(parsed_line) < 2) {
-            g_partial.active=false;
-            g_partial.offset=false;
-            g_partial.length=0;
+            bool was_partial = g_partial.active;
+            g_partial.active = false;
+            g_partial.offset = 0;
+            g_partial.length = 0;
             char msg[256];
             bool success = filemgr_readfile(&editor->filemgr, editor->filemgr.filename, msg, sizeof(msg));
-            if (msg[0]) {
-                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+            char out[512];
+            if (was_partial) {
+                if (msg[0])
+                    snprintf(out, sizeof(out), "Partial mode released, %s", msg);
+                else
+                    snprintf(out, sizeof(out), "Partial mode released. Original file read.");
             } else {
-                display_stdmm(&editor->display, "Original file read.", 
-                             editor->scriptingflag, editor->verbose);
+                if (msg[0])
+                    snprintf(out, sizeof(out), "%s", msg);
+                else
+                    snprintf(out, sizeof(out), "Original file read.");
             }
+            display_stdmm(&editor->display, out, editor->scriptingflag, editor->verbose);
             return -1;
         }
     }
@@ -2511,7 +2472,20 @@ int editor_commandline(BiEditor *editor, const char *line) {
     
     if (x2 < x) x2 = x;
     idx = parser_skipspc(parsed_line, idx);
-    
+
+    /* パーシャル編集中: ユーザー入力アドレスはファイル絶対値
+     * → バッファ相対インデックス (addr - g_partial.offset) に変換
+     * ただし rp コマンドは絶対アドレスをそのまま使うので変換しない */
+    {
+        const char *nc = &parsed_line[idx];
+        bool is_rp = (nc[0] == 'r' && nc[1] == 'p');
+        if (g_partial.active && g_partial.offset > 0 && !is_rp) {
+            if (xf)  x  = (x  >= g_partial.offset) ? x  - g_partial.offset : 0;
+            if (xf2) x2 = (x2 >= g_partial.offset) ? x2 - g_partial.offset : 0;
+            else if (xf) x2 = x;  /* x2 = x と連動していたケース */
+        }
+    }
+
     if (parsed_line[idx] == '\0') {
         display_jump(&editor->display, x);
         return -1;
@@ -2572,6 +2546,51 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         // 'm'だけの場合は次の処理へ（未認識コマンドとして処理される）
     }
     
+    // partial read: [offset,end] rp
+    if (line[idx] == 'r' && line[idx + 1] == 'p') {
+        size_t row_head = display_fpos(&editor->display) & ~(size_t)0xF;
+        size_t start    = xf  ? (size_t)x  : row_head;
+        size_t load_len = xf2 ? (size_t)(x2 - start + 1) : 0;
+        char msg[256];
+        bool success = filemgr_readfile_partial(
+            &editor->filemgr, editor->filemgr.filename,
+            start, load_len, msg, sizeof(msg));
+        if (success) {
+            display_jump(&editor->display, 0);
+            matcharray_clear(&editor->display.highlight_ranges);
+            display_stdmm(&editor->display, msg,
+                          editor->scriptingflag, editor->verbose);
+        } else {
+            display_stderr(&editor->display, msg,
+                           editor->scriptingflag, editor->verbose);
+        }
+        return -1;
+    }
+
+    // partial read with new offset: [offset] rp  /  [offset,end] rp
+    // x, x2 は絶対アドレスのまま（parse_range_command での変換をスキップ済み）
+    if (line[idx] == 'r' && line[idx + 1] == 'p') {
+        size_t abs_off  = xf  ? (size_t)x  : g_partial.init_offset;
+        size_t load_len = xf2 ? ((size_t)x2 >= abs_off ? (size_t)x2 - abs_off + 1 : 0)
+                               : g_partial.init_length;
+        char msg[256];
+        bool success = filemgr_readfile_partial(
+            &editor->filemgr, editor->filemgr.filename,
+            abs_off, load_len, msg, sizeof(msg));
+        if (success) {
+            g_partial.init_offset = abs_off;
+            g_partial.init_length = load_len;
+            display_jump(&editor->display, 0);
+            matcharray_clear(&editor->display.highlight_ranges);
+            display_stdmm(&editor->display, msg,
+                          editor->scriptingflag, editor->verbose);
+        } else {
+            display_stderr(&editor->display, msg,
+                           editor->scriptingflag, editor->verbose);
+        }
+        return -1;
+    }
+
     // read file (r/R commands)
     if (line[idx] == 'r' || line[idx] == 'R') {
         char cmd = line[idx];
@@ -2893,6 +2912,9 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                       editor->scriptingflag, editor->verbose);
         return -1;
     }
+    /* パーシャル編集中: x3 もバッファ相対に変換 */
+    if (g_partial.active && g_partial.offset > 0)
+        x3 = (x3 >= g_partial.offset) ? x3 - g_partial.offset : 0;
     
     // copy/Copy (c/C commands)
     if (cmd == 'c' || cmd == 'C') {
@@ -3382,6 +3404,10 @@ int main(int argc, char *argv[]) {
         editor.scriptingflag = true;
     }
     
+    // 起動時パーシャル範囲を保存（:rp コマンドで再ロードに使用）
+    g_partial.init_offset = partial_offset;
+    g_partial.init_length = partial_length;
+
     // ファイル読み込み
     char msg[256];
     bool success;

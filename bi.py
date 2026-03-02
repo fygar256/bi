@@ -81,9 +81,11 @@ def setmem(addr: int, data: int) -> None:
 # ========================================================================
 class _PartialState:
     def __init__(self):
-        self.active = False   # パーシャルモード有効フラグ
-        self.offset = 0       # ファイル内の開始オフセット
-        self.length = 0       # 読み込んだバイト数
+        self.active = False       # パーシャルモード有効フラグ
+        self.offset = 0           # ファイル内の開始オフセット
+        self.length = 0           # 読み込んだバイト数
+        self.init_offset = 0      # 起動時コマンドラインで指定したオフセット
+        self.init_length = 0      # 起動時コマンドラインで指定した長さ（0=EOFまで）
 
 g_partial = _PartialState()
 
@@ -632,6 +634,8 @@ class Display:
         file_addr = addr + g_partial.offset  # 実ファイル上のアドレス
         a = self.memory.readmem(addr)
         # 行23: カーソル位置のバイト詳細（実ファイルアドレスで表示）
+        self.term.locate(0, 23)
+        print(" "*80)
         self.term.locate(0, 23)
         self.term.color(6)
         s = '.'
@@ -1589,36 +1593,12 @@ class BiEditor:
         
         # ファイル読み込み
         elif line[0] == 'r':
-            # :rp <offset>[,<endoffset> | ,*<length>] — パーシャルリード
+            # :rp — 起動時コマンドラインで指定した範囲を再ロード
             if len(line) >= 2 and line[1] == 'p':
-                arg = line[2:].lstrip()
-                if not arg:
-                    self.stderr("Usage: rp <offset>[,<endoffset> | ,*<length>]")
-                    return -1
-                start_off, idx = self.parser.expression(arg, 0)
-                if start_off == Parser.UNKNOWN:
-                    self.stderr("Invalid offset.")
-                    return -1
-                load_len = 0
-                idx = self.parser.skipspc(arg, idx)
-                if idx < len(arg) and arg[idx] == ',':
-                    idx += 1
-                    idx = self.parser.skipspc(arg, idx)
-                    if idx < len(arg) and arg[idx] == '*':
-                        idx += 1
-                        len_val, idx = self.parser.expression(arg, idx)
-                        if len_val == Parser.UNKNOWN or len_val == 0:
-                            self.stderr("Invalid length.")
-                            return -1
-                        load_len = len_val
-                    else:
-                        end_off, idx = self.parser.expression(arg, idx)
-                        if end_off == Parser.UNKNOWN or end_off < start_off:
-                            self.stderr("Invalid end offset.")
-                            return -1
-                        load_len = end_off - start_off + 1
                 success, msg = self.filemgr.readfile_partial(
-                    self.filemgr.filename, start_off, load_len)
+                    self.filemgr.filename,
+                    g_partial.init_offset,
+                    g_partial.init_length)
                 if success:
                     self.display.jump(0)
                     self.display.highlight_ranges = []
@@ -1742,7 +1722,19 @@ class BiEditor:
             x2 = x
         
         idx = self.parser.skipspc(line, idx)
-        
+
+        # パーシャル編集中: ユーザー入力アドレスはファイル絶対値
+        # → バッファ相対インデックス (addr - g_partial.offset) に変換
+        # ただし rp コマンドは絶対アドレスをそのまま使うので変換しない
+        next_cmd = line[idx:idx+2] if idx + 1 < len(line) else line[idx:idx+1]
+        if g_partial.active and g_partial.offset > 0 and next_cmd != 'rp':
+            if xf:
+                x  = max(0, x  - g_partial.offset)
+            if xf2:
+                x2 = max(0, x2 - g_partial.offset)
+            elif xf:           # x2 = x と連動していたケース
+                x2 = x
+
         if idx == len(line):
             self.display.jump(x)
             return -1
@@ -1787,6 +1779,23 @@ class BiEditor:
                 self.memory.mark[ord(line[idx + 1]) - ord('a')] = x
             return -1
         
+        # partial read with new offset: [offset] rp  /  [offset,end] rp
+        # x, x2 は絶対アドレスのまま（parse_range_command での変換をスキップ済み）
+        if idx + 1 < len(line) and line[idx] == 'r' and line[idx + 1] == 'p':
+            abs_off  = x if xf else g_partial.init_offset
+            load_len = (x2 - abs_off + 1) if xf2 else g_partial.init_length
+            success, msg = self.filemgr.readfile_partial(
+                self.filemgr.filename, abs_off, load_len)
+            if success:
+                g_partial.init_offset = abs_off
+                g_partial.init_length = load_len
+                self.display.jump(0)
+                self.display.highlight_ranges = []
+                self.stdmm(msg)
+            else:
+                self.stderr(msg)
+            return -1
+
         # read file
         if idx < len(line) and (line[idx] == 'r' or line[idx] == 'R'):
             ch = line[idx]
@@ -1932,6 +1941,9 @@ class BiEditor:
         if x3 == Parser.UNKNOWN:
             self.stderr("Invalid parameter.")
             return -1
+        # パーシャル編集中: x3 もバッファ相対に変換
+        if g_partial.active and g_partial.offset > 0:
+            x3 = max(0, x3 - g_partial.offset)
         
         # copy/Copy
         if ch == 'c':
@@ -2247,6 +2259,10 @@ def main():
             return
         partial_length = args.end - partial_offset + 1
         partial_mode = True
+
+    # 起動時パーシャル範囲を g_partial に保存（:rp コマンドで再ロードに使用）
+    g_partial.init_offset = partial_offset
+    g_partial.init_length = partial_length
 
     # エディタの初期化
     editor = BiEditor(termcol=args.termcolor)
