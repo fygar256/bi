@@ -2046,6 +2046,7 @@ int editor_commandline(BiEditor *editor, const char *line) {
         }
         if (success) {
             editor->memory.lastchange = false;
+            display_stdmm(&editor->display, "File written and quit.", editor->scriptingflag, editor->verbose);
             return 0;
         } else {
             return -1;
@@ -2467,6 +2468,7 @@ int editor_commandline(BiEditor *editor, const char *line) {
             uint64_t t = parser_expression(&editor->parser, parsed_line, &idx);
             if (t == UNKNOWN) t = 1;
             x2 = x + t - 1;
+            xf2= true;
         } else {
             uint64_t t = parser_expression(&editor->parser, parsed_line, &idx);
             if (t != UNKNOWN) {

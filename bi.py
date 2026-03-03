@@ -1547,6 +1547,7 @@ class BiEditor:
                 success, msg = self.filemgr.writefile(self.filemgr.filename)
             if success:
                 self.memory.lastchange = False
+                self.stdmm("File written and quit.")
                 return 0
             else:
                 self.stderr(msg)
@@ -1708,6 +1709,7 @@ class BiEditor:
                 if t == Parser.UNKNOWN:
                     t = 1
                 x2 = x + t - 1
+                xf2 = True
             else:
                 t, idx = self.parser.expression(line, idx)
                 if t == Parser.UNKNOWN:
