@@ -54,7 +54,7 @@ sudo cp bi /usr/local/bin
 
 This is a version of 'bi', the Binary editor like vi, written in C. It doen't support Python calls such as eval() and exec(), but it runs much faster than Python version, making it ideal for working with large files.
 
-Originally, bi was written in C in 1991, therefore I recreated bi in C with modern functionality.
+Originally, bi was written in C in 1991, therefore I recreated bi nowadays in C with modern functionality.
 
 ```
 cc bi.c -o bi
