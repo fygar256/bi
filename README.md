@@ -103,7 +103,7 @@ Pacific Software Development
 
 <img alt="image" src="https://github.com/fygar256/bi/blob/main/screenshot.png">
 
-screen shot from original bi in 1991.<br>
+screen shot from original bi in 1991 on PC-9801 emulator xnp2.<br>
 
 <img alt="image" src="https://github.com/fygar256/bi/blob/main/screenshot-2026-01-18 15-02-53.png">
 
