@@ -2521,6 +2521,69 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         return -1;
     }
     
+ /* ========================================================================
+  * [start],[end] w <filename>   --- 範囲を別ファイルに書き出し（エクスポート）
+  * ======================================================================== */
+    if (line[idx] == 'w') {
+        idx++;                              /* 'w' をスキップ */
+        idx = parser_skipspc(line, idx);
+
+        if (line[idx] == '\0') {
+            display_stderr(&editor->display,
+                "Filename required for range write (ex: 100,1ff w dump.bin)",
+                editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+
+        /* 行末までをファイル名として取得（スペースを含む名前もOK） */
+        char fname[4096];
+        size_t flen = 0;
+        while (line[idx] && flen < sizeof(fname) - 1) {
+            fname[flen++] = line[idx++];
+        }
+        fname[flen] = '\0';
+
+        /* 範囲チェック */
+        if (!xf || !xf2 || x > x2) {
+            display_stderr(&editor->display, "Invalid range.", 
+                           editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+        if (x >= editor->memory.mem.size) {
+            display_stderr(&editor->display, "Range start is beyond end of buffer.", 
+                           editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+        if (x2 >= editor->memory.mem.size) {
+            x2 = editor->memory.mem.size - 1;
+        }
+
+        /* 範囲データを抽出 */
+        ByteArray data;
+        bytearray_init(&data);
+        for (uint64_t i = x; i <= x2; i++) {
+            bytearray_push(&data, editor->memory.mem.data[i]);
+        }
+
+        /* 書き込み */
+        FILE *f = fopen(fname, "wb");
+        if (!f) {
+            display_stderr(&editor->display, "Cannot open output file.", 
+                           editor->scriptingflag, editor->verbose);
+            bytearray_free(&data);
+            return -1;
+        }
+        size_t written = fwrite(data.data, 1, data.size, f);
+        fclose(f);
+
+        char msg[256];
+        snprintf(msg, sizeof(msg), "%zu bytes written to '%s'", written, fname);
+        display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+
+        bytearray_free(&data);
+        return -1;
+    }
+
     // paste
     if (line[idx] == 'p') {
         if (editor->memory.yank.size > 0) {

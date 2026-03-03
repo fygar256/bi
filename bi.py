@@ -1757,6 +1757,33 @@ class BiEditor:
             
             self.stdmm(f"{len(self.memory.yank)} bytes yanked.")
             return -1
+     # ========================================================================
+     # [start],[end] w <file>   --- 指定範囲のエリアを別ファイルに書き出す
+     # ========================================================================
+        if idx < len(line) and line[idx] == 'w':
+            idx += 1
+            fn = line[idx:].lstrip()          # ファイル名（スペースも含む）
+            if not fn:
+                self.stderr("Filename required for range write (ex: 100,1ff w dump.bin)")
+                return -1
+
+            # 範囲チェック
+            if not xf or not xf2 or x > x2:
+                self.stderr("Invalid range.")
+                return -1
+            if x >= len(self.memory.mem):
+                self.stderr("Range start is beyond end of buffer.")
+                return -1
+            if x2 >= len(self.memory.mem):
+                x2 = len(self.memory.mem) - 1
+
+            # 書き出し（FileManager.wrtfile をそのまま利用）
+            success, msg = self.filemgr.wrtfile(x, x2, fn)
+            if success:
+                self.stdmm(f"{x2 - x + 1} bytes written to '{fn}'")
+            else:
+                self.stderr(msg or "Write error.")
+            return -1
         
         # paste
         if idx < len(line) and line[idx] == 'p':
