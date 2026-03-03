@@ -50,6 +50,18 @@ except ImportError:
         def get_current_history_length(self):
             """現在の履歴数を取得"""
             return len(self._history)
+
+        def set_pre_input_hook(self, hook=None):
+            """readline非対応環境用スタブ（何もしない）"""
+            pass
+
+        def insert_text(self, text):
+            """readline非対応環境用スタブ（何もしない）"""
+            pass
+
+        def redisplay(self):
+            """readline非対応環境用スタブ（何もしない）"""
+            pass
     
     readline = ReadlineFallback()
 
@@ -425,12 +437,13 @@ class SearchEngine:
                 return None
     
     def searchlast(self, fp, mem_len):
+        wrapped=False
         curpos = fp
         start = fp
-        wrapped=False
         if not self.regexp and not self.smem:
             return False
-        self.stdmm_wait("Wait.")
+        if not wrapped:
+            self.stdmm_wait("Wait.")
         while True:
             f = self.hitre(curpos) if self.regexp else self.hit(curpos)
             
@@ -1414,7 +1427,7 @@ class BiEditor:
                         self.memory.setmem(addr, self.memory.readmem(addr) & mask | c << sh)
                     stroke = (not stroke) if not self.display.curx & 1 else False
                 else:
-                    if self.display.curx & 1 == 0:  # 上位ニブルの入力時のみ保存
+                    if (self.display.curx & 1) == 0:  # 上位ニブルの入力時のみ保存
                         self.save_undo_state()
                     self.memory.setmem(addr, self.memory.readmem(addr) & mask | c << sh)
                 self.display.inccurx()
@@ -2147,7 +2160,9 @@ class BiEditor:
                 m, idx = self.parser.get_restr(line, idx)
                 self.search.regexp = True
                 self.search.remem = m
-                self.search.span = len(m)
+                # span はマッチ実行後に hitre() が更新するため、ここでは 1 以上の仮値を設定して
+                # 「検索対象あり」チェックだけ通す。実際の削除幅は searchnextnoloop 後に使う self.search.span で決まる。
+                self.search.span = max(1, len(m))
             elif idx < len(line) and line[idx] == '/':
                 self.search.smem, idx = self.parser.get_hexs(line, idx + 1)
                 self.search.regexp = False
