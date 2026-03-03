@@ -327,7 +327,8 @@ void memory_insert(MemoryBuffer *mem, size_t start, const uint8_t *data, size_t 
 bool memory_delete(MemoryBuffer *mem, size_t start, size_t end, bool yf,
                    size_t (*yank_func)(MemoryBuffer*, size_t, size_t)) {
     size_t length = end - start + 1;
-    if (length == 0 || start >= mem->mem.size || end>(mem->mem.size-1)) return false;
+    /* Fix: mem.size==0 のとき mem.size-1 が size_t アンダーフローする */
+    if (length == 0 || mem->mem.size == 0 || start >= mem->mem.size || end >= mem->mem.size) return false;
     
     if (yf && yank_func) {
         yank_func(mem, start, end);
@@ -406,7 +407,8 @@ int search_hitre(SearchEngine *search, size_t addr) {
     int reti;
     
     // 検索範囲のデータを取得
-    size_t len = (addr < search->memory->mem.size - RELEN) ? 
+    /* Fix: mem.size < RELEN のとき size_t アンダーフローが起きないよう修正 */
+    size_t len = (addr + RELEN <= search->memory->mem.size) ?
                  RELEN : search->memory->mem.size - addr;
     if (len == 0) return -1;
     
@@ -495,16 +497,28 @@ size_t search_next(SearchEngine *search, size_t fp, size_t mem_len) {
 }
 
 size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
+    bool wrapped = false;
+    /* fp が mem_len 以上（size_t アンダーフローで巨大値になった場合を含む）のとき、
+     * 末尾バイトから検索を開始する。これにより呼び出し側で 0-1 のアンダーフローが
+     * 起きても正しく末尾折り返し検索になる。 */
+    if (mem_len == 0) return (size_t)-1;
+    if (!search->regexp && search->smem.size == 0) return (size_t)-1;
+    if (fp >= mem_len) {
+        fp = mem_len - 1;
+        display_stdmm_wait(search->display, 
+            "Search reached TOP, wrap around to BOTTOM", 
+            search->editor->scriptingflag,
+            search->editor->verbose);
+        wrapped=true;
+    }
+
     size_t curpos = fp;
     size_t start = fp;
-    bool wrapped = false;
-    
-    if (!search->regexp && search->smem.size == 0) {
-        return (size_t)-1;
-    }
     
     // Wait.メッセージを表示
-    display_stdmm_wait(search->display, "Wait.", search->editor->scriptingflag, search->editor->verbose);
+    if (!wrapped) {
+        display_stdmm_wait(search->display, "Wait.", search->editor->scriptingflag, search->editor->verbose);
+    }
     
     while (true) {
         int f = search->regexp ? search_hitre(search, curpos) : search_hit(search, curpos);
@@ -520,14 +534,6 @@ size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
         }
         
         if (curpos == 0) {
-            if (!wrapped && mem_len > 0) {
-                // 最初のwrap around
-                display_stdmm_wait(search->display, 
-                    "Search reached TOP, wrap around to BOTTOM", 
-                    search->editor->scriptingflag,
-                    search->editor->verbose);
-                wrapped = true;
-            }
             curpos = mem_len > 0 ? mem_len - 1 : 0;
         } else {
             curpos--;
@@ -1321,6 +1327,8 @@ bool filemgr_readfile(FileManager *fmgr, const char *filename, char *msg, size_t
     }
     
     // メモリ確保と読み込み
+    /* Fix: 既存データを free してから初期化（二度目の :r でのリーク防止） */
+    bytearray_free(&fmgr->memory->mem);
     bytearray_init(&fmgr->memory->mem);
     if (fsize > 0) {
         uint8_t *buffer = malloc(fsize);
@@ -1525,6 +1533,8 @@ bool editor_dec_undo(BiEditor *editor) {
         return false;
     }
     UndoState *state = undostack_pop(&editor->undo_stack);
+    /* Fix: state->mem を解放しないとメモリリークする */
+    bytearray_free(&state->mem);
     return true;
 }
     
@@ -1658,6 +1668,8 @@ void editor_fedit(BiEditor *editor) {
             }
             continue;
         } else if (ch == 'N') {
+            /* cur==0 のとき cur-1 は size_t アンダーフローするが、
+             * search_last 内でクランプされるので呼び出し側はそのまま渡してよい。 */
             size_t pos = search_last(&editor->search, display_fpos(&editor->display) - 1,
                                     editor->memory.mem.size);
             if (pos != (size_t)-1) {
@@ -2064,8 +2076,10 @@ int editor_commandline(BiEditor *editor, const char *line) {
     
     // ファイル書き込み
     else if (parsed_line[0] == 'w') {
-        /* ---- pw: パーシャルライト ---- */
-        if (parsed_line[1] == 'p' || (parsed_line[1] == 'p' && parsed_line[2] == '\0')) {
+        /* ---- wp: パーシャルライト ---- */
+        /* Fix: 元の条件 (p1=='p' || (p1=='p' && p2=='\0')) は A||(A&&B) で常に A と等価。
+         *      :wp のみ（ファイル名なし）と :wp <filename>（ファイル名あり）を正しく区別する。 */
+        if (parsed_line[1] == 'p') {
             /* :wp または :wp <filename> */
             char msg[256];
             const char *fname = editor->filemgr.filename;
@@ -2436,6 +2450,8 @@ int editor_commandline(BiEditor *editor, const char *line) {
         }
         return -1;
     } else if (parsed_line[0] == 'N') {
+        /* cur==0 のとき cur-1 は size_t アンダーフローするが、
+         * search_last 内でクランプされるので呼び出し側はそのまま渡してよい。 */
         size_t pos = search_last(&editor->search, display_fpos(&editor->display) - 1,
                                 editor->memory.mem.size);
         if (pos != (size_t)-1) {
@@ -2618,28 +2634,8 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     }
     
     // partial read: [offset,end] rp
-    if (line[idx] == 'r' && line[idx + 1] == 'p') {
-        size_t row_head = display_fpos(&editor->display) & ~(size_t)0xF;
-        size_t start    = xf  ? (size_t)x  : row_head;
-        size_t load_len = xf2 ? (size_t)(x2 - start + 1) : 0;
-        char msg[256];
-        bool success = filemgr_readfile_partial(
-            &editor->filemgr, editor->filemgr.filename,
-            start, load_len, msg, sizeof(msg));
-        if (success) {
-            display_jump(&editor->display, 0);
-            matcharray_clear(&editor->display.highlight_ranges);
-            display_stdmm(&editor->display, msg,
-                          editor->scriptingflag, editor->verbose);
-        } else {
-            display_stderr(&editor->display, msg,
-                           editor->scriptingflag, editor->verbose);
-        }
-        return -1;
-    }
-
-    // partial read with new offset: [offset] rp  /  [offset,end] rp
-    // x, x2 は絶対アドレスのまま（parse_range_command での変換をスキップ済み）
+    // Fix: 重複ハンドラを統合。xf があれば絶対アドレスで範囲指定、
+    //      なければ init_offset/init_length を使う。
     if (line[idx] == 'r' && line[idx + 1] == 'p') {
         size_t abs_off  = xf  ? (size_t)x  : g_partial.init_offset;
         size_t load_len = xf2 ? ((size_t)x2 >= abs_off ? (size_t)x2 - abs_off + 1 : 0)
@@ -3249,7 +3245,10 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
             editor->search.regexp = true;
             strncpy(editor->search.remem, pattern, sizeof(editor->search.remem) - 1);
             editor->search.remem[sizeof(editor->search.remem) - 1] = '\0';
-            editor->search.span = strlen(pattern);
+            /* Fix: 正規表現の span はマッチするまで不明。
+             *      search_hitre() がマッチ時に span をセットするので 0 に初期化しておく。
+             *      strlen(pattern) を設定すると置換時に誤ったバイト数が削除される。 */
+            editor->search.span = 0;
         } else if (idx < strlen(line) && line[idx] == '/') {
             // 16進数
             ByteArray sm;
