@@ -589,7 +589,7 @@ class Display:
     def print_title(self, filename):
         self.term.locate(0, 0)
         self.term.color(6)
-        print(f'bi version 3.5.0 by Taisuke Maekawa             utf8mode:{"off" if not self.utf8 else self.repsw}     {"insert   " if self.insmod else "overwrite"}   ')
+        print(f'bi Py version 3.5.1 by Taisuke Maekawa          utf8mode:{"off" if not self.utf8 else self.repsw}     {"insert   " if self.insmod else "overwrite"}   ')
         self.term.color(5)
         if len(filename) > 35:
             fn = filename[0:35]
@@ -1899,7 +1899,7 @@ class BiEditor:
             return -1
         
         # その他の複雑なコマンド
-        if idx < len(line) and line[idx] in "IivCc&|^<>":
+        if idx < len(line) and line[idx] in "IivCc&|^<>f":
             return self.execute_complex_command(line, idx, x, x2, xf, xf2)
         
         self.stderr("Unrecognized command.")
@@ -2023,7 +2023,210 @@ class BiEditor:
             self.opexor(x, x2, x3)
             self.display.jump(x2 + 1)
             return -1
-        
+
+        # ====================================================================
+        # [start],[end] f [start2]  — 2領域バイト比較（バンド幅±10 の LCS diff）
+        # Region1: mem[start..end]
+        # Region2: mem[start2 .. start2+(end-start)] (同長)
+        # 表示: 8バイト/行、一致=白、差異=赤
+        # ====================================================================
+        elif ch == 'f':
+            if not xf or not xf2 or x > x2:
+                self.stderr("Invalid range. Usage: start,end f start2")
+                return -1
+
+            FCMP_SPAN = 10
+            FCMP_MAXN = 8192
+
+            n1 = int(x2 - x + 1)
+            if n1 > FCMP_MAXN:
+                n1 = FCMP_MAXN
+                self.stdmm("  Note: comparison truncated to 8192 bytes.")
+
+            # Region2 の実際の長さ（バッファ末端でクリップ）
+            mem_size = len(self.memory.mem)
+            n2 = n1
+            if int(x3) >= mem_size:
+                n2 = 0
+            elif int(x3) + n2 > mem_size:
+                n2 = mem_size - int(x3)
+
+            s1 = [self.memory.mem[int(x) + i] for i in range(n1)]
+            s2 = [self.memory.mem[int(x3) + i] for i in range(n2)]
+
+            span = FCMP_SPAN
+            bw   = 2 * span + 1  # バンド幅
+
+            # dp[i*bw + d], dir[i*bw + d]
+            dp  = [0] * ((n1 + 1) * bw)
+            dirb = [0] * ((n1 + 1) * bw)  # 1=上 2=左 3=斜め一致 4=斜め不一致
+
+            # 境界初期化
+            for jj in range(1, min(span, n2) + 1):
+                dirb[0 * bw + jj + span] = 2
+            for ii in range(1, min(span, n1) + 1):
+                dirb[ii * bw + span - ii] = 1
+
+            # DP 充填
+            for ii in range(1, n1 + 1):
+                jlo = max(1, ii - span)
+                jhi = min(n2, ii + span)
+                for jj in range(jlo, jhi + 1):
+                    d   = jj - ii + span
+                    cur = ii * bw + d
+                    best = -1
+                    bdir = 0
+
+                    # 斜め (ii-1, jj-1)
+                    if ii >= 1 and jj >= 1:
+                        dd = jj - 1 - (ii - 1) + span
+                        if 0 <= dd < bw:
+                            prev = dp[(ii - 1) * bw + dd]
+                            if s1[ii - 1] == s2[jj - 1]:
+                                v = prev + 1
+                                if v > best:
+                                    best = v; bdir = 3
+                            else:
+                                if prev > best:
+                                    best = prev; bdir = 4
+
+                    # 上 (ii-1, jj)
+                    dd = d + 1
+                    if 0 <= dd < bw:
+                        v = dp[(ii - 1) * bw + dd]
+                        if v > best:
+                            best = v; bdir = 1
+
+                    # 左 (ii, jj-1)
+                    if jj >= 1:
+                        dd = d - 1
+                        if 0 <= dd < bw:
+                            v = dp[ii * bw + dd]
+                            if v > best:
+                                best = v; bdir = 2
+
+                    if best < 0:
+                        best = 0
+                    dp[cur]   = best
+                    dirb[cur] = bdir
+
+            # トレースバック
+            align_a = []
+            align_b = []
+            ci, cj = n1, n2
+            while ci > 0 or cj > 0:
+                in_band = (abs(ci - cj) <= span)
+                if not in_band or ci == 0:
+                    align_a.append(-1)
+                    align_b.append(s2[cj - 1] if cj > 0 else -1)
+                    if cj > 0:
+                        cj -= 1
+                elif cj == 0:
+                    align_a.append(s1[ci - 1])
+                    align_b.append(-1)
+                    ci -= 1
+                else:
+                    d  = cj - ci + span
+                    dv = dirb[ci * bw + d]
+                    if dv == 3 or dv == 4:  # 斜め
+                        align_a.append(s1[ci - 1])
+                        align_b.append(s2[cj - 1])
+                        ci -= 1; cj -= 1
+                    elif dv == 1:           # 上: s1 削除
+                        align_a.append(s1[ci - 1])
+                        align_b.append(-1)
+                        ci -= 1
+                    else:                   # 左: s2 挿入
+                        align_a.append(-1)
+                        align_b.append(s2[cj - 1])
+                        cj -= 1
+
+            # 逆順に並べ直す
+            align_a.reverse()
+            align_b.reverse()
+            np_ = len(align_a)
+
+            # 表示: 8ペア/行
+            print(f"\x1b[0;36m  R1-offs R2-offs  Region1 ({int(x) + g_partial.offset:<8X})       |   Region2 ({int(x3) + g_partial.offset:<8X})")
+            print("\x1b[0;37m", end='', flush=True)
+
+            any_diff = False
+            off1 = 0
+            off2 = 0
+
+            rs = 0
+            while rs < np_:
+                re = min(rs + 8, np_)
+                row_diff = any(align_a[k] != align_b[k] for k in range(rs, re))
+                if row_diff:
+                    any_diff = True
+
+                row_off1 = off1
+                row_off2 = off2
+
+                print(f"  +{row_off1:05X}  +{row_off2:05X}   ", end='')
+
+                # Region1
+                for k in range(rs, rs + 8):
+                    if k < re:
+                        diff = (align_a[k] != align_b[k])
+                        if diff:
+                            print("\x1b[1;31m", end='')
+                        if align_a[k] < 0:
+                            print("-- ", end='')
+                        else:
+                            print(f"{align_a[k]:02X} ", end='')
+                        if diff:
+                            print("\x1b[0;37m", end='')
+                    else:
+                        print("   ", end='')
+
+                print(" |   ", end='')
+
+                # Region2
+                for k in range(rs, rs + 8):
+                    if k < re:
+                        diff = (align_a[k] != align_b[k])
+                        if diff:
+                            print("\x1b[1;31m", end='')
+                        if align_b[k] < 0:
+                            print("-- ", end='')
+                        else:
+                            print(f"{align_b[k]:02X} ", end='')
+                        if diff:
+                            print("\x1b[0;37m", end='')
+                    else:
+                        print("   ", end='')
+
+                if row_diff:
+                    print(" \x1b[1;35m*\x1b[0;37m")
+                else:
+                    print()
+                sys.stdout.flush()
+
+                for k in range(rs, re):
+                    if align_a[k] >= 0:
+                        off1 += 1
+                    if align_b[k] >= 0:
+                        off2 += 1
+
+                rs += 8
+
+            print("\x1b[0m", end='', flush=True)
+
+            if not self.scriptingflag:
+                print("\x1b[0;32m", end='')
+                if not any_diff:
+                    msg = "  Identical. [ hit a key ]"
+                else:
+                    msg = "  Differences found (marked with *). [ hit a key ]"
+                print(msg, end='', flush=True)
+                Terminal.getch()
+                self.term.clear()
+                self.display.repaint(self.filemgr.filename)
+
+            return -1
+
         return -1
     
     # 各種操作メソッド

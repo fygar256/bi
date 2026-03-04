@@ -53,16 +53,17 @@ On command line mode
    wq,wq!                  ----- write and quit
    r                       ----- read original file
    w                       ----- write data to original file
-   w <filename>            ----- write data to filename
-   t <filename>            ----- scripting with filename in silence mode
-   T <filename>            ----- scripting with filename in verbose mode
+   [start],[end] w <filename> ---- write data to file
+   w <file>                ----- write data to file
+   t <file>                ----- scripting with file in silence mode
+   T <file>                ----- scripting with file in verbose mode
    u                       ----- undo
    redo                    ----- redo
    n                       ----- search the next
    N                       ----- search the last
-   rp [offset]             ----- partial read
-   rp [offset],[end]       ----- partial read
-   rp [offset],*[length]   ----- partial read
+   [offset]rp              ----- partial read
+   [offset],[end] rp       ----- partial read
+   [offset],*[length] rp   ----- partial read
    wp             ----- partial write (overwrite from offset of original file)
    [offset]                ----- jump to the address
    [offset]m[a-z]          ----- mark position
@@ -80,6 +81,7 @@ On command line mode
    y/str                   ----- yank to yank buffer with string
    y//xx xx xx ...         ----- yank to yank buffer with data
    <start>,<end> d         ----- delete by range (data will be yanked)
+   <start>,<end> f <start2> ---- compare data start to end with start2
    <start>,<end> C <dest>  ----- insert data to <dest> (data will be yanked)
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
    [start,end] v <dest>    ----- move data
@@ -245,6 +247,7 @@ w<file> commands.
 2025-12-28 version 3.4.4.8 unified i/I command and o/O command.
 2026-02-28 version 3.4.5.12 search command highlight and undo/redo command applied.
 2026-03-01 version 3.4.5.13 partial edit functionaliti added.
+2026-03-04 version 3.5.1.0 data comparison added.
 --------------------
 
       I don't take any responsibility for the result of application of
