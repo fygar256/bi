@@ -3,7 +3,6 @@ import sys
 import tty
 import termios
 import string
-import copy
 import re
 import os
 import io
@@ -229,6 +228,24 @@ class MemoryBuffer:
         self.mark = [self.UNKNOWN] * 26
         self.modified = False
         self.lastchange = False
+        self._diff_log = None   # None=非記録中, list=記録中
+
+    # ------------------------------------------------------------------
+    # 差分記録 API
+    # ------------------------------------------------------------------
+    def begin_diff(self):
+        """差分記録を開始する"""
+        self._diff_log = []
+
+    def end_diff(self):
+        """差分記録を終了し、記録済み差分リストを返す"""
+        log = self._diff_log
+        self._diff_log = None
+        return log if log else []
+
+    def cancel_diff(self):
+        """差分記録を破棄して終了する"""
+        self._diff_log = None
     
     def __len__(self):
         return len(self.mem)
@@ -239,19 +256,22 @@ class MemoryBuffer:
         return self.mem[addr] & 0xff
     
     def setmem(self, addr, data):
+        orig_len = len(self.mem)
         if addr >= len(self.mem):
             for i in range(addr - len(self.mem) + 1):
                 self.mem.append(0)
-        
-        if isinstance(data, int) and 0 <= data <= 255:
-            self.mem[addr] = data
-        else:
-            self.mem[addr] = 0
-        
+        old_val = self.mem[addr]
+        new_val = (int(data) & 0xff) if isinstance(data, int) and 0 <= data <= 255 else 0
+        if self._diff_log is not None:
+            # ('ovw', addr, old_byte, new_byte, orig_mem_len)
+            self._diff_log.append(('ovw', addr, old_val, new_val, orig_len))
+        self.mem[addr] = new_val
         self.modified = True
         self.lastchange = True
     
     def insmem(self, start, mem2):
+        if self._diff_log is not None:
+            self._diff_log.append(('ins', start, list(mem2)))
         if start >= len(self.mem):
             for i in range(start - len(self.mem)):
                 self.mem.append(0)
@@ -270,6 +290,9 @@ class MemoryBuffer:
         length = end - start + 1
         if length <= 0 or start >= len(self.mem) or end>len(self.mem)-1:
             return False
+        
+        if self._diff_log is not None:
+            self._diff_log.append(('del', start, list(self.mem[start:end+1])))
         
         if yf:
             yankmem_func(start, end)
@@ -295,6 +318,14 @@ class MemoryBuffer:
     def ovwmem(self, start, mem0):
         if not mem0:
             return
+        
+        if self._diff_log is not None:
+            orig_len = len(self.mem)
+            # 変更前の該当領域を保存（拡張予定分は 0 で補完）
+            old_region = list(self.mem[start:start+len(mem0)])
+            while len(old_region) < len(mem0):
+                old_region.append(0)
+            self._diff_log.append(('ovw_region', start, old_region, list(mem0), orig_len))
         
         if start + len(mem0) >= len(self.mem):
             for j in range(start + len(mem0) - len(self.mem)):
@@ -1010,10 +1041,12 @@ class BiEditor:
         self.stack = []
         self.cp = 0
         
-        # Undo/Redo機能用
-        self.undo_stack = []  # (mem, modified, mark) のリスト
+        # Undo/Redo機能用（差分方式）
+        self.undo_stack = []  # 各エントリ: {'diff': [...], 'mark_before': [...], ...}
         self.redo_stack = []
         self.max_undo_levels = 100  # 最大undo回数
+        self._undo_mark_snapshot = None  # begin_undo() 時点の mark スナップショット
+        self._undo_meta_snapshot = None  # begin_undo() 時点の modified/lastchange
     
     def stdmm(self, s):
         self.display.stdmm(s, self.scriptingflag, self.verbose)
@@ -1023,94 +1056,154 @@ class BiEditor:
         if self.scriptingflag:
             return
         self.display.stdmm(s, False, False)
-    
+
+    # ------------------------------------------------------------------
+    # 差分 undo/redo ヘルパー
+    # ------------------------------------------------------------------
+    def _apply_diff_inverse(self, diff_log):
+        """差分リストを逆順に逆適用する（undo 用）"""
+        for entry in reversed(diff_log):
+            op = entry[0]
+            if op == 'ovw':
+                # ('ovw', addr, old_byte, new_byte, orig_mem_len)
+                _, addr, old_byte, new_byte, orig_len = entry
+                # orig_len より短くなっていた場合も考慮して復元
+                while len(self.memory.mem) <= addr:
+                    self.memory.mem.append(0)
+                self.memory.mem[addr] = old_byte
+                # mem が拡張されていたなら縮める
+                if orig_len < len(self.memory.mem):
+                    del self.memory.mem[orig_len:]
+            elif op == 'ovw_region':
+                # ('ovw_region', start, old_region, new_region, orig_len)
+                _, start, old_region, new_region, orig_len = entry
+                for i, v in enumerate(old_region):
+                    if start + i < len(self.memory.mem):
+                        self.memory.mem[start + i] = v
+                if orig_len < len(self.memory.mem):
+                    del self.memory.mem[orig_len:]
+            elif op == 'ins':
+                # ('ins', start, data) → undo は削除
+                _, start, data = entry
+                del self.memory.mem[start:start + len(data)]
+            elif op == 'del':
+                # ('del', start, data) → undo は挿入
+                _, start, data = entry
+                self.memory.mem[start:start] = data
+
+    def _apply_diff_forward(self, diff_log):
+        """差分リストを順方向に適用する（redo 用）"""
+        for entry in diff_log:
+            op = entry[0]
+            if op == 'ovw':
+                _, addr, old_byte, new_byte, orig_len = entry
+                while len(self.memory.mem) <= addr:
+                    self.memory.mem.append(0)
+                self.memory.mem[addr] = new_byte
+            elif op == 'ovw_region':
+                _, start, old_region, new_region, orig_len = entry
+                # new_region に合わせて拡張
+                while len(self.memory.mem) < start + len(new_region):
+                    self.memory.mem.append(0)
+                for i, v in enumerate(new_region):
+                    self.memory.mem[start + i] = v
+            elif op == 'ins':
+                _, start, data = entry
+                self.memory.mem[start:start] = data
+            elif op == 'del':
+                _, start, data = entry
+                del self.memory.mem[start:start + len(data)]
+
     def save_undo_state(self):
-        """現在の状態をundoスタックに保存"""
+        """操作前に呼び出す: 差分記録を開始し mark/meta をスナップショット"""
         if self.scriptingflag:
-            return  # スクリプト実行中はundoを保存しない
-        
-        # 現在の状態を保存
+            return
+        # 前回の記録が完了していない場合は先に確定させる
+        if self.memory._diff_log is not None:
+            self.commit_undo()
+        self._undo_mark_snapshot = list(self.memory.mark)
+        self._undo_meta_snapshot = (self.memory.modified, self.memory.lastchange)
+        self.memory.begin_diff()
+
+    def commit_undo(self):
+        """操作後に呼び出す: 記録した差分をスタックに積む"""
+        if self.scriptingflag or self._undo_mark_snapshot is None:
+            self.memory.cancel_diff()
+            return
+        diff_log = self.memory.end_diff()
+        if not diff_log:
+            self._undo_mark_snapshot = None
+            self._undo_meta_snapshot = None
+            return
         state = {
-            'mem': copy.deepcopy(self.memory.mem),
-            'modified': self.memory.modified,
-            'lastchange': self.memory.lastchange,
-            'mark': copy.deepcopy(self.memory.mark)
+            'diff': diff_log,
+            'mark_before': self._undo_mark_snapshot,
+            'mark_after': list(self.memory.mark),
+            'modified_before': self._undo_meta_snapshot[0],
+            'lastchange_before': self._undo_meta_snapshot[1],
         }
-        
+        self._undo_mark_snapshot = None
+        self._undo_meta_snapshot = None
         self.undo_stack.append(state)
-        
-        # スタックサイズの制限
         if len(self.undo_stack) > self.max_undo_levels:
             self.undo_stack.pop(0)
-        
-        # 新しい編集が行われたのでredoスタックをクリア
         self.redo_stack = []
-    
+
     def dec_undo(self):
-        if not self.undo_stack:
-            self.stdmm("No more undo.")
-            return False
-        self.undo_stack.pop()
-        
+        """操作が失敗したとき: 今回の差分記録を破棄する"""
+        self.memory.cancel_diff()
+        self._undo_mark_snapshot = None
+        self._undo_meta_snapshot = None
+
     def undo(self):
-        """undo実行"""
+        """差分を逆適用して undo を実行"""
         if not self.undo_stack:
             self.stdmm("No more undo.")
             return False
-        
-        # 現在の状態をredoスタックに保存
-        current_state = {
-            'mem': copy.deepcopy(self.memory.mem),
-            'modified': self.memory.modified,
-            'lastchange': self.memory.lastchange,
-            'mark': copy.deepcopy(self.memory.mark)
-        }
-        self.redo_stack.append(current_state)
-        
-        # undoスタックから状態を復元
+
         state = self.undo_stack.pop()
-        self.memory.mem = state['mem']
-        self.memory.modified = state['modified']
-        self.memory.lastchange = state['lastchange']
-        self.memory.mark = state['mark']
-        
+
+        # 同じ state を redo スタックにそのまま積む（forward diff を保持）
+        self.redo_stack.append(state)
+
+        # 差分を逆適用
+        self._apply_diff_inverse(state['diff'])
+        self.memory.mark = list(state['mark_before'])
+        self.memory.modified = state['modified_before']
+        self.memory.lastchange = state['lastchange_before']
+
         # カーソル位置を調整
         if self.display.fpos() >= len(self.memory.mem) and len(self.memory.mem) > 0:
             self.display.jump(len(self.memory.mem) - 1)
         elif len(self.memory.mem) == 0:
             self.display.jump(0)
-        
+
         self.stdmm(f"Undo. ({len(self.undo_stack)} more)")
         return True
-    
+
     def redo(self):
-        """redo実行"""
+        """差分を順適用して redo を実行"""
         if not self.redo_stack:
             self.stdmm("No more redo.")
             return False
-        
-        # 現在の状態をundoスタックに保存
-        current_state = {
-            'mem': copy.deepcopy(self.memory.mem),
-            'modified': self.memory.modified,
-            'lastchange': self.memory.lastchange,
-            'mark': copy.deepcopy(self.memory.mark)
-        }
-        self.undo_stack.append(current_state)
-        
-        # redoスタックから状態を復元
+
         state = self.redo_stack.pop()
-        self.memory.mem = state['mem']
-        self.memory.modified = state['modified']
-        self.memory.lastchange = state['lastchange']
-        self.memory.mark = state['mark']
-        
+
+        # 同じ state を undo スタックに戻す
+        self.undo_stack.append(state)
+
+        # 差分を順適用
+        self._apply_diff_forward(state['diff'])
+        self.memory.mark = list(state['mark_after'])
+        self.memory.modified = state['modified_before']
+        self.memory.lastchange = state['lastchange_before']
+
         # カーソル位置を調整
         if self.display.fpos() >= len(self.memory.mem) and len(self.memory.mem) > 0:
             self.display.jump(len(self.memory.mem) - 1)
         elif len(self.memory.mem) == 0:
             self.display.jump(0)
-        
+
         self.stdmm(f"Redo. ({len(self.redo_stack)} more)")
         return True
     
@@ -1392,6 +1485,7 @@ class BiEditor:
                 if y:
                     self.save_undo_state()
                     self.memory.ovwmem(self.display.fpos(), y)
+                    self.commit_undo()
                     self.display.jump(self.display.fpos() + len(y))
                 continue
             elif ch == 'P':
@@ -1400,6 +1494,7 @@ class BiEditor:
                     self.save_undo_state()
                     self.display.highlight_ranges = []
                     self.memory.insmem(self.display.fpos(), y)
+                    self.commit_undo()
                     self.display.jump(self.display.fpos() + len(self.memory.yank))
                 continue
             
@@ -1423,15 +1518,20 @@ class BiEditor:
                             self.save_undo_state()
                         self.memory.setmem(addr, self.memory.readmem(addr) & mask | c << sh)
                     stroke = (not stroke) if not self.display.curx & 1 else False
+                    if not stroke:
+                        self.commit_undo()  # 1バイト分の入力完了でコミット
                 else:
-                    if (self.display.curx & 1) == 0:  # 上位ニブルの入力時のみ保存
+                    if (self.display.curx & 1) == 0:  # 上位ニブルの入力時のみ記録開始
                         self.save_undo_state()
                     self.memory.setmem(addr, self.memory.readmem(addr) & mask | c << sh)
+                    if (self.display.curx & 1) == 1:  # 下位ニブル完了でコミット
+                        self.commit_undo()
                 self.display.inccurx()
             elif ch == 'x':
                 # 削除が成功した場合のみundo保存とハイライトをクリア
                 self.save_undo_state()
                 if self.memory.delmem(self.display.fpos(), self.display.fpos(), False, self.memory.yankmem):
+                    self.commit_undo()
                     self.display.highlight_ranges = []
                 else:
                     self.stderr("Invalid range.")
@@ -1801,6 +1901,7 @@ class BiEditor:
             if y:
                 self.save_undo_state()
                 self.memory.ovwmem(x, y)
+                self.commit_undo()
                 self.display.jump(x + len(y))
             return -1
         
@@ -1809,6 +1910,7 @@ class BiEditor:
             if y:
                 self.save_undo_state()
                 self.memory.insmem(x, y)
+                self.commit_undo()
                 self.display.jump(x + len(self.memory.yank))
             return -1
         
@@ -1855,6 +1957,7 @@ class BiEditor:
                     self.memory.ovwmem(x, data)
                 elif ch == 'R':
                     self.memory.insmem(x, data)
+                self.commit_undo()
                 self.display.jump(x + len(data))
             return -1
         
@@ -1867,9 +1970,11 @@ class BiEditor:
         if ch == 'd':
             self.save_undo_state()
             if self.memory.delmem(x, x2, True, self.memory.yankmem):
+                self.commit_undo()
                 self.stdmm(f"{x2 - x + 1} bytes deleted.")
                 self.display.jump(x)
             else:
+                self.dec_undo()
                 self.stderr("Invalid range.")
             return -1
         
@@ -1886,12 +1991,14 @@ class BiEditor:
         elif ch == 's':
             self.save_undo_state()
             self.scommand(x, x2, xf, xf2, line, idx + 1)
+            self.commit_undo()
             return -1
         
         # not
         if idx < len(line) and line[idx] == '~':
             self.save_undo_state()
             self.openot(x, x2)
+            self.commit_undo()
             self.display.jump(x2 + 1)
             return -1
         
@@ -1925,6 +2032,7 @@ class BiEditor:
             
             self.save_undo_state()
             self.shift_rotate(x, x2, times, bit, multibyte, ch)
+            self.commit_undo()
             return -1
         
         # insert/Insert
@@ -1947,6 +2055,7 @@ class BiEditor:
                     self.save_undo_state()
                     data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
                     self.memory.ovwmem(x, data)
+                    self.commit_undo()
                     self.stdmm(f"{len(data)} bytes filled.")
                     self.display.jump(x + len(data))
                 else:
@@ -1962,9 +2071,11 @@ class BiEditor:
                 self.save_undo_state()
                 if ch == 'i':
                     self.memory.ovwmem(x, data)
+                    self.commit_undo()
                     self.stdmm(f"{len(data)} bytes overwritten.")
                 else:
                     self.memory.insmem(x, data)
+                    self.commit_undo()
                     self.stdmm(f"{len(data)} bytes inserted.")
                 
                 self.display.jump(x + len(data))
@@ -1985,6 +2096,7 @@ class BiEditor:
             self.memory.yankmem(x, x2)
             m = self.memory.redmem(x, x2)
             self.memory.ovwmem(x3, m)
+            self.commit_undo()
             self.stdmm(f"{x2 - x + 1} bytes copied.")
             self.display.jump(x3 + (x2 - x + 1))
             return -1
@@ -1996,6 +2108,7 @@ class BiEditor:
             m = self.memory.redmem(x, x2)
             self.memory.yankmem(x, x2)
             self.memory.insmem(x3, m)
+            self.commit_undo()
             self.stdmm(f"{x2 - x + 1} bytes inserted.")
             self.display.jump(x3 + len(m))
             return -1
@@ -2007,6 +2120,7 @@ class BiEditor:
                 x3 = max(0, x3 - g_partial.offset)
             self.save_undo_state()
             xp = self.movmem(x, x2, x3)
+            self.commit_undo()
             self.display.jump(xp)
             return -1
         
@@ -2014,16 +2128,19 @@ class BiEditor:
         elif ch == '&':
             self.save_undo_state()
             self.opeand(x, x2, x3)
+            self.commit_undo()
             self.display.jump(x2 + 1)
             return -1
         elif ch == '|':
             self.save_undo_state()
             self.opeor(x, x2, x3)
+            self.commit_undo()
             self.display.jump(x2 + 1)
             return -1
         elif ch == '^':
             self.save_undo_state()
             self.opexor(x, x2, x3)
+            self.commit_undo()
             self.display.jump(x2 + 1)
             return -1
 
