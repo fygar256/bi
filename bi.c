@@ -2512,8 +2512,24 @@ int editor_commandline(BiEditor *editor, const char *line) {
         const char *nc = &parsed_line[idx];
         bool is_rp = (nc[0] == 'r' && nc[1] == 'p');
         if (g_partial.active && g_partial.offset > 0 && !is_rp) {
-            if (xf)  x  = (x  >= g_partial.offset) ? x  - g_partial.offset : 0;
-            if (xf2) x2 = (x2 >= g_partial.offset) ? x2 - g_partial.offset : 0;
+            if (xf) {
+                if (x  >= g_partial.offset)
+                    x = x  - g_partial.offset;
+                else {
+                    display_stderr(&editor->display, "Invalid range.", 
+                                   editor->scriptingflag, editor->verbose);
+                    return -1;
+                    }
+            }
+            if (xf2) {
+                if (x2  >= g_partial.offset)
+                    x2 = x2  - g_partial.offset;
+                else {
+                    display_stderr(&editor->display, "Invalid range.", 
+                                   editor->scriptingflag, editor->verbose);
+                    return -1;
+                    }
+            }
             else if (xf) x2 = x;  /* x2 = x と連動していたケース */
         }
     }
@@ -2984,12 +3000,18 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                       editor->scriptingflag, editor->verbose);
         return -1;
     }
-    /* パーシャル編集中: x3 もバッファ相対に変換 */
-    if (g_partial.active && g_partial.offset > 0)
-        x3 = (x3 >= g_partial.offset) ? x3 - g_partial.offset : 0;
-    
     // copy/Copy (c/C commands)
     if (cmd == 'c' || cmd == 'C') {
+        /* パーシャル編集中: x3 もバッファ相対に変換 */
+        if (g_partial.active && g_partial.offset > 0) {
+            if (x3 >= g_partial.offset)
+                x3 = x3 - g_partial.offset;
+            else {
+                display_stderr(&editor->display, "Invalid range.", 
+                              editor->scriptingflag, editor->verbose);
+                return -1;
+                }
+        }
         editor_save_undo_state(editor);
         
         ByteArray m;
@@ -3026,6 +3048,16 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     
     // move (v command)
     if (cmd == 'v') {
+        /* パーシャル編集中: x3 もバッファ相対に変換 */
+        if (g_partial.active && g_partial.offset > 0) {
+            if (x3 >= g_partial.offset)
+                x3 = x3 - g_partial.offset;
+            else {
+                display_stderr(&editor->display, "Invalid range.", 
+                              editor->scriptingflag, editor->verbose);
+                return -1;
+                }
+        }
         editor_save_undo_state(editor);
         uint64_t xp = editor_movmem(editor, x, x2, x3);
         display_jump(&editor->display, xp);
