@@ -694,7 +694,7 @@ void display_repaint(Display *disp, const char *filename) {
     // Print title
     terminal_locate(disp->term, 0, 0);
     terminal_color(disp->term, 6, 0);
-    printf("bi C version 3.5.0 by Taisuke Maekawa           utf8mode:%s     %s   ",
+    printf("bi C version 3.5.1 by Taisuke Maekawa           utf8mode:%s     %s   ",
            disp->utf8 ? (disp->repsw ? "on " : "off") : "off",
            disp->insmod ? "insert   " : "overwrite");
     
@@ -2950,7 +2950,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     size_t cmd_idx = idx;
     while (cmd_idx < strlen(line)) {
         char ch = line[cmd_idx];
-        if (ch == 'c' || ch == 'C' || ch == 'v' || ch == '&' || ch == '|' || ch == '^') {
+        if (ch == 'c' || ch == 'C' || ch == 'v' || ch == '&' || ch == '|' || ch == '^' || ch == 'f') {
             cmd = ch;
             idx = cmd_idx + 1;
             break;
@@ -3041,6 +3041,246 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         editor_save_undo_state(editor);
         editor_opexor(editor, x, x2, x3);
         display_jump(&editor->display, x2 + 1);
+        return -1;
+    }
+    
+    /* ========================================================================
+     * [start],[end] f [start2]  — 2領域バイト比較（バンド幅±10 の LCS diff）
+     * Region1: mem[start..end]
+     * Region2: mem[start2 .. start2+(end-start)] (同長)
+     * 表示: 8バイト/行、一致=白、差異=赤
+     * ======================================================================== */
+    if (cmd == 'f') {
+        if (!xf || !xf2 || x > x2) {
+            display_stderr(&editor->display,
+                "Invalid range. Usage: start,end f start2",
+                editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+
+#define FCMP_SPAN 10
+#define FCMP_MAXN 8192
+
+        size_t n1 = (size_t)(x2 - x + 1);
+        if (n1 > FCMP_MAXN) {
+            n1 = FCMP_MAXN;
+            display_stdmm(&editor->display,
+                "  Note: comparison truncated to 8192 bytes.",
+                editor->scriptingflag, editor->verbose);
+        }
+        /* Region2 の実際の長さ（バッファ末端でクリップ） */
+        size_t n2 = n1;
+        if ((size_t)x3 >= editor->memory.mem.size)
+            n2 = 0;
+        else if ((size_t)x3 + n2 > editor->memory.mem.size)
+            n2 = editor->memory.mem.size - (size_t)x3;
+
+        const uint8_t *s1 = editor->memory.mem.data + (size_t)x;
+        const uint8_t *s2 = editor->memory.mem.data + (size_t)x3;
+
+        /* ---- バンド幅 ±FCMP_SPAN の LCS DP ---- */
+        int span = FCMP_SPAN;
+        int bw   = 2 * span + 1;   /* バンド幅 */
+
+        /* dp[i*bw + d]  : LCS長   d = j - i + span  (j = i+d-span) */
+        /* dir[i*bw + d] : 1=上(s1削除) 2=左(s2挿入) 3=斜め一致 4=斜め不一致 */
+        int    *dp  = (int    *)calloc((n1 + 1) * (size_t)bw, sizeof(int));
+        uint8_t *dir = (uint8_t *)calloc((n1 + 1) * (size_t)bw, sizeof(uint8_t));
+        if (!dp || !dir) {
+            free(dp); free(dir);
+            display_stderr(&editor->display, "Memory allocation error.",
+                           editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+
+        /* 境界初期化: dp[0][j] = 0 (dir=2), dp[i][0] = 0 (dir=1) */
+        for (int jj = 1; jj <= span && jj <= (int)n2; jj++) {
+            dir[0 * bw + (jj + span)] = 2;   /* j-0+span = jj+span … wrong */
+        }
+        /* i=0行: d = j - 0 + span = j + span */
+        for (int jj = 1; jj <= span && jj <= (int)n2; jj++)
+            dir[0 * bw + jj + span] = 2;
+        /* j=0列: d = 0 - i + span = span - i */
+        for (int ii = 1; ii <= span && ii <= (int)n1; ii++)
+            dir[ii * bw + span - ii] = 1;
+
+        /* DP 充填 */
+        for (int ii = 1; ii <= (int)n1; ii++) {
+            int jlo = ii - span; if (jlo < 1) jlo = 1;
+            int jhi = ii + span; if (jhi > (int)n2) jhi = (int)n2;
+            for (int jj = jlo; jj <= jhi; jj++) {
+                int d   = jj - ii + span;
+                int cur = ii * bw + d;
+                int best = -1;
+                uint8_t bdir = 0;
+
+                /* 斜め (ii-1, jj-1) */
+                if (ii >= 1 && jj >= 1) {
+                    int dd = jj - 1 - (ii - 1) + span;
+                    if (dd >= 0 && dd < bw) {
+                        int prev = dp[(ii-1)*bw + dd];
+                        if (s1[ii-1] == s2[jj-1]) {
+                            int v = prev + 1;
+                            if (v > best) { best = v; bdir = 3; }
+                        } else {
+                            if (prev > best) { best = prev; bdir = 4; }
+                        }
+                    }
+                }
+                /* 上 (ii-1, jj): d2 = jj - (ii-1) + span = d+1 */
+                {
+                    int dd = d + 1;
+                    if (dd >= 0 && dd < bw) {
+                        int v = dp[(ii-1)*bw + dd];
+                        if (v > best) { best = v; bdir = 1; }
+                    }
+                }
+                /* 左 (ii, jj-1): d2 = (jj-1) - ii + span = d-1 */
+                if (jj >= 1) {
+                    int dd = d - 1;
+                    if (dd >= 0 && dd < bw) {
+                        int v = dp[ii*bw + dd];
+                        if (v > best) { best = v; bdir = 2; }
+                    }
+                }
+
+                if (best < 0) best = 0;
+                dp[cur] = best;
+                dir[cur] = bdir;
+            }
+        }
+
+        /* ---- トレースバック ---- */
+        /* align_a[k], align_b[k]: -1 はギャップ */
+        int *align_a = (int *)malloc((n1 + n2 + 4) * sizeof(int));
+        int *align_b = (int *)malloc((n1 + n2 + 4) * sizeof(int));
+        if (!align_a || !align_b) {
+            free(dp); free(dir); free(align_a); free(align_b);
+            display_stderr(&editor->display, "Memory allocation error.",
+                           editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+        size_t np = 0;
+
+        int ci = (int)n1, cj = (int)n2;
+        while (ci > 0 || cj > 0) {
+            int in_band = (abs(ci - cj) <= span);
+            if (!in_band || ci == 0) {
+                /* バンド外または s1 使い切り → s2 を消費 */
+                align_a[np] = -1;
+                align_b[np] = (cj > 0) ? (int)(uint8_t)s2[cj-1] : -1;
+                np++;
+                if (cj > 0) cj--;
+            } else if (cj == 0) {
+                align_a[np] = (int)(uint8_t)s1[ci-1];
+                align_b[np] = -1;
+                np++; ci--;
+            } else {
+                int d = cj - ci + span;
+                uint8_t dv = dir[ci * bw + d];
+                if (dv == 3 || dv == 4) {   /* 斜め */
+                    align_a[np] = (int)(uint8_t)s1[ci-1];
+                    align_b[np] = (int)(uint8_t)s2[cj-1];
+                    np++; ci--; cj--;
+                } else if (dv == 1) {        /* 上: s1 削除 */
+                    align_a[np] = (int)(uint8_t)s1[ci-1];
+                    align_b[np] = -1;
+                    np++; ci--;
+                } else {                     /* 左: s2 挿入 */
+                    align_a[np] = -1;
+                    align_b[np] = (int)(uint8_t)s2[cj-1];
+                    np++; cj--;
+                }
+            }
+        }
+        free(dp); free(dir);
+
+        /* 逆順に並べ直す */
+        for (size_t i = 0; i < np / 2; i++) {
+            int ta = align_a[i]; align_a[i] = align_a[np-1-i]; align_a[np-1-i] = ta;
+            int tb = align_b[i]; align_b[i] = align_b[np-1-i]; align_b[np-1-i] = tb;
+        }
+
+        /* ---- 表示: 8ペア/行, 白ベース・差異を赤 ---- */
+        printf("\x1b[0;36m");   /* シアン */
+        printf("  R1-offs R2-offs  Region1 (%-8zX)       |   Region2 (%-8zX)\n",
+               (size_t)x + g_partial.offset, (size_t)x3 + g_partial.offset);
+        printf("\x1b[0;37m");   /* 白 */
+        fflush(stdout);
+
+        bool any_diff = false;
+
+        /* ギャップを除いた実バイトオフセットを別途カウント */
+        size_t off1 = 0, off2 = 0;
+
+        for (size_t rs = 0; rs < np; rs += 8) {
+            size_t re = rs + 8 < np ? rs + 8 : np;
+            bool row_diff = false;
+
+            /* この行の先頭時点での実バイトオフセットを保存 */
+            size_t row_off1 = off1;
+            size_t row_off2 = off2;
+
+            /* 差異チェック */
+            for (size_t k = rs; k < re; k++)
+                if (align_a[k] != align_b[k]) { row_diff = true; any_diff = true; break; }
+
+            /* オフセット表示: Region1 / Region2 それぞれの実バイト位置 */
+            printf("  +%05zX  +%05zX   ", row_off1, row_off2);
+
+            /* Region1 */
+            for (size_t k = rs; k < rs + 8; k++) {
+                if (k < re) {
+                    bool diff = (align_a[k] != align_b[k]);
+                    if (diff)  printf("\x1b[1;31m");
+                    if (align_a[k] < 0) printf("-- ");
+                    else                printf("%02X ", (uint8_t)align_a[k]);
+                    if (diff)  printf("\x1b[0;37m");
+                } else {
+                    printf("   ");
+                }
+            }
+
+            printf(" |   ");
+
+            /* Region2 */
+            for (size_t k = rs; k < rs + 8; k++) {
+                if (k < re) {
+                    bool diff = (align_a[k] != align_b[k]);
+                    if (diff)  printf("\x1b[1;31m");
+                    if (align_b[k] < 0) printf("-- ");
+                    else                printf("%02X ", (uint8_t)align_b[k]);
+                    if (diff)  printf("\x1b[0;37m");
+                } else {
+                    printf("   ");
+                }
+            }
+
+            /* 行末マーカー */
+            if (row_diff) printf(" \x1b[1;35m*\x1b[0;37m\n");
+            else          printf("\n");
+            fflush(stdout);
+
+            /* この行で消費した実バイト数をオフセットに加算（ギャップは除く） */
+            for (size_t k = rs; k < re; k++) {
+                if (align_a[k] >= 0) off1++;
+                if (align_b[k] >= 0) off2++;
+            }
+        }
+
+        printf("\x1b[0m");   /* 色リセット */
+        fflush(stdout);
+
+        free(align_a); free(align_b);
+
+        if (!editor->scriptingflag) {
+            printf("\x1b[0;32m");   /* 緑 */
+            char *msg=!any_diff?"  Identical. [ hit a key ]":"  Differences found (marked with *). [ hit a key ]";
+            printf("%s",msg);
+            terminal_getch();
+            terminal_clear(&editor->term);
+            display_repaint(&editor->display, editor->filemgr.filename);
+        }
         return -1;
     }
     
