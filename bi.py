@@ -1975,12 +1975,12 @@ class BiEditor:
         if x3 == Parser.UNKNOWN:
             self.stderr("Invalid parameter.")
             return -1
-        # パーシャル編集中: x3 もバッファ相対に変換
-        if g_partial.active and g_partial.offset > 0:
-            x3 = max(0, x3 - g_partial.offset)
         
         # copy/Copy
         if ch == 'c':
+            # パーシャル編集中: x3 もバッファ相対に変換
+            if g_partial.active and g_partial.offset > 0:
+                x3 = max(0, x3 - g_partial.offset)
             self.save_undo_state()
             self.memory.yankmem(x, x2)
             m = self.memory.redmem(x, x2)
@@ -1989,6 +1989,9 @@ class BiEditor:
             self.display.jump(x3 + (x2 - x + 1))
             return -1
         elif ch == 'C':
+            # パーシャル編集中: x3 もバッファ相対に変換
+            if g_partial.active and g_partial.offset > 0:
+                x3 = max(0, x3 - g_partial.offset)
             self.save_undo_state()
             m = self.memory.redmem(x, x2)
             self.memory.yankmem(x, x2)
@@ -1999,6 +2002,9 @@ class BiEditor:
         
         # move
         elif ch == 'v':
+            # パーシャル編集中: x3 もバッファ相対に変換
+            if g_partial.active and g_partial.offset > 0:
+                x3 = max(0, x3 - g_partial.offset)
             self.save_undo_state()
             xp = self.movmem(x, x2, x3)
             self.display.jump(xp)
