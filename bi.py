@@ -506,7 +506,6 @@ class Display:
         self.curx = 0
         self.cury = 0
         self.utf8 = False
-        self.repsw = 0
         self.insmod = False
         # 複数のハイライト範囲をリストで管理 [(pos, len), ...]
         self.highlight_ranges = []
@@ -555,7 +554,7 @@ class Display:
                 print(chr(self.memory.mem[a] & 0xff) if 0x20 <= self.memory.mem[a] <= 0x7e else '.', end='')
                 return 1
             elif 0xc0 <= self.memory.mem[a] <= 0xdf:
-                m = [self.memory.readmem(a + self.repsw), self.memory.readmem(a + 1 + self.repsw)]
+                m = [self.memory.readmem(a), self.memory.readmem(a + 1)]
                 try:
                     ch = bytes(m).decode('utf-8')
                     print(f"{ch}", end='', flush=True)
@@ -564,7 +563,7 @@ class Display:
                     print(".", end='')
                     return 1
             elif 0xe0 <= self.memory.mem[a] <= 0xef:
-                m = [self.memory.readmem(a + self.repsw), self.memory.readmem(a + 1 + self.repsw), self.memory.readmem(a + 2 + self.repsw)]
+                m = [self.memory.readmem(a), self.memory.readmem(a + 1), self.memory.readmem(a + 2)]
                 try:
                     ch = bytes(m).decode('utf-8')
                     print(f"{ch} ", end='', flush=True)
@@ -573,8 +572,8 @@ class Display:
                     print(".", end='')
                     return 1
             elif 0xf0 <= self.memory.mem[a] <= 0xf7:
-                m = [self.memory.readmem(a + self.repsw), self.memory.readmem(a + 1 + self.repsw), 
-                     self.memory.readmem(a + 2 + self.repsw), self.memory.readmem(a + 3 + self.repsw)]
+                m = [self.memory.readmem(a), self.memory.readmem(a + 1), 
+                     self.memory.readmem(a + 2), self.memory.readmem(a + 3 )]
                 try:
                     ch = bytes(m).decode('utf-8')
                     print(f"{ch}  ", end='', flush=True)
@@ -589,7 +588,7 @@ class Display:
     def print_title(self, filename):
         self.term.locate(0, 0)
         self.term.color(6)
-        print(f'bi Py version 3.5.1 by Taisuke Maekawa          utf8mode:{"off" if not self.utf8 else self.repsw}     {"insert   " if self.insmod else "overwrite"}   ')
+        print(f'bi Py version 3.5.1 by Taisuke Maekawa          utf8mode:{"off" if not self.utf8 else "on "}     {"insert   " if self.insmod else "overwrite"}   ')
         self.term.color(5)
         if len(filename) > 35:
             fn = filename[0:35]
@@ -1216,7 +1215,6 @@ class BiEditor:
         """フルスクリーンエディタモード"""
         stroke = False
         ch = ''
-        self.display.repsw = 0
         
         while True:
             self.cp = self.display.fpos()
@@ -1347,7 +1345,6 @@ class BiEditor:
                 continue
             elif ch == chr(12):  # Ctrl+L
                 self.term.clear()
-                self.display.repsw = (self.display.repsw + (1 if self.display.utf8 else 0)) % 4
                 self.display.repaint(self.filemgr.filename)
                 continue
             
@@ -2198,10 +2195,7 @@ class BiEditor:
                     else:
                         print("   ", end='')
 
-                if row_diff:
-                    print(" \x1b[1;35m*\x1b[0;37m")
-                else:
-                    print()
+                print()
                 sys.stdout.flush()
 
                 for k in range(rs, re):
@@ -2219,7 +2213,7 @@ class BiEditor:
                 if not any_diff:
                     msg = "  Identical. [ hit a key ]"
                 else:
-                    msg = "  Differences found (marked with *). [ hit a key ]"
+                    msg = "  Differences found. [ hit a key ]"
                 print(msg, end='', flush=True)
                 Terminal.getch()
                 self.term.clear()

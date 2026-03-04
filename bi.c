@@ -1702,6 +1702,7 @@ void editor_fedit(BiEditor *editor) {
             }
             continue;
         } else if (ch == 12) {  // Ctrl+L
+            terminal_clear(&editor->term);
             display_repaint(&editor->display, editor->filemgr.filename);
             continue;
         } else if (ch == 6) {  // Ctrl+F
@@ -1854,13 +1855,20 @@ void editor_fedit(BiEditor *editor) {
         // ファイル操作 (Z command - 保存して終了)
         else if (ch == 'Z') {
             char msg[256];
-            bool success = filemgr_writefile(&editor->filemgr, editor->filemgr.filename, msg, sizeof(msg));
-            if (success) {
-                return;
+            bool success;
+            if (g_partial.active) {
+                success = filemgr_writefile_partial(&editor->filemgr,
+                              editor->filemgr.filename, msg, sizeof(msg));
             } else {
-                display_stderr(&editor->display, msg, editor->scriptingflag, editor->verbose);
+                success = filemgr_writefile(&editor->filemgr,
+                              editor->filemgr.filename, msg, sizeof(msg));
             }
-            continue;
+            editor->memory.lastchange = false;
+            if (!success) {
+                display_stderr(&editor->display, msg,
+                               editor->scriptingflag, editor->verbose);
+            }
+            return;
         }
         
         // 終了 (q command)
@@ -3256,9 +3264,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                 }
             }
 
-            /* 行末マーカー */
-            if (row_diff) printf(" \x1b[1;35m*\x1b[0;37m\n");
-            else          printf("\n");
+            printf("\n");
             fflush(stdout);
 
             /* この行で消費した実バイト数をオフセットに加算（ギャップは除く） */
@@ -3275,7 +3281,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
 
         if (!editor->scriptingflag) {
             printf("\x1b[0;32m");   /* 緑 */
-            char *msg=!any_diff?"  Identical. [ hit a key ]":"  Differences found (marked with *). [ hit a key ]";
+            char *msg=!any_diff?"  Identical. [ hit a key ]":"  Differences found. [ hit a key ]";
             printf("%s",msg);
             terminal_getch();
             terminal_clear(&editor->term);
