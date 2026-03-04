@@ -170,42 +170,150 @@ void matcharray_free(MatchArray *arr) {
     arr->capacity = 0;
 }
 
-void undostack_init(UndoStack *stack) {
-    stack->data = NULL;
-    stack->size = 0;
+/* ========================================================================
+ * 差分 Undo/Redo インフラ実装
+ * ======================================================================== */
+
+/* --- DiffLog --- */
+
+void difflog_init(DiffLog *log) {
+    log->entries  = NULL;
+    log->size     = 0;
+    log->capacity = 0;
+}
+
+static void diffentry_free(DiffEntry *e) {
+    bytearray_free(&e->old_data);
+    bytearray_free(&e->new_data);
+}
+
+void difflog_push(DiffLog *log, const DiffEntry *e) {
+    if (log->size >= log->capacity) {
+        size_t new_cap = log->capacity == 0 ? 8 : log->capacity * 2;
+        DiffEntry *p = realloc(log->entries, new_cap * sizeof(DiffEntry));
+        if (!p) {
+            fprintf(stderr, "Fatal error: Memory allocation failed in difflog_push\n");
+            exit(1);
+        }
+        log->entries  = p;
+        log->capacity = new_cap;
+    }
+    log->entries[log->size++] = *e;
+}
+
+void difflog_free(DiffLog *log) {
+    for (size_t i = 0; i < log->size; i++) diffentry_free(&log->entries[i]);
+    free(log->entries);
+    log->entries  = NULL;
+    log->size     = 0;
+    log->capacity = 0;
+}
+
+/* --- DiffStack --- */
+
+void diffstack_init(DiffStack *stack) {
+    stack->data     = NULL;
+    stack->size     = 0;
     stack->capacity = 0;
 }
 
-void undostack_push(UndoStack *stack, const UndoState *state) {
+void diffstack_push(DiffStack *stack, DiffState *state) {
     if (stack->size >= stack->capacity) {
         size_t new_cap = stack->capacity == 0 ? 16 : stack->capacity * 2;
-        UndoState *new_data = realloc(stack->data, new_cap * sizeof(UndoState));
-        if (!new_data) {
-            fprintf(stderr, "Fatal error: Memory allocation failed in undostack_push\n");
+        DiffState *p = realloc(stack->data, new_cap * sizeof(DiffState));
+        if (!p) {
+            fprintf(stderr, "Fatal error: Memory allocation failed in diffstack_push\n");
             exit(1);
         }
-        stack->data = new_data;
+        stack->data     = p;
         stack->capacity = new_cap;
     }
     stack->data[stack->size++] = *state;
 }
 
-UndoState* undostack_pop(UndoStack *stack) {
+DiffState* diffstack_pop(DiffStack *stack) {
     if (stack->size == 0) return NULL;
     return &stack->data[--stack->size];
 }
 
-void undostack_free(UndoStack *stack) {
-    for (size_t i = 0; i < stack->size; i++) {
-        bytearray_free(&stack->data[i].mem);
-    }
-    if (stack->data) {
-        free(stack->data);
-        stack->data = NULL;
-    }
-    stack->size = 0;
+void diffstack_free(DiffStack *stack) {
+    for (size_t i = 0; i < stack->size; i++) difflog_free(&stack->data[i].log);
+    free(stack->data);
+    stack->data     = NULL;
+    stack->size     = 0;
     stack->capacity = 0;
 }
+
+/* --- 差分適用 --- */
+
+/* diff_log を逆順に逆適用する (undo 用) */
+static void apply_diff_inverse(MemoryBuffer *mem, DiffLog *log) {
+    for (int i = (int)log->size - 1; i >= 0; i--) {
+        DiffEntry *e = &log->entries[i];
+        switch (e->op) {
+            case DIFF_OVW:
+                while (e->pos >= mem->mem.size) bytearray_push(&mem->mem, 0);
+                mem->mem.data[e->pos] = e->old_byte;
+                /* 操作によって mem が拡張されていた場合は縮める */
+                if (e->orig_mem_len < mem->mem.size)
+                    mem->mem.size = e->orig_mem_len;
+                break;
+            case DIFF_OVW_REGION:
+                for (size_t j = 0; j < e->old_data.size; j++) {
+                    if (e->pos + j < mem->mem.size)
+                        mem->mem.data[e->pos + j] = e->old_data.data[j];
+                }
+                if (e->orig_mem_len < mem->mem.size)
+                    mem->mem.size = e->orig_mem_len;
+                break;
+            case DIFF_INS:
+                /* 挿入の逆 = 削除 */
+                if (e->new_data.size > 0 &&
+                    e->pos < mem->mem.size &&
+                    e->pos + e->new_data.size - 1 < mem->mem.size)
+                    bytearray_delete(&mem->mem, e->pos,
+                                     e->pos + e->new_data.size - 1);
+                break;
+            case DIFF_DEL:
+                /* 削除の逆 = 挿入 */
+                bytearray_insert(&mem->mem, e->pos,
+                                 e->old_data.data, e->old_data.size);
+                break;
+        }
+    }
+}
+
+/* diff_log を順方向に適用する (redo 用) */
+static void apply_diff_forward(MemoryBuffer *mem, DiffLog *log) {
+    for (size_t i = 0; i < log->size; i++) {
+        DiffEntry *e = &log->entries[i];
+        switch (e->op) {
+            case DIFF_OVW:
+                while (e->pos >= mem->mem.size) bytearray_push(&mem->mem, 0);
+                mem->mem.data[e->pos] = e->new_byte;
+                break;
+            case DIFF_OVW_REGION:
+                while (e->pos + e->new_data.size > mem->mem.size)
+                    bytearray_push(&mem->mem, 0);
+                memcpy(mem->mem.data + e->pos,
+                       e->new_data.data, e->new_data.size);
+                break;
+            case DIFF_INS:
+                bytearray_insert(&mem->mem, e->pos,
+                                 e->new_data.data, e->new_data.size);
+                break;
+            case DIFF_DEL:
+                if (e->old_data.size > 0 &&
+                    e->pos < mem->mem.size &&
+                    e->pos + e->old_data.size - 1 < mem->mem.size)
+                    bytearray_delete(&mem->mem, e->pos,
+                                     e->pos + e->old_data.size - 1);
+                break;
+        }
+    }
+}
+
+
 
 /* ========================================================================
  * Terminal実装
@@ -300,8 +408,9 @@ void memory_init(MemoryBuffer *mem) {
     for (int i = 0; i < 26; i++) {
         mem->mark[i] = UNKNOWN;
     }
-    mem->modified = false;
-    mem->lastchange = false;
+    mem->modified     = false;
+    mem->lastchange   = false;
+    mem->current_diff = NULL;
 }
 
 uint8_t memory_read(MemoryBuffer *mem, size_t addr) {
@@ -310,17 +419,42 @@ uint8_t memory_read(MemoryBuffer *mem, size_t addr) {
 }
 
 void memory_set(MemoryBuffer *mem, size_t addr, uint8_t data) {
+    size_t orig_len = mem->mem.size;
     while (addr >= mem->mem.size) {
         bytearray_push(&mem->mem, 0);
     }
+    if (mem->current_diff) {
+        DiffEntry e;
+        memset(&e, 0, sizeof(e));
+        e.op           = DIFF_OVW;
+        e.pos          = addr;
+        e.orig_mem_len = orig_len;
+        e.old_byte     = mem->mem.data[addr];
+        e.new_byte     = data & 0xFF;
+        bytearray_init(&e.old_data);
+        bytearray_init(&e.new_data);
+        difflog_push(mem->current_diff, &e);
+    }
     mem->mem.data[addr] = data & 0xFF;
-    mem->modified = true;
-    mem->lastchange = true;
+    mem->modified     = true;
+    mem->lastchange   = true;
 }
 
 void memory_insert(MemoryBuffer *mem, size_t start, const uint8_t *data, size_t len) {
+    if (mem->current_diff && len > 0) {
+        DiffEntry e;
+        memset(&e, 0, sizeof(e));
+        e.op           = DIFF_INS;
+        e.pos          = start;
+        e.orig_mem_len = mem->mem.size;
+        bytearray_init(&e.old_data);
+        bytearray_init(&e.new_data);
+        for (size_t i = 0; i < len; i++)
+            bytearray_push(&e.new_data, data[i]);
+        difflog_push(mem->current_diff, &e);
+    }
     bytearray_insert(&mem->mem, start, data, len);
-    mem->modified = true;
+    mem->modified   = true;
     mem->lastchange = true;
 }
 
@@ -330,13 +464,26 @@ bool memory_delete(MemoryBuffer *mem, size_t start, size_t end, bool yf,
     /* Fix: mem.size==0 のとき mem.size-1 が size_t アンダーフローする */
     if (length == 0 || mem->mem.size == 0 || start >= mem->mem.size || end >= mem->mem.size) return false;
     
+    if (mem->current_diff) {
+        DiffEntry e;
+        memset(&e, 0, sizeof(e));
+        e.op           = DIFF_DEL;
+        e.pos          = start;
+        e.orig_mem_len = mem->mem.size;
+        bytearray_init(&e.old_data);
+        bytearray_init(&e.new_data);
+        for (size_t i = start; i <= end && i < mem->mem.size; i++)
+            bytearray_push(&e.old_data, mem->mem.data[i]);
+        difflog_push(mem->current_diff, &e);
+    }
+
     if (yf && yank_func) {
         yank_func(mem, start, end);
     }
     
     bytearray_delete(&mem->mem, start, end);
     mem->lastchange = true;
-    mem->modified = true;
+    mem->modified   = true;
     return true;
 }
 
@@ -358,13 +505,31 @@ size_t memory_yank(MemoryBuffer *mem, size_t start, size_t end) {
 void memory_overwrite(MemoryBuffer *mem, size_t start, const uint8_t *data, size_t len) {
     if (len == 0) return;
     
+    if (mem->current_diff) {
+        DiffEntry e;
+        memset(&e, 0, sizeof(e));
+        e.op           = DIFF_OVW_REGION;
+        e.pos          = start;
+        e.orig_mem_len = mem->mem.size;
+        bytearray_init(&e.old_data);
+        bytearray_init(&e.new_data);
+        /* 変更前領域を保存 (拡張予定分は 0 で補完) */
+        for (size_t i = 0; i < len; i++) {
+            uint8_t old = (start + i < mem->mem.size) ? mem->mem.data[start + i] : 0;
+            bytearray_push(&e.old_data, old);
+        }
+        for (size_t i = 0; i < len; i++)
+            bytearray_push(&e.new_data, data[i]);
+        difflog_push(mem->current_diff, &e);
+    }
+
     while (start + len > mem->mem.size) {
         bytearray_push(&mem->mem, 0);
     }
     
     memcpy(mem->mem.data + start, data, len);
     mem->lastchange = true;
-    mem->modified = true;
+    mem->modified   = true;
 }
 
 void memory_free(MemoryBuffer *mem) {
@@ -1499,117 +1664,178 @@ void editor_init(BiEditor *editor, const char *termcol) {
     search_init(&editor->search, &editor->memory, &editor->display, editor);
     filemgr_init(&editor->filemgr, &editor->memory);
     
-    undostack_init(&editor->undo_stack);
-    undostack_init(&editor->redo_stack);
+    diffstack_init(&editor->undo_stack);
+    diffstack_init(&editor->redo_stack);
+    editor->diff_active             = false;
+    editor->diff_modified_snapshot  = false;
+    editor->diff_lastchange_snapshot = false;
     editor->cp = 0;
 }
 
+/* --------------------------------------------------------------------
+ * editor_save_undo_state  — 差分記録を開始する
+ *   操作の直前に呼ぶ。スクリプト実行中はスキップ。
+ *   前回の記録が確定されていない場合は先に確定する。
+ * -------------------------------------------------------------------- */
 void editor_save_undo_state(BiEditor *editor) {
     if (editor->scriptingflag) return;
-    
-    UndoState state;
-    state.mem = bytearray_copy(&editor->memory.mem);
-    state.modified = editor->memory.modified;
-    state.lastchange = editor->memory.lastchange;
-    memcpy(state.mark, editor->memory.mark, sizeof(state.mark));
-    
-    undostack_push(&editor->undo_stack, &state);
-    
-    // スタックサイズ制限
+
+    /* 前回の記録が未確定なら先に確定 */
+    if (editor->diff_active) {
+        editor_commit_undo(editor);
+    }
+
+    /* mark / modified スナップショットを保存 */
+    memcpy(editor->diff_mark_snapshot, editor->memory.mark,
+           sizeof(editor->diff_mark_snapshot));
+    editor->diff_modified_snapshot  = editor->memory.modified;
+    editor->diff_lastchange_snapshot = editor->memory.lastchange;
+    editor->diff_active = true;
+
+    /* DiffLog を新規割り当てして MemoryBuffer に設定 */
+    DiffLog *log = malloc(sizeof(DiffLog));
+    if (!log) {
+        fprintf(stderr, "Fatal error: Memory allocation failed in editor_save_undo_state\n");
+        exit(1);
+    }
+    difflog_init(log);
+    editor->memory.current_diff = log;
+}
+
+/* --------------------------------------------------------------------
+ * editor_commit_undo  — 差分記録を確定してスタックに積む
+ *   操作の直後に呼ぶ。差分がなければ何もしない。
+ * -------------------------------------------------------------------- */
+void editor_commit_undo(BiEditor *editor) {
+    if (!editor->diff_active || editor->memory.current_diff == NULL) return;
+
+    DiffLog *log = editor->memory.current_diff;
+    editor->memory.current_diff = NULL;
+    editor->diff_active = false;
+
+    if (log->size == 0) {
+        /* 変更なし: ログを破棄するだけ */
+        difflog_free(log);
+        free(log);
+        return;
+    }
+
+    DiffState state;
+    state.log = *log;          /* ログ本体を移譲 */
+    free(log);                 /* シェルだけ解放 */
+
+    memcpy(state.mark_before, editor->diff_mark_snapshot,
+           sizeof(state.mark_before));
+    memcpy(state.mark_after, editor->memory.mark,
+           sizeof(state.mark_after));
+    state.modified_before  = editor->diff_modified_snapshot;
+    state.lastchange_before = editor->diff_lastchange_snapshot;
+
+    diffstack_push(&editor->undo_stack, &state);
+
+    /* スタックサイズ制限 */
     if (editor->undo_stack.size > MAX_UNDO_LEVELS) {
-        bytearray_free(&editor->undo_stack.data[0].mem);
+        difflog_free(&editor->undo_stack.data[0].log);
         memmove(editor->undo_stack.data, editor->undo_stack.data + 1,
-                (editor->undo_stack.size - 1) * sizeof(UndoState));
+                (editor->undo_stack.size - 1) * sizeof(DiffState));
         editor->undo_stack.size--;
     }
-    
-    // redoスタックをクリア
-    undostack_free(&editor->redo_stack);
-    undostack_init(&editor->redo_stack);
+
+    /* 新規編集なので redo スタックをクリア */
+    diffstack_free(&editor->redo_stack);
+    diffstack_init(&editor->redo_stack);
 }
 
+/* --------------------------------------------------------------------
+ * editor_dec_undo  — 操作が失敗したとき記録をキャンセルする
+ * -------------------------------------------------------------------- */
 bool editor_dec_undo(BiEditor *editor) {
-    if (editor->undo_stack.size == 0) {
-        return false;
+    if (!editor->diff_active) return false;
+
+    DiffLog *log = editor->memory.current_diff;
+    editor->memory.current_diff = NULL;
+    editor->diff_active = false;
+
+    if (log) {
+        difflog_free(log);
+        free(log);
     }
-    UndoState *state = undostack_pop(&editor->undo_stack);
-    /* Fix: state->mem を解放しないとメモリリークする */
-    bytearray_free(&state->mem);
     return true;
 }
-    
 
+/* --------------------------------------------------------------------
+ * editor_undo  — 差分を逆適用して元の状態に戻す
+ * -------------------------------------------------------------------- */
 bool editor_undo(BiEditor *editor) {
     if (editor->undo_stack.size == 0) {
-        display_stdmm(&editor->display, "No more undo.", editor->scriptingflag, editor->verbose);
+        display_stdmm(&editor->display, "No more undo.",
+                      editor->scriptingflag, editor->verbose);
         return false;
     }
-    
-    // 現在の状態をredoスタックに保存
-    UndoState current;
-    current.mem = bytearray_copy(&editor->memory.mem);
-    current.modified = editor->memory.modified;
-    current.lastchange = editor->memory.lastchange;
-    memcpy(current.mark, editor->memory.mark, sizeof(current.mark));
-    undostack_push(&editor->redo_stack, &current);
-    
-    // undoスタックから状態を復元
-    UndoState *state = undostack_pop(&editor->undo_stack);
-    bytearray_free(&editor->memory.mem);
-    editor->memory.mem = state->mem;
-    editor->memory.modified = state->modified;
-    editor->memory.lastchange = state->lastchange;
-    memcpy(editor->memory.mark, state->mark, sizeof(editor->memory.mark));
-    
-    // カーソル位置調整
+
+    DiffState *state = diffstack_pop(&editor->undo_stack);
+
+    /* 同じ DiffState を redo スタックへ (forward diff を保持) */
+    diffstack_push(&editor->redo_stack, state);
+
+    /* 差分を逆適用 */
+    apply_diff_inverse(&editor->memory, &editor->redo_stack.data[
+        editor->redo_stack.size - 1].log);
+    memcpy(editor->memory.mark, state->mark_before,
+           sizeof(editor->memory.mark));
+    editor->memory.modified  = state->modified_before;
+    editor->memory.lastchange = state->lastchange_before;
+
+    /* カーソル位置調整 */
     size_t pos = display_fpos(&editor->display);
-    if (pos >= editor->memory.mem.size && editor->memory.mem.size > 0) {
+    if (pos >= editor->memory.mem.size && editor->memory.mem.size > 0)
         display_jump(&editor->display, editor->memory.mem.size - 1);
-    } else if (editor->memory.mem.size == 0) {
+    else if (editor->memory.mem.size == 0)
         display_jump(&editor->display, 0);
-    }
-    
+
     char msg[256];
     snprintf(msg, sizeof(msg), "Undo. (%zu more)", editor->undo_stack.size);
     display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
     return true;
 }
 
+/* --------------------------------------------------------------------
+ * editor_redo  — 差分を順適用してやり直す
+ * -------------------------------------------------------------------- */
 bool editor_redo(BiEditor *editor) {
     if (editor->redo_stack.size == 0) {
-        display_stdmm(&editor->display, "No more redo.", editor->scriptingflag, editor->verbose);
+        display_stdmm(&editor->display, "No more redo.",
+                      editor->scriptingflag, editor->verbose);
         return false;
     }
-    
-    // 現在の状態をundoスタックに保存
-    UndoState current;
-    current.mem = bytearray_copy(&editor->memory.mem);
-    current.modified = editor->memory.modified;
-    current.lastchange = editor->memory.lastchange;
-    memcpy(current.mark, editor->memory.mark, sizeof(current.mark));
-    undostack_push(&editor->undo_stack, &current);
-    
-    // redoスタックから状態を復元
-    UndoState *state = undostack_pop(&editor->redo_stack);
-    bytearray_free(&editor->memory.mem);
-    editor->memory.mem = state->mem;
-    editor->memory.modified = state->modified;
-    editor->memory.lastchange = state->lastchange;
-    memcpy(editor->memory.mark, state->mark, sizeof(editor->memory.mark));
-    
-    // カーソル位置調整
+
+    DiffState *state = diffstack_pop(&editor->redo_stack);
+
+    /* 同じ DiffState を undo スタックへ */
+    diffstack_push(&editor->undo_stack, state);
+
+    /* 差分を順適用 */
+    apply_diff_forward(&editor->memory, &editor->undo_stack.data[
+        editor->undo_stack.size - 1].log);
+    memcpy(editor->memory.mark, state->mark_after,
+           sizeof(editor->memory.mark));
+    editor->memory.modified  = state->modified_before;
+    editor->memory.lastchange = state->lastchange_before;
+
+    /* カーソル位置調整 */
     size_t pos = display_fpos(&editor->display);
-    if (pos >= editor->memory.mem.size && editor->memory.mem.size > 0) {
+    if (pos >= editor->memory.mem.size && editor->memory.mem.size > 0)
         display_jump(&editor->display, editor->memory.mem.size - 1);
-    } else if (editor->memory.mem.size == 0) {
+    else if (editor->memory.mem.size == 0)
         display_jump(&editor->display, 0);
-    }
-    
+
     char msg[256];
     snprintf(msg, sizeof(msg), "Redo. (%zu more)", editor->redo_stack.size);
     display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
     return true;
 }
+
+
 
 /* ========================================================================
  * Editor fedit - フルスクリーンエディタモード
@@ -1945,6 +2171,7 @@ void editor_fedit(BiEditor *editor) {
                 editor_save_undo_state(editor);
                 memory_overwrite(&editor->memory, display_fpos(&editor->display),
                                editor->memory.yank.data, editor->memory.yank.size);
+                editor_commit_undo(editor);
                 display_jump(&editor->display, display_fpos(&editor->display) + editor->memory.yank.size);
             }
             continue;
@@ -1954,6 +2181,7 @@ void editor_fedit(BiEditor *editor) {
                 matcharray_clear(&editor->display.highlight_ranges);
                 memory_insert(&editor->memory, display_fpos(&editor->display),
                             editor->memory.yank.data, editor->memory.yank.size);
+                editor_commit_undo(editor);
                 display_jump(&editor->display, display_fpos(&editor->display) + editor->memory.yank.size);
             }
             continue;
@@ -1980,11 +2208,13 @@ void editor_fedit(BiEditor *editor) {
                     memory_set(&editor->memory, addr, (memory_read(&editor->memory, addr) & mask) | (c << sh));
                 }
                 stroke = (editor->display.curx & 1) ? false : !stroke;
+                if (!stroke) editor_commit_undo(editor); /* 1バイト完了でコミット */
             } else {
                 if ((editor->display.curx & 1) == 0) {
                     editor_save_undo_state(editor);
                 }
                 memory_set(&editor->memory, addr, (memory_read(&editor->memory, addr) & mask) | (c << sh));
+                if ((editor->display.curx & 1) == 1) editor_commit_undo(editor); /* 下位ニブル完了でコミット */
             }
             
             // カーソル移動
@@ -2002,6 +2232,7 @@ void editor_fedit(BiEditor *editor) {
             editor_save_undo_state(editor);
             if (memory_delete(&editor->memory, display_fpos(&editor->display),
                             display_fpos(&editor->display), false, memory_yank)) {
+                editor_commit_undo(editor);
                 matcharray_clear(&editor->display.highlight_ranges);
             } else {
                 display_stderr(&editor->display, "Invalid range.", editor->scriptingflag,editor->verbose);
@@ -2022,12 +2253,19 @@ void editor_fedit(BiEditor *editor) {
 }
 
 void editor_free(BiEditor *editor) {
+    /* 記録中の diff があればキャンセル */
+    if (editor->diff_active && editor->memory.current_diff) {
+        difflog_free(editor->memory.current_diff);
+        free(editor->memory.current_diff);
+        editor->memory.current_diff = NULL;
+        editor->diff_active = false;
+    }
     memory_free(&editor->memory);
     search_free(&editor->search);
     display_free(&editor->display);
     history_free(&editor->history);
-    undostack_free(&editor->undo_stack);
-    undostack_free(&editor->redo_stack);
+    diffstack_free(&editor->undo_stack);
+    diffstack_free(&editor->redo_stack);
 }
 
 /* ========================================================================
@@ -2629,6 +2867,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         if (editor->memory.yank.size > 0) {
             editor_save_undo_state(editor);
             memory_overwrite(&editor->memory, x, editor->memory.yank.data, editor->memory.yank.size);
+            editor_commit_undo(editor);
             display_jump(&editor->display, x + editor->memory.yank.size);
         }
         return -1;
@@ -2638,6 +2877,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         if (editor->memory.yank.size > 0) {
             editor_save_undo_state(editor);
             memory_insert(&editor->memory, x, editor->memory.yank.data, editor->memory.yank.size);
+            editor_commit_undo(editor);
             display_jump(&editor->display, x + editor->memory.yank.size);
         }
         return -1;
@@ -2718,6 +2958,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                     // insert
                     memory_insert(&editor->memory, x, buffer, read_size);
                 }
+                editor_commit_undo(editor);
                 
                 char msg[256];
                 snprintf(msg, sizeof(msg), "%zu bytes read from %s", read_size, filename);
@@ -2740,8 +2981,9 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     if (line[idx] == 'd') {
         editor_save_undo_state(editor);
         if (memory_delete(&editor->memory, x, x2, true, memory_yank)) {
+            editor_commit_undo(editor);
             char msg[256];
-            snprintf(msg, sizeof(msg), "%llu bytes deleted.", (unsigned long long)(x2 - x + 1));
+            snprintf(msg, sizeof(msg), "%zu bytes deleted.", (unsigned long long)(x2 - x + 1));
             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
             display_jump(&editor->display, x);
         } else {
@@ -2860,6 +3102,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             }
 
             memory_insert(&editor->memory, x, data_to_insert.data, data_to_insert.size);
+            editor_commit_undo(editor);
             display_jump(&editor->display, x + data_to_insert.size);
 
             char msg[256];
@@ -2909,6 +3152,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             }
 
             memory_overwrite(&editor->memory, x, data_to_write.data, data_to_write.size);
+            editor_commit_undo(editor);
             display_jump(&editor->display, x + data_to_write.size);
 
             char msg[256];
@@ -2925,13 +3169,16 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     // substitute (s command)
     if (line[idx] == 's') {
         editor_save_undo_state(editor);
-        return editor_scommand(editor, x, x2, xf, xf2, line, idx + 1);
+        int r = editor_scommand(editor, x, x2, xf, xf2, line, idx + 1);
+        editor_commit_undo(editor);
+        return r;
     }
     
     // NOT (~command)
     if (line[idx] == '~') {
         editor_save_undo_state(editor);
         editor_openot(editor, x, x2);
+        editor_commit_undo(editor);
         display_jump(&editor->display, x2 + 1);
         return -1;
     }
@@ -2966,6 +3213,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         
         editor_save_undo_state(editor);
         editor_shift_rotate(editor, x, x2, times, bit, multibyte, direction);
+        editor_commit_undo(editor);
         return -1;
     }
     
@@ -3031,6 +3279,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         if (cmd == 'c') {
             // overwrite
             memory_overwrite(&editor->memory, x3, m.data, m.size);
+            editor_commit_undo(editor);
             char msg[256];
             snprintf(msg, sizeof(msg), "%llu bytes copied.", (unsigned long long)(x2 - x + 1));
             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
@@ -3038,6 +3287,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         } else {
             // insert
             memory_insert(&editor->memory, x3, m.data, m.size);
+            editor_commit_undo(editor);
             char msg[256];
             snprintf(msg, sizeof(msg), "%llu bytes inserted.", (unsigned long long)m.size);
             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
@@ -3052,6 +3302,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     if (cmd == 'v') {
         editor_save_undo_state(editor);
         uint64_t xp = editor_movmem(editor, x, x2, x3);
+        editor_commit_undo(editor);
         display_jump(&editor->display, xp);
         return -1;
     }
@@ -3060,18 +3311,21 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     if (cmd == '&') {
         editor_save_undo_state(editor);
         editor_opeand(editor, x, x2, x3);
+        editor_commit_undo(editor);
         display_jump(&editor->display, x2 + 1);
         return -1;
     }
     if (cmd == '|') {
         editor_save_undo_state(editor);
         editor_opeor(editor, x, x2, x3);
+        editor_commit_undo(editor);
         display_jump(&editor->display, x2 + 1);
         return -1;
     }
     if (cmd == '^') {
         editor_save_undo_state(editor);
         editor_opexor(editor, x, x2, x3);
+        editor_commit_undo(editor);
         display_jump(&editor->display, x2 + 1);
         return -1;
     }
