@@ -3102,9 +3102,6 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         }
 
         /* 境界初期化: dp[0][j] = 0 (dir=2), dp[i][0] = 0 (dir=1) */
-        for (int jj = 1; jj <= span && jj <= (int)n2; jj++) {
-            dir[0 * bw + (jj + span)] = 2;   /* j-0+span = jj+span … wrong */
-        }
         /* i=0行: d = j - 0 + span = j + span */
         for (int jj = 1; jj <= span && jj <= (int)n2; jj++)
             dir[0 * bw + jj + span] = 2;
@@ -3511,7 +3508,9 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
         }
     }
     
-    if (editor->search.span == 0) {
+    /* Fix: 正規表現モードでは span はマッチ時に search_hitre() がセットするため
+     *      ここでは 0 のまま正常。非正規表現（16進パターン）のみゼロチェックする。 */
+    if (!editor->search.regexp && editor->search.span == 0) {
         display_stderr(&editor->display, "Specify search object.", 
                       editor->scriptingflag, editor->verbose);
         return -1;
