@@ -3000,8 +3000,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                       editor->scriptingflag, editor->verbose);
         return -1;
     }
-    // copy/Copy (c/C commands)
-    if (cmd == 'c' || cmd == 'C') {
+    if (cmd=='c' || cmd=='C' || cmd=='v' || cmd=='f') {
         /* パーシャル編集中: x3 もバッファ相対に変換 */
         if (g_partial.active && g_partial.offset > 0) {
             if (x3 >= g_partial.offset)
@@ -3012,6 +3011,9 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                 return -1;
                 }
         }
+    }
+    // copy/Copy (c/C commands)
+    if (cmd == 'c' || cmd == 'C') {
         editor_save_undo_state(editor);
         
         ByteArray m;
@@ -3048,16 +3050,6 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     
     // move (v command)
     if (cmd == 'v') {
-        /* パーシャル編集中: x3 もバッファ相対に変換 */
-        if (g_partial.active && g_partial.offset > 0) {
-            if (x3 >= g_partial.offset)
-                x3 = x3 - g_partial.offset;
-            else {
-                display_stderr(&editor->display, "Invalid range.", 
-                              editor->scriptingflag, editor->verbose);
-                return -1;
-                }
-        }
         editor_save_undo_state(editor);
         uint64_t xp = editor_movmem(editor, x, x2, x3);
         display_jump(&editor->display, xp);
@@ -3204,10 +3196,18 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             int in_band = (abs(ci - cj) <= span);
             if (!in_band || ci == 0) {
                 /* バンド外または s1 使い切り → s2 を消費 */
-                align_a[np] = -1;
-                align_b[np] = (cj > 0) ? (int)(uint8_t)s2[cj-1] : -1;
-                np++;
-                if (cj > 0) cj--;
+                if (cj > 0) {
+                    align_a[np] = -1;
+                    align_b[np] = (int)(uint8_t)s2[cj-1];
+                    np++;
+                    cj--;
+                } else {
+                    /* s2 も使い切り → s1 を消費（残りを削除扱い） */
+                    align_a[np] = (int)(uint8_t)s1[ci-1];
+                    align_b[np] = -1;
+                    np++;
+                    ci--;
+                }
             } else if (cj == 0) {
                 align_a[np] = (int)(uint8_t)s1[ci-1];
                 align_b[np] = -1;

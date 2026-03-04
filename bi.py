@@ -2120,10 +2120,16 @@ class BiEditor:
             while ci > 0 or cj > 0:
                 in_band = (abs(ci - cj) <= span)
                 if not in_band or ci == 0:
-                    align_a.append(-1)
-                    align_b.append(s2[cj - 1] if cj > 0 else -1)
+                    # バンド外または s1 使い切り → s2 を消費
                     if cj > 0:
+                        align_a.append(-1)
+                        align_b.append(s2[cj - 1])
                         cj -= 1
+                    else:
+                        # s2 も使い切り → s1 を消費（残りを削除扱い）
+                        align_a.append(s1[ci - 1])
+                        align_b.append(-1)
+                        ci -= 1
                 elif cj == 0:
                     align_a.append(s1[ci - 1])
                     align_b.append(-1)
