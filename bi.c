@@ -860,7 +860,7 @@ void display_repaint(Display *disp, const char *filename) {
     terminal_locate(disp->term, 0, 0);
     terminal_color(disp->term, 6, 0);
     printf("bi C version 3.5.1 by Taisuke Maekawa           utf8mode:%s     %s   ",
-           disp->utf8 ? (disp->repsw ? "on " : "off") : "off",
+           disp->utf8 ? "on " : "off",
            disp->insmod ? "insert   " : "overwrite");
     
     terminal_color(disp->term, 5, 0);
@@ -1819,8 +1819,9 @@ bool editor_redo(BiEditor *editor) {
         editor->undo_stack.size - 1].log);
     memcpy(editor->memory.mark, state->mark_after,
            sizeof(editor->memory.mark));
-    editor->memory.modified  = state->modified_before;
-    editor->memory.lastchange = state->lastchange_before;
+    /* Fix: redo後はファイルが変更済み状態になる。Python版と同様 true を設定する。 */
+    editor->memory.modified  = true;
+    editor->memory.lastchange = true;
 
     /* カーソル位置調整 */
     size_t pos = display_fpos(&editor->display);
@@ -2644,8 +2645,42 @@ int editor_commandline(BiEditor *editor, const char *line) {
                                editor->scriptingflag, editor->verbose);
             }
             return -1;
+        } else {
+            /* Fix: :r filename — Python版と同様、ファイル名を更新してリロードする。
+             * 以前はこのケースが範囲コマンドにフォールスルーし、execute_command の
+             * 'r' ハンドラ（カーソル位置への上書き読み込み）が誤って実行されていた。 */
+            const char *rest = parsed_line + 1;
+            while (*rest == ' ') rest++;
+            if (*rest != '\0') {
+                strncpy(editor->filemgr.filename, rest,
+                        sizeof(editor->filemgr.filename) - 1);
+                editor->filemgr.filename[sizeof(editor->filemgr.filename) - 1] = '\0';
+            }
+            char msg[256];
+            bool success;
+            if (g_partial.active) {
+                success = filemgr_readfile_partial(&editor->filemgr,
+                              editor->filemgr.filename,
+                              g_partial.offset, g_partial.length,
+                              msg, sizeof(msg));
+            } else {
+                success = filemgr_readfile(&editor->filemgr,
+                              editor->filemgr.filename, msg, sizeof(msg));
+            }
+            display_jump(&editor->display, 0);
+            matcharray_clear(&editor->display.highlight_ranges);
+            if (success) {
+                display_stdmm(&editor->display,
+                              msg[0] ? msg : "Original file read.",
+                              editor->scriptingflag, editor->verbose);
+            } else {
+                display_stderr(&editor->display,
+                               msg[0] ? msg : "Read error.",
+                               editor->scriptingflag, editor->verbose);
+            }
+            return -1;
         }
-    }
+    }  /* end of else if (parsed_line[0] == 'r') */
     
     // スクリプト実行（T/tコマンド）
     else if (parsed_line[0] == 'T' || parsed_line[0] == 't') {
@@ -2983,7 +3018,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         if (memory_delete(&editor->memory, x, x2, true, memory_yank)) {
             editor_commit_undo(editor);
             char msg[256];
-            snprintf(msg, sizeof(msg), "%zu bytes deleted.", (unsigned long long)(x2 - x + 1));
+            snprintf(msg, sizeof(msg), "%llu bytes deleted.", (unsigned long long)(x2 - x + 1));
             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
             display_jump(&editor->display, x);
         } else {
@@ -3506,7 +3541,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
 
         for (size_t rs = 0; rs < np; rs += 8) {
             size_t re = rs + 8 < np ? rs + 8 : np;
-            bool row_diff = false;
+            bool row_diff = false;  /* Fix: 未使用変数を除去し any_diff のみ更新 */
 
             /* この行の先頭時点での実バイトオフセットを保存 */
             size_t row_off1 = off1;
@@ -3515,6 +3550,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             /* 差異チェック */
             for (size_t k = rs; k < re; k++)
                 if (align_a[k] != align_b[k]) { row_diff = true; any_diff = true; break; }
+            (void)row_diff;
 
             /* オフセット表示: Region1 / Region2 それぞれの実バイト位置 */
             printf("  +%05zX  +%05zX   ", row_off1, row_off2);
