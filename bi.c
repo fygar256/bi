@@ -572,7 +572,9 @@ int search_hitre(SearchEngine *search, size_t addr) {
     int reti;
     
     // 検索範囲のデータを取得
-    /* Fix: mem.size < RELEN のとき size_t アンダーフローが起きないよう修正 */
+    /* Fix: addr >= mem.size のとき mem.size - addr が size_t アンダーフローする。
+     * また mem.size < RELEN の場合も同様。両方まとめて事前にガードする。 */
+    if (addr >= search->memory->mem.size) return -1;
     size_t len = (addr + RELEN <= search->memory->mem.size) ?
                  RELEN : search->memory->mem.size - addr;
     if (len == 0) return -1;
@@ -611,6 +613,14 @@ int search_hitre(SearchEngine *search, size_t addr) {
 }
 
 size_t search_next(SearchEngine *search, size_t fp, size_t mem_len) {
+    /* Fix: Python版と同様、空ファイルでは即座に返す。
+     * mem_len==0 のまま処理を続けると fp+1=1 が start となり、
+     * wrap後の curpos=0 が start と一致せず無限ループまたは
+     * search_hitre 内の size_t アンダーフローでセグフォが起きる。 */
+    if (mem_len == 0) {
+        display_clrmm(search->display);
+        return (size_t)-1;
+    }
     size_t curpos = fp;
     size_t start = fp;
     bool wrapped = false;
@@ -3541,7 +3551,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
 
         for (size_t rs = 0; rs < np; rs += 8) {
             size_t re = rs + 8 < np ? rs + 8 : np;
-            bool row_diff = false;  /* Fix: 未使用変数を除去し any_diff のみ更新 */
+            bool row_diff = false;  /* Fix: 未使用変数。(void)で警告を抑制 */
 
             /* この行の先頭時点での実バイトオフセットを保存 */
             size_t row_off1 = off1;
