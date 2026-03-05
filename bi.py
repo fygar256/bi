@@ -261,7 +261,7 @@ class MemoryBuffer:
             for i in range(addr - len(self.mem) + 1):
                 self.mem.append(0)
         old_val = self.mem[addr]
-        new_val = (int(data) & 0xff) if isinstance(data, int) and 0 <= data <= 255 else 0
+        new_val = int(data) & 0xff
         if self._diff_log is not None:
             # ('ovw', addr, old_byte, new_byte, orig_mem_len)
             self._diff_log.append(('ovw', addr, old_val, new_val, orig_len))
@@ -433,6 +433,9 @@ class SearchEngine:
             return 0
     
     def searchnext(self, fp, mem_len):
+        if mem_len == 0:
+            self.clrmm()
+            return None
         curpos = fp
         start = fp
         wrapped = False
@@ -468,7 +471,14 @@ class SearchEngine:
                 return None
     
     def searchlast(self, fp, mem_len):
-        wrapped=False
+        if mem_len == 0:
+            self.clrmm()
+            return None
+        wrapped = False
+        if fp < 0:
+            self.stdmm_wait("Search reached TOP, wrap around to BOTTOM.")
+            wrapped = True
+            fp = mem_len - 1
         curpos = fp
         start = fp
         if not self.regexp and not self.smem:
@@ -489,9 +499,6 @@ class SearchEngine:
             
             curpos -= 1
             if curpos < 0:
-                if not wrapped:
-                    self.stdmm_wait("Search reached TOP, wrap around to BOTTOM.")
-                    wrapped = True
                 curpos = mem_len - 1
             
             if curpos == start:
@@ -501,6 +508,8 @@ class SearchEngine:
     def search_all(self, mem_len, max_results=10000):
         """全てのマッチ箇所を検索して返す"""
         matches = []
+        if mem_len == 0:
+            return matches
         if not self.regexp and not self.smem:
             return matches
         
@@ -763,6 +772,8 @@ class Parser:
         if idx >= len(s):
             return self.UNKNOWN, idx
         idx = self.skipspc(s, idx)
+        if idx >= len(s):
+            return self.UNKNOWN, idx
         ch = s[idx]
         
         if ch == '$':
@@ -1195,8 +1206,8 @@ class BiEditor:
         # 差分を順適用
         self._apply_diff_forward(state['diff'])
         self.memory.mark = list(state['mark_after'])
-        self.memory.modified = state['modified_before']
-        self.memory.lastchange = state['lastchange_before']
+        self.memory.modified = True
+        self.memory.lastchange = True
 
         # カーソル位置を調整
         if self.display.fpos() >= len(self.memory.mem) and len(self.memory.mem) > 0:
@@ -1404,18 +1415,21 @@ class BiEditor:
                 self.display.curx = 30
                 continue
             elif ch == 'j':
+                self.dec_undo()
                 if self.display.cury < Display.LENONSCR // 16 - 1:
                     self.display.cury += 1
                 else:
                     self.display.scrdown()
                 continue
             elif ch == 'k':
+                self.dec_undo()
                 if self.display.cury > 0:
                     self.display.cury -= 1
                 else:
                     self.display.scrup()
                 continue
             elif ch == 'h':
+                self.dec_undo()
                 if self.display.curx > 0:
                     self.display.curx -= 1
                 else:
@@ -1427,6 +1441,7 @@ class BiEditor:
                             self.display.scrup()
                 continue
             elif ch == 'l':
+                self.dec_undo()
                 self.display.inccurx()
                 continue
             
@@ -1495,7 +1510,7 @@ class BiEditor:
                     self.display.highlight_ranges = []
                     self.memory.insmem(self.display.fpos(), y)
                     self.commit_undo()
-                    self.display.jump(self.display.fpos() + len(self.memory.yank))
+                    self.display.jump(self.display.fpos() + len(y))
                 continue
             
             # 編集モード
@@ -1911,7 +1926,7 @@ class BiEditor:
                 self.save_undo_state()
                 self.memory.insmem(x, y)
                 self.commit_undo()
-                self.display.jump(x + len(self.memory.yank))
+                self.display.jump(x + len(y))
             return -1
         
         # mark
@@ -1977,16 +1992,7 @@ class BiEditor:
                 self.dec_undo()
                 self.stderr("Invalid range.")
             return -1
-        
-        # write file
-        elif ch == 'w':
-            idx += 1
-            fn = line[idx:].lstrip()
-            success, msg = self.filemgr.wrtfile(x, x2, fn)
-            if msg:
-                self.stderr(msg)
-            return -1
-        
+
         # substitute
         elif ch == 's':
             self.save_undo_state()
