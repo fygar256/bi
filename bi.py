@@ -1056,8 +1056,9 @@ class BiEditor:
         self.undo_stack = []  # 各エントリ: {'diff': [...], 'mark_before': [...], ...}
         self.redo_stack = []
         self.max_undo_levels = 100  # 最大undo回数
-        self._undo_mark_snapshot = None  # begin_undo() 時点の mark スナップショット
-        self._undo_meta_snapshot = None  # begin_undo() 時点の modified/lastchange
+        self._undo_mark_snapshot = None    # begin_undo() 時点の mark スナップショット
+        self._undo_meta_snapshot = None    # begin_undo() 時点の modified/lastchange
+        self._undo_cursor_snapshot = None  # begin_undo() 時点のカーソル位置
     
     def stdmm(self, s):
         self.display.stdmm(s, self.scriptingflag, self.verbose)
@@ -1126,7 +1127,7 @@ class BiEditor:
                 del self.memory.mem[start:start + len(data)]
 
     def save_undo_state(self):
-        """操作前に呼び出す: 差分記録を開始し mark/meta をスナップショット"""
+        """操作前に呼び出す: 差分記録を開始し mark/meta/カーソル位置をスナップショット"""
         if self.scriptingflag:
             return
         # 前回の記録が完了していない場合は先に確定させる
@@ -1134,6 +1135,7 @@ class BiEditor:
             self.commit_undo()
         self._undo_mark_snapshot = list(self.memory.mark)
         self._undo_meta_snapshot = (self.memory.modified, self.memory.lastchange)
+        self._undo_cursor_snapshot = self.display.fpos()  # 操作前のカーソル位置を保存
         self.memory.begin_diff()
 
     def commit_undo(self):
@@ -1145,6 +1147,7 @@ class BiEditor:
         if not diff_log:
             self._undo_mark_snapshot = None
             self._undo_meta_snapshot = None
+            self._undo_cursor_snapshot = None
             return
         state = {
             'diff': diff_log,
@@ -1152,9 +1155,12 @@ class BiEditor:
             'mark_after': list(self.memory.mark),
             'modified_before': self._undo_meta_snapshot[0],
             'lastchange_before': self._undo_meta_snapshot[1],
+            'cursor_before': self._undo_cursor_snapshot,  # 操作前のカーソル位置
+            'cursor_after': self.display.fpos(),           # 操作後のカーソル位置
         }
         self._undo_mark_snapshot = None
         self._undo_meta_snapshot = None
+        self._undo_cursor_snapshot = None
         self.undo_stack.append(state)
         if len(self.undo_stack) > self.max_undo_levels:
             self.undo_stack.pop(0)
@@ -1174,7 +1180,11 @@ class BiEditor:
 
         state = self.undo_stack.pop()
 
-        # 同じ state を redo スタックにそのまま積む（forward diff を保持）
+        # undo を押した瞬間の現在位置を cursor_after に上書き保存する。
+        # こうすることで、次に redo したとき「undo を押す直前の場所」に戻れる。
+        state['cursor_after'] = self.display.fpos()
+
+        # 同じ state を redo スタックに積む（forward diff を保持）
         self.redo_stack.append(state)
 
         # 差分を逆適用
@@ -1183,10 +1193,15 @@ class BiEditor:
         self.memory.modified = state['modified_before']
         self.memory.lastchange = state['lastchange_before']
 
-        # カーソル位置を調整
-        if self.display.fpos() >= len(self.memory.mem) and len(self.memory.mem) > 0:
-            self.display.jump(len(self.memory.mem) - 1)
-        elif len(self.memory.mem) == 0:
+        # カーソル位置を「編集開始前の位置」に復元（メモリ範囲内にクランプ）
+        cursor_before = state.get('cursor_before', None)
+        mem_len = len(self.memory.mem)
+        if cursor_before is not None:
+            target = min(cursor_before, mem_len - 1) if mem_len > 0 else 0
+            self.display.jump(target)
+        elif mem_len > 0 and self.display.fpos() >= mem_len:
+            self.display.jump(mem_len - 1)
+        elif mem_len == 0:
             self.display.jump(0)
 
         self.stdmm(f"Undo. ({len(self.undo_stack)} more)")
@@ -1200,6 +1215,10 @@ class BiEditor:
 
         state = self.redo_stack.pop()
 
+        # redo を押した瞬間の現在位置を cursor_before に上書き保存する。
+        # こうすることで、次に undo したとき「redo を押す直前の場所」に戻れる。
+        state['cursor_before'] = self.display.fpos()
+
         # 同じ state を undo スタックに戻す
         self.undo_stack.append(state)
 
@@ -1209,10 +1228,15 @@ class BiEditor:
         self.memory.modified = True
         self.memory.lastchange = True
 
-        # カーソル位置を調整
-        if self.display.fpos() >= len(self.memory.mem) and len(self.memory.mem) > 0:
-            self.display.jump(len(self.memory.mem) - 1)
-        elif len(self.memory.mem) == 0:
+        # カーソル位置を「undo を押す直前の場所」に復元（メモリ範囲内にクランプ）
+        cursor_after = state.get('cursor_after', None)
+        mem_len = len(self.memory.mem)
+        if cursor_after is not None:
+            target = min(cursor_after, mem_len - 1) if mem_len > 0 else 0
+            self.display.jump(target)
+        elif mem_len > 0 and self.display.fpos() >= mem_len:
+            self.display.jump(mem_len - 1)
+        elif mem_len == 0:
             self.display.jump(0)
 
         self.stdmm(f"Redo. ({len(self.redo_stack)} more)")
@@ -1501,6 +1525,7 @@ class BiEditor:
                     self.save_undo_state()
                     self.memory.ovwmem(self.display.fpos(), y)
                     self.commit_undo()
+                    self.stdmm(f"{len(y)} bytes pasted.")
                     self.display.jump(self.display.fpos() + len(y))
                 continue
             elif ch == 'P':
@@ -1510,6 +1535,7 @@ class BiEditor:
                     self.display.highlight_ranges = []
                     self.memory.insmem(self.display.fpos(), y)
                     self.commit_undo()
+                    self.stdmm(f"{len(y)} bytes pasted (insert).")
                     self.display.jump(self.display.fpos() + len(y))
                 continue
             
@@ -1682,7 +1708,7 @@ class BiEditor:
         elif line == 'u' or line == 'undo':
             self.undo()
             return -1
-        elif line == 'red' or line == 'redo':
+        elif line == 'U' or line == 'redo':
             self.redo()
             return -1
 
@@ -1917,6 +1943,7 @@ class BiEditor:
                 self.save_undo_state()
                 self.memory.ovwmem(x, y)
                 self.commit_undo()
+                self.stdmm(f"{len(y)} bytes pasted.")
                 self.display.jump(x + len(y))
             return -1
         
@@ -1926,6 +1953,7 @@ class BiEditor:
                 self.save_undo_state()
                 self.memory.insmem(x, y)
                 self.commit_undo()
+                self.stdmm(f"{len(y)} bytes pasted (insert).")
                 self.display.jump(x + len(y))
             return -1
         

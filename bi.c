@@ -1695,11 +1695,12 @@ void editor_save_undo_state(BiEditor *editor) {
         editor_commit_undo(editor);
     }
 
-    /* mark / modified スナップショットを保存 */
+    /* mark / modified / カーソル位置 スナップショットを保存 */
     memcpy(editor->diff_mark_snapshot, editor->memory.mark,
            sizeof(editor->diff_mark_snapshot));
     editor->diff_modified_snapshot  = editor->memory.modified;
     editor->diff_lastchange_snapshot = editor->memory.lastchange;
+    editor->diff_cursor_snapshot = display_fpos(&editor->display);  /* 操作前のカーソル位置 */
     editor->diff_active = true;
 
     /* DiffLog を新規割り当てして MemoryBuffer に設定 */
@@ -1740,6 +1741,8 @@ void editor_commit_undo(BiEditor *editor) {
            sizeof(state.mark_after));
     state.modified_before  = editor->diff_modified_snapshot;
     state.lastchange_before = editor->diff_lastchange_snapshot;
+    state.cursor_before = editor->diff_cursor_snapshot;         /* 操作前のカーソル位置 */
+    state.cursor_after  = display_fpos(&editor->display);       /* 操作後のカーソル位置 */
 
     diffstack_push(&editor->undo_stack, &state);
 
@@ -1785,6 +1788,10 @@ bool editor_undo(BiEditor *editor) {
 
     DiffState *state = diffstack_pop(&editor->undo_stack);
 
+    /* undo を押した瞬間の現在位置を cursor_after に上書き保存する。
+     * こうすることで、次に redo したとき「undo を押す直前の場所」に戻れる。 */
+    state->cursor_after = display_fpos(&editor->display);
+
     /* 同じ DiffState を redo スタックへ (forward diff を保持) */
     diffstack_push(&editor->redo_stack, state);
 
@@ -1796,12 +1803,16 @@ bool editor_undo(BiEditor *editor) {
     editor->memory.modified  = state->modified_before;
     editor->memory.lastchange = state->lastchange_before;
 
-    /* カーソル位置調整 */
-    size_t pos = display_fpos(&editor->display);
-    if (pos >= editor->memory.mem.size && editor->memory.mem.size > 0)
-        display_jump(&editor->display, editor->memory.mem.size - 1);
-    else if (editor->memory.mem.size == 0)
-        display_jump(&editor->display, 0);
+    /* カーソル位置を「編集開始前の位置」に復元（メモリ範囲内にクランプ） */
+    {
+        size_t mem_len = editor->memory.mem.size;
+        size_t target  = state->cursor_before;
+        if (mem_len == 0)
+            target = 0;
+        else if (target >= mem_len)
+            target = mem_len - 1;
+        display_jump(&editor->display, target);
+    }
 
     char msg[256];
     snprintf(msg, sizeof(msg), "Undo. (%zu more)", editor->undo_stack.size);
@@ -1821,6 +1832,10 @@ bool editor_redo(BiEditor *editor) {
 
     DiffState *state = diffstack_pop(&editor->redo_stack);
 
+    /* redo を押した瞬間の現在位置を cursor_before に上書き保存する。
+     * こうすることで、次に undo したとき「redo を押す直前の場所」に戻れる。 */
+    state->cursor_before = display_fpos(&editor->display);
+
     /* 同じ DiffState を undo スタックへ */
     diffstack_push(&editor->undo_stack, state);
 
@@ -1833,12 +1848,16 @@ bool editor_redo(BiEditor *editor) {
     editor->memory.modified  = true;
     editor->memory.lastchange = true;
 
-    /* カーソル位置調整 */
-    size_t pos = display_fpos(&editor->display);
-    if (pos >= editor->memory.mem.size && editor->memory.mem.size > 0)
-        display_jump(&editor->display, editor->memory.mem.size - 1);
-    else if (editor->memory.mem.size == 0)
-        display_jump(&editor->display, 0);
+    /* カーソル位置を「undo を押す直前の場所」に復元（メモリ範囲内にクランプ） */
+    {
+        size_t mem_len = editor->memory.mem.size;
+        size_t target  = state->cursor_after;
+        if (mem_len == 0)
+            target = 0;
+        else if (target >= mem_len)
+            target = mem_len - 1;
+        display_jump(&editor->display, target);
+    }
 
     char msg[256];
     snprintf(msg, sizeof(msg), "Redo. (%zu more)", editor->redo_stack.size);
@@ -2183,6 +2202,9 @@ void editor_fedit(BiEditor *editor) {
                 memory_overwrite(&editor->memory, display_fpos(&editor->display),
                                editor->memory.yank.data, editor->memory.yank.size);
                 editor_commit_undo(editor);
+                char msg[256];
+                snprintf(msg, sizeof(msg), "%llu bytes Pasted.", (unsigned long long)editor->memory.yank.size);
+                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                 display_jump(&editor->display, display_fpos(&editor->display) + editor->memory.yank.size);
             }
             continue;
@@ -2193,6 +2215,9 @@ void editor_fedit(BiEditor *editor) {
                 memory_insert(&editor->memory, display_fpos(&editor->display),
                             editor->memory.yank.data, editor->memory.yank.size);
                 editor_commit_undo(editor);
+                char msg[256];
+                snprintf(msg, sizeof(msg), "%llu bytes Pasted (insert).", (unsigned long long)editor->memory.yank.size);
+                display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                 display_jump(&editor->display, display_fpos(&editor->display) + editor->memory.yank.size);
             }
             continue;
@@ -2326,7 +2351,7 @@ int editor_commandline(BiEditor *editor, const char *line) {
     else if (strcmp(parsed_line, "u") == 0 || strcmp(parsed_line, "undo") == 0) {
         editor_undo(editor);
         return -1;
-    } else if (strcmp(parsed_line, "red") == 0 || strcmp(parsed_line, "redo") == 0) {
+    } else if (strcmp(parsed_line, "U") == 0 || strcmp(parsed_line, "redo") == 0) {
         editor_redo(editor);
         return -1;
     }
@@ -2913,6 +2938,9 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             editor_save_undo_state(editor);
             memory_overwrite(&editor->memory, x, editor->memory.yank.data, editor->memory.yank.size);
             editor_commit_undo(editor);
+            char msg[256];
+            snprintf(msg, sizeof(msg), "%llu bytes Pasted.", (unsigned long long)editor->memory.yank.size);
+            display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
             display_jump(&editor->display, x + editor->memory.yank.size);
         }
         return -1;
@@ -2923,6 +2951,9 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             editor_save_undo_state(editor);
             memory_insert(&editor->memory, x, editor->memory.yank.data, editor->memory.yank.size);
             editor_commit_undo(editor);
+            char msg[256];
+            snprintf(msg, sizeof(msg), "%llu bytes Pasted (insert).", (unsigned long long)editor->memory.yank.size);
+            display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
             display_jump(&editor->display, x + editor->memory.yank.size);
         }
         return -1;

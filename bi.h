@@ -111,12 +111,15 @@ typedef struct {
     size_t   mark_after[26];
     bool     modified_before;
     bool     lastchange_before;
+    size_t   cursor_before;   /* 操作前のカーソル位置 */
+    size_t   cursor_after;    /* 操作後のカーソル位置 */
 } DiffState;
 
 typedef struct {
     DiffState *data;
     size_t     size;
     size_t     capacity;
+
 } DiffStack;
 
 void difflog_init(DiffLog *log);
@@ -299,6 +302,8 @@ struct BiEditor {
     /* 差分 undo/redo スタック */
     DiffStack     undo_stack;
     DiffStack     redo_stack;
+    
+    size_t        diff_cursor_snapshot; 
 
     /* 差分記録状態 (save_undo_state / commit_undo の間だけ有効) */
     bool          diff_active;
@@ -307,6 +312,7 @@ struct BiEditor {
     bool          diff_lastchange_snapshot;
 
     int           cp;
+    
 };
 
 void  editor_init(BiEditor *editor, const char *termcol);
