@@ -3155,16 +3155,24 @@ func (ed *BiEditor) diffCompare(x, x2, x3 uint64) {
 			ed.scriptingflag, ed.verbose)
 	}
 	n2 := n1
-	if x3 >= uint64(len(ed.memory.mem)) {
-		n2 = 0
-	} else if x3+n2 > uint64(len(ed.memory.mem)) {
-		n2 = uint64(len(ed.memory.mem)) - x3
-	}
 
-	s1 := ed.memory.mem[x : x+n1]
-	var s2 []byte
-	if n2 > 0 {
-		s2 = ed.memory.mem[x3 : x3+n2]
+	// 範囲外バイト用に安全なバッファを確保（OOB は 0 で埋める）
+	memSz := uint64(len(ed.memory.mem))
+	s1 := make([]byte, n1)
+	s2 := make([]byte, n2)
+	if x < memSz {
+		copyLen := n1
+		if x+copyLen > memSz {
+			copyLen = memSz - x
+		}
+		copy(s1, ed.memory.mem[x:x+copyLen])
+	}
+	if x3 < memSz {
+		copyLen := n2
+		if x3+copyLen > memSz {
+			copyLen = memSz - x3
+		}
+		copy(s2, ed.memory.mem[x3:x3+copyLen])
 	}
 
 	span := FCMP_SPAN
@@ -3325,8 +3333,26 @@ func (ed *BiEditor) diffCompare(x, x2, x3 uint64) {
 		rowOff1 := off1
 		rowOff2 := off2
 
+		// 範囲外フラグを事前計算（最大8エントリ）
+		var oobA, oobB [8]bool
+		{
+			to1, to2 := off1, off2
+			for k := rs; k < re; k++ {
+				ki := k - rs
+				if alignA[k] >= 0 {
+					oobA[ki] = x+uint64(to1) >= memSz
+					to1++
+				}
+				if alignB[k] >= 0 {
+					oobB[ki] = x3+uint64(to2) >= memSz
+					to2++
+				}
+			}
+		}
+
 		for k := rs; k < re; k++ {
-			if alignA[k] != alignB[k] {
+			ki := k - rs
+			if alignA[k] != alignB[k] || oobA[ki] != oobB[ki] {
 				anyDiff = true
 				break
 			}
@@ -3336,12 +3362,15 @@ func (ed *BiEditor) diffCompare(x, x2, x3 uint64) {
 
 		for k := rs; k < rs+8; k++ {
 			if k < re {
-				diff := alignA[k] != alignB[k]
+				ki := k - rs
+				diff := alignA[k] != alignB[k] || oobA[ki] != oobB[ki]
 				if diff {
 					fmt.Print("\x1b[1;31m")
 				}
 				if alignA[k] < 0 {
 					fmt.Print("-- ")
+				} else if oobA[ki] {
+					fmt.Print("~~ ")
 				} else {
 					fmt.Printf("%02X ", byte(alignA[k]))
 				}
@@ -3355,12 +3384,15 @@ func (ed *BiEditor) diffCompare(x, x2, x3 uint64) {
 		fmt.Print(" |   ")
 		for k := rs; k < rs+8; k++ {
 			if k < re {
-				diff := alignA[k] != alignB[k]
+				ki := k - rs
+				diff := alignA[k] != alignB[k] || oobA[ki] != oobB[ki]
 				if diff {
 					fmt.Print("\x1b[1;31m")
 				}
 				if alignB[k] < 0 {
 					fmt.Print("-- ")
+				} else if oobB[ki] {
+					fmt.Print("~~ ")
 				} else {
 					fmt.Printf("%02X ", byte(alignB[k]))
 				}

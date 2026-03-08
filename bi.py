@@ -2197,16 +2197,12 @@ class BiEditor:
                 n1 = FCMP_MAXN
                 self.stdmm("  Note: comparison truncated to 8192 bytes.")
 
-            # Region2 の実際の長さ（バッファ末端でクリップ）
-            mem_size = len(self.memory.mem)
             n2 = n1
-            if int(x3) >= mem_size:
-                n2 = 0
-            elif int(x3) + n2 > mem_size:
-                n2 = mem_size - int(x3)
 
-            s1 = [self.memory.mem[int(x) + i] for i in range(n1)]
-            s2 = [self.memory.mem[int(x3) + i] for i in range(n2)]
+            # 範囲外バイト用に安全なバッファを確保（OOB は 0 で埋める）
+            mem_size = len(self.memory.mem)
+            s1 = [self.memory.mem[int(x) + i] if int(x) + i < mem_size else 0 for i in range(n1)]
+            s2 = [self.memory.mem[int(x3) + i] if int(x3) + i < mem_size else 0 for i in range(n2)]
 
             span = FCMP_SPAN
             bw   = 2 * span + 1  # バンド幅
@@ -2317,7 +2313,23 @@ class BiEditor:
             rs = 0
             while rs < np_:
                 re = min(rs + 8, np_)
-                row_diff = any(align_a[k] != align_b[k] for k in range(rs, re))
+
+                # 範囲外フラグを事前計算（最大8エントリ）
+                oob_a = [False] * 8
+                oob_b = [False] * 8
+                to1, to2 = off1, off2
+                for k in range(rs, re):
+                    ki = k - rs
+                    if align_a[k] >= 0:
+                        oob_a[ki] = (int(x) + to1 >= mem_size)
+                        to1 += 1
+                    if align_b[k] >= 0:
+                        oob_b[ki] = (int(x3) + to2 >= mem_size)
+                        to2 += 1
+
+                row_diff = any(
+                    align_a[k] != align_b[k] or oob_a[k - rs] != oob_b[k - rs]
+                    for k in range(rs, re))
                 if row_diff:
                     any_diff = True
 
@@ -2329,11 +2341,14 @@ class BiEditor:
                 # Region1
                 for k in range(rs, rs + 8):
                     if k < re:
-                        diff = (align_a[k] != align_b[k])
+                        ki = k - rs
+                        diff = (align_a[k] != align_b[k] or oob_a[ki] != oob_b[ki])
                         if diff:
                             print("\x1b[1;31m", end='')
                         if align_a[k] < 0:
                             print("-- ", end='')
+                        elif oob_a[ki]:
+                            print("~~ ", end='')
                         else:
                             print(f"{align_a[k]:02X} ", end='')
                         if diff:
@@ -2346,11 +2361,14 @@ class BiEditor:
                 # Region2
                 for k in range(rs, rs + 8):
                     if k < re:
-                        diff = (align_a[k] != align_b[k])
+                        ki = k - rs
+                        diff = (align_a[k] != align_b[k] or oob_a[ki] != oob_b[ki])
                         if diff:
                             print("\x1b[1;31m", end='')
                         if align_b[k] < 0:
                             print("-- ", end='')
+                        elif oob_b[ki]:
+                            print("~~ ", end='')
                         else:
                             print(f"{align_b[k]:02X} ", end='')
                         if diff:

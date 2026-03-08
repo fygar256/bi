@@ -3430,15 +3430,27 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                 "  Note: comparison truncated to 8192 bytes.",
                 editor->scriptingflag, editor->verbose);
         }
-        /* Region2 の実際の長さ（バッファ末端でクリップ） */
         size_t n2 = n1;
-        if ((size_t)x3 >= editor->memory.mem.size)
-            n2 = 0;
-        else if ((size_t)x3 + n2 > editor->memory.mem.size)
-            n2 = editor->memory.mem.size - (size_t)x3;
 
-        const uint8_t *s1 = editor->memory.mem.data + (size_t)x;
-        const uint8_t *s2 = editor->memory.mem.data + (size_t)x3;
+        /* 範囲外バイト用に安全なバッファを確保（OOB は 0 で埋める） */
+        size_t mem_sz = editor->memory.mem.size;
+        size_t x_u  = (size_t)x,  x3_u = (size_t)x3;
+        uint8_t *s1_buf = (uint8_t *)calloc(n1, 1);
+        uint8_t *s2_buf = (uint8_t *)calloc(n2, 1);
+        if (!s1_buf || !s2_buf) {
+            free(s1_buf); free(s2_buf);
+            display_stderr(&editor->display, "Memory allocation error.",
+                           editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+        if (x_u < mem_sz)
+            memcpy(s1_buf, editor->memory.mem.data + x_u,
+                   (n1 <= mem_sz - x_u) ? n1 : mem_sz - x_u);
+        if (x3_u < mem_sz)
+            memcpy(s2_buf, editor->memory.mem.data + x3_u,
+                   (n2 <= mem_sz - x3_u) ? n2 : mem_sz - x3_u);
+        const uint8_t *s1 = s1_buf;
+        const uint8_t *s2 = s2_buf;
 
         /* ---- バンド幅 ±FCMP_SPAN の LCS DP ---- */
         int span = FCMP_SPAN;
@@ -3582,15 +3594,30 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
 
         for (size_t rs = 0; rs < np; rs += 8) {
             size_t re = rs + 8 < np ? rs + 8 : np;
-            bool row_diff = false;  /* Fix: 未使用変数。(void)で警告を抑制 */
+            bool row_diff = false;
 
             /* この行の先頭時点での実バイトオフセットを保存 */
             size_t row_off1 = off1;
             size_t row_off2 = off2;
 
-            /* 差異チェック */
-            for (size_t k = rs; k < re; k++)
-                if (align_a[k] != align_b[k]) { row_diff = true; any_diff = true; break; }
+            /* 範囲外フラグを事前計算（最大8エントリ） */
+            bool oob_a[8] = {false,false,false,false,false,false,false,false};
+            bool oob_b[8] = {false,false,false,false,false,false,false,false};
+            {
+                size_t to1 = off1, to2 = off2;
+                for (size_t k = rs; k < re; k++) {
+                    size_t ki = k - rs;
+                    if (align_a[k] >= 0) { oob_a[ki] = (x_u + to1 >= mem_sz); to1++; }
+                    if (align_b[k] >= 0) { oob_b[ki] = (x3_u + to2 >= mem_sz); to2++; }
+                }
+            }
+
+            /* 差異チェック（OOB も差異として扱う） */
+            for (size_t k = rs; k < re; k++) {
+                size_t ki = k - rs;
+                if (align_a[k] != align_b[k] || oob_a[ki] != oob_b[ki])
+                    { row_diff = true; any_diff = true; break; }
+            }
             (void)row_diff;
 
             /* オフセット表示: Region1 / Region2 それぞれの実バイト位置 */
@@ -3599,10 +3626,12 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             /* Region1 */
             for (size_t k = rs; k < rs + 8; k++) {
                 if (k < re) {
-                    bool diff = (align_a[k] != align_b[k]);
+                    size_t ki = k - rs;
+                    bool diff = (align_a[k] != align_b[k] || oob_a[ki] != oob_b[ki]);
                     if (diff)  printf("\x1b[1;31m");
-                    if (align_a[k] < 0) printf("-- ");
-                    else                printf("%02X ", (uint8_t)align_a[k]);
+                    if (align_a[k] < 0)  printf("-- ");
+                    else if (oob_a[ki])  printf("~~ ");
+                    else                 printf("%02X ", (uint8_t)align_a[k]);
                     if (diff)  printf("\x1b[0;37m");
                 } else {
                     printf("   ");
@@ -3614,10 +3643,12 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             /* Region2 */
             for (size_t k = rs; k < rs + 8; k++) {
                 if (k < re) {
-                    bool diff = (align_a[k] != align_b[k]);
+                    size_t ki = k - rs;
+                    bool diff = (align_a[k] != align_b[k] || oob_a[ki] != oob_b[ki]);
                     if (diff)  printf("\x1b[1;31m");
-                    if (align_b[k] < 0) printf("-- ");
-                    else                printf("%02X ", (uint8_t)align_b[k]);
+                    if (align_b[k] < 0)  printf("-- ");
+                    else if (oob_b[ki])  printf("~~ ");
+                    else                 printf("%02X ", (uint8_t)align_b[k]);
                     if (diff)  printf("\x1b[0;37m");
                 } else {
                     printf("   ");
@@ -3638,6 +3669,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         fflush(stdout);
 
         free(align_a); free(align_b);
+        free(s1_buf); free(s2_buf);
 
         if (!editor->scriptingflag) {
             printf("\x1b[0;32m");   /* 緑 */
