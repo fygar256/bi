@@ -30,7 +30,7 @@ sudo cp bi.py /usr/local/bin/bi
 sudo cp bi.1.gz /usr/share/man/man1/
 sudo mandb
 ```
-## in go high speed version
+## in go high speed version only on FreeBSD
 
 This is a fast version of 'bi', the Binary editor like vi, written in Go. It doesn't support Python calls such as eval() and exec(), but it runs much faster than the Python version, making it ideal for working with large files.
 
