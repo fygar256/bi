@@ -1193,16 +1193,13 @@ class BiEditor:
         self.memory.modified = state['modified_before']
         self.memory.lastchange = state['lastchange_before']
 
-        # カーソル位置を「編集開始前の位置」に復元（メモリ範囲内にクランプ）
-        cursor_before = state.get('cursor_before', None)
+        # カーソル位置は変えず、範囲外の場合のみクランプする
         mem_len = len(self.memory.mem)
-        if cursor_before is not None:
-            target = min(cursor_before, mem_len - 1) if mem_len > 0 else 0
-            self.display.jump(target)
-        elif mem_len > 0 and self.display.fpos() >= mem_len:
-            self.display.jump(mem_len - 1)
-        elif mem_len == 0:
+        cur = self.display.fpos()
+        if mem_len == 0:
             self.display.jump(0)
+        elif cur >= mem_len:
+            self.display.jump(mem_len - 1)
 
         self.stdmm(f"Undo. ({len(self.undo_stack)} more)")
         return True
@@ -1228,16 +1225,13 @@ class BiEditor:
         self.memory.modified = True
         self.memory.lastchange = True
 
-        # カーソル位置を「undo を押す直前の場所」に復元（メモリ範囲内にクランプ）
-        cursor_after = state.get('cursor_after', None)
+        # カーソル位置は変えず、範囲外の場合のみクランプする
         mem_len = len(self.memory.mem)
-        if cursor_after is not None:
-            target = min(cursor_after, mem_len - 1) if mem_len > 0 else 0
-            self.display.jump(target)
-        elif mem_len > 0 and self.display.fpos() >= mem_len:
-            self.display.jump(mem_len - 1)
-        elif mem_len == 0:
+        cur = self.display.fpos()
+        if mem_len == 0:
             self.display.jump(0)
+        elif cur >= mem_len:
+            self.display.jump(mem_len - 1)
 
         self.stdmm(f"Redo. ({len(self.redo_stack)} more)")
         return True

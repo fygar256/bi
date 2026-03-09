@@ -1803,15 +1803,14 @@ bool editor_undo(BiEditor *editor) {
     editor->memory.modified  = state->modified_before;
     editor->memory.lastchange = state->lastchange_before;
 
-    /* カーソル位置を「編集開始前の位置」に復元（メモリ範囲内にクランプ） */
+    /* カーソル位置は変えず、範囲外の場合のみクランプする */
     {
         size_t mem_len = editor->memory.mem.size;
-        size_t target  = state->cursor_before;
+        size_t cur     = display_fpos(&editor->display);
         if (mem_len == 0)
-            target = 0;
-        else if (target >= mem_len)
-            target = mem_len - 1;
-        display_jump(&editor->display, target);
+            display_jump(&editor->display, 0);
+        else if (cur >= mem_len)
+            display_jump(&editor->display, mem_len - 1);
     }
 
     char msg[256];
@@ -1848,15 +1847,14 @@ bool editor_redo(BiEditor *editor) {
     editor->memory.modified  = true;
     editor->memory.lastchange = true;
 
-    /* カーソル位置を「undo を押す直前の場所」に復元（メモリ範囲内にクランプ） */
+    /* カーソル位置は変えず、範囲外の場合のみクランプする */
     {
         size_t mem_len = editor->memory.mem.size;
-        size_t target  = state->cursor_after;
+        size_t cur     = display_fpos(&editor->display);
         if (mem_len == 0)
-            target = 0;
-        else if (target >= mem_len)
-            target = mem_len - 1;
-        display_jump(&editor->display, target);
+            display_jump(&editor->display, 0);
+        else if (cur >= mem_len)
+            display_jump(&editor->display, mem_len - 1);
     }
 
     char msg[256];

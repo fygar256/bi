@@ -1610,14 +1610,14 @@ func (ed *BiEditor) undo() bool {
 	ed.memory.modified = state.modifiedBefore
 	ed.memory.lastchange = state.lastchangeBefore
 
-	target := state.cursorBefore
+	// カーソル位置は変えず、範囲外の場合のみクランプする
 	memLen := uint64(len(ed.memory.mem))
+	cur := ed.display.fpos()
 	if memLen == 0 {
-		target = 0
-	} else if target >= memLen {
-		target = memLen - 1
+		ed.display.jump(0)
+	} else if cur >= memLen {
+		ed.display.jump(memLen - 1)
 	}
-	ed.display.jump(target)
 	ed.display.stdmm(fmt.Sprintf("Undo. (%d more)", len(ed.undoStack)),
 		ed.scriptingflag, ed.verbose)
 	return true
@@ -1638,14 +1638,14 @@ func (ed *BiEditor) redo() bool {
 	ed.memory.modified = true
 	ed.memory.lastchange = true
 
-	target := state.cursorAfter
+	// カーソル位置は変えず、範囲外の場合のみクランプする
 	memLen := uint64(len(ed.memory.mem))
+	cur := ed.display.fpos()
 	if memLen == 0 {
-		target = 0
-	} else if target >= memLen {
-		target = memLen - 1
+		ed.display.jump(0)
+	} else if cur >= memLen {
+		ed.display.jump(memLen - 1)
 	}
-	ed.display.jump(target)
 	ed.display.stdmm(fmt.Sprintf("Redo. (%d more)", len(ed.redoStack)),
 		ed.scriptingflag, ed.verbose)
 	return true
