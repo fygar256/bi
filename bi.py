@@ -1051,6 +1051,7 @@ class BiEditor:
         
         self.stack = []
         self.cp = 0
+        self.endian = 'little'  # エンディアン ('little' or 'big')
         
         # Undo/Redo機能用（差分方式）
         self.undo_stack = []  # 各エントリ: {'diff': [...], 'mark_before': [...], ...}
@@ -1678,6 +1679,23 @@ class BiEditor:
         if line == '':
             return -1
         
+        # エンディアン切り替え
+        if line[0] == '_':
+            if line == '_big':
+                self.endian = 'big'
+                self.stdmm("Switched to big endian.")
+            elif line == '_little':
+                self.endian = 'little'
+                self.stdmm("Switched to little endian.")
+            else:
+                self.stderr("Unknown command. Use '_big' or '_little'.")
+            return -1
+
+        # 型付き数値表示 (?s/?i/?l/?q/?f/?d/?Q/?us/?ui/?ul) — 範囲なし版はここから parse_range_command へ
+        if line[0] == '?' and len(line) >= 2 and (
+                line[1] in 'silqfdQ' or line[1:] in ('us', 'ui', 'ul')):
+            return self.parse_range_command(line)
+
         # 終了コマンド
         if line == 'q':
             if self.memory.lastchange:
@@ -1903,8 +1921,107 @@ class BiEditor:
         # 各種コマンドの処理
         return self.execute_command(line, idx, x, x2, xf, xf2)
     
+    def cmd_typed_display(self, x, x2, xf, xf2, type_char):
+        """型付き数値表示コマンド (?s/?i/?l/?q/?f/?d/?Q)"""
+        import struct, ctypes
+
+        size_map = {'s': 2, 'i': 4, 'l': 8, 'q': 16, 'f': 4, 'd': 8, 'Q': 16,
+                    'us': 2, 'ui': 4, 'ul': 8}
+        label_map = {'s': 'int16', 'i': 'int32', 'l': 'int64', 'q': 'int128',
+                     'f': 'float32', 'd': 'float64', 'Q': 'float128',
+                     'us': 'uint16', 'ui': 'uint32', 'ul': 'uint64'}
+        size = size_map[type_char]
+        be = (self.endian == 'big')
+        endian_ch = '>' if be else '<'
+        mem_len = len(self.memory.mem)
+
+        start = int(x)
+        end   = int(x2) if xf2 else start
+
+        lines_out = []
+        pos = start
+        while pos <= end:
+            raw = bytes([self.memory.readmem(pos + i) for i in range(size)])
+            try:
+                if type_char == 's':
+                    val = struct.unpack(endian_ch + 'h', raw)[0]
+                    s = str(val)
+                elif type_char == 'i':
+                    val = struct.unpack(endian_ch + 'i', raw)[0]
+                    s = str(val)
+                elif type_char == 'l':
+                    val = struct.unpack(endian_ch + 'q', raw)[0]
+                    s = str(val)
+                elif type_char == 'q':
+                    val = int.from_bytes(raw, 'big' if be else 'little', signed=True)
+                    s = str(val)
+                elif type_char == 'f':
+                    val = struct.unpack(endian_ch + 'f', raw)[0]
+                    s = repr(val)
+                elif type_char == 'd':
+                    val = struct.unpack(endian_ch + 'd', raw)[0]
+                    s = repr(val)
+                elif type_char == 'Q':
+                    # 128-bit float: ctypes long double (platform dependent)
+                    if be:
+                        raw = raw[::-1]
+                    buf = (ctypes.c_ubyte * 16)(*raw)
+                    ld = ctypes.cast(buf, ctypes.POINTER(ctypes.c_longdouble)).contents.value
+                    s = repr(ld)
+                elif type_char == 'us':
+                    val = struct.unpack(endian_ch + 'H', raw)[0]
+                    s = str(val)
+                elif type_char == 'ui':
+                    val = struct.unpack(endian_ch + 'I', raw)[0]
+                    s = str(val)
+                elif type_char == 'ul':
+                    val = struct.unpack(endian_ch + 'Q', raw)[0]
+                    s = str(val)
+            except Exception as e:
+                s = f'(error: {e})'
+
+            lines_out.append(f"{pos:08X}: ({label_map[type_char]}) {s}")
+            pos += size
+            if pos > end and end != start:
+                break
+
+        output = '\n'.join(lines_out)
+
+        if self.scriptingflag:
+            if self.verbose:
+                print(output)
+        else:
+            self.display.clrmm()
+            self.term.color(6)
+            self.term.locate(0, Display.BOTTOMLN)
+            # 複数行は1行にまとめて表示、長ければスクロール
+            if len(lines_out) == 1:
+                print(lines_out[0], end='', flush=True)
+            else:
+                # 複数: 画面下に表示してキー待ち
+                self.term.locate(0, 0)
+                self.term.clraftcur()
+                self.term.color(6)
+                for ln in lines_out:
+                    print(ln)
+                self.term.color(4)
+                print("[ Hit any key ]", end='', flush=True)
+                Terminal.getch()
+                self.term.clear()
+                return -1
+            Terminal.getch()
+            self.term.locate(0, Display.BOTTOMLN)
+            print(" " * 80, end='', flush=True)
+        return -1
+
     def execute_command(self, line, idx, x, x2, xf, xf2):
         """個別コマンドの実行"""
+        # 型付き数値表示 (?s/?i/?l/?q/?f/?d/?Q/?us/?ui/?ul)
+        if idx < len(line) and line[idx] == '?':
+            rest = line[idx + 1:]
+            if rest in ('s', 'i', 'l', 'q', 'f', 'd', 'Q', 'us', 'ui', 'ul'):
+                return self.cmd_typed_display(x, x2, xf, xf2, rest)
+
         # yank
         if idx < len(line) and line[idx] == 'y':
             idx += 1

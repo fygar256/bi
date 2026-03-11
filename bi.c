@@ -15,6 +15,9 @@ typedef struct {
 
 static PartialState g_partial = {false, 0, 0, 0, 0};
 
+/* エンディアン設定: false=リトルエンディアン(デフォルト), true=ビッグエンディアン */
+static bool g_big_endian = false;
+
 /* ========================================================================
  * readline代替実装（readlineライブラリがない環境用）
  * ======================================================================== */
@@ -2310,12 +2313,203 @@ void editor_free(BiEditor *editor) {
 int execute_command(BiEditor *editor, const char *line, size_t idx, 
                     uint64_t x, uint64_t x2, bool xf, bool xf2);
 
+/* ========================================================================
+ * 型付き数値表示ヘルパー
+ * ======================================================================== */
+static void cmd_typed_display(BiEditor *editor,
+                               uint64_t x, uint64_t x2, bool xf2, char type_char)
+{
+    int size;
+    const char *label;
+    switch (type_char) {
+        case 's': size = 2;  label = "int16";    break;
+        case 'i': size = 4;  label = "int32";    break;
+        case 'l': size = 8;  label = "int64";    break;
+        case 'q': size = 16; label = "int128";   break;
+        case 'f': size = 4;  label = "float32";  break;
+        case 'd': size = 8;  label = "float64";  break;
+        case 'Q': size = 16; label = "float128"; break;
+        /* 符号なし: type_char を負値で区別するため別途文字列引数が必要なので
+         * ここでは type_char に ASCII の 'S','I','L' を内部コードとして使う */
+        case 'S': size = 2;  label = "uint16";   break;  /* ?us */
+        case 'I': size = 4;  label = "uint32";   break;  /* ?ui */
+        case 'L': size = 8;  label = "uint64";   break;  /* ?ul */
+        default:  return;
+    }
+
+    uint64_t start = x;
+    uint64_t end   = xf2 ? x2 : x;
+    int multi = (end > start);
+
+    if (multi && !editor->scriptingflag) {
+        terminal_locate(&editor->term, 0, 23);
+        terminal_color(&editor->term, 6, 0);
+    }
+
+    uint64_t pos = start;
+    while (pos <= end) {
+        uint8_t raw[16] = {0};
+        for (int i = 0; i < size; i++) {
+            size_t addr = (size_t)(pos + i);
+            raw[i] = addr < editor->memory.mem.size
+                   ? editor->memory.mem.data[addr] : 0;
+        }
+
+        /* エンディアン変換 (ビッグエンディアン指定時はバイト反転) */
+        if (g_big_endian) {
+            uint8_t tmp[16];
+            for (int i = 0; i < size; i++) tmp[i] = raw[size - 1 - i];
+            memcpy(raw, tmp, size);
+        }
+
+        char val_str[256];
+        switch (type_char) {
+            case 's': {
+                int16_t v; memcpy(&v, raw, 2);
+                snprintf(val_str, sizeof(val_str), "%d", (int)v);
+                break;
+            }
+            case 'i': {
+                int32_t v; memcpy(&v, raw, 4);
+                snprintf(val_str, sizeof(val_str), "%d", v);
+                break;
+            }
+            case 'l': {
+                int64_t v; memcpy(&v, raw, 8);
+                snprintf(val_str, sizeof(val_str), "%lld", (long long)v);
+                break;
+            }
+            case 'q': {
+                /* 128-bit: hi/lo 形式 */
+                uint64_t lo; int64_t hi;
+                memcpy(&lo, raw,     8);
+                memcpy(&hi, raw + 8, 8);
+                if (hi == 0) {
+                    snprintf(val_str, sizeof(val_str), "%llu",
+                             (unsigned long long)lo);
+                } else if (hi == -1LL && (lo >> 63)) {
+                    uint64_t alo = ~lo + 1;
+                    int64_t  ahi = ~hi + (alo == 0 ? 1 : 0);
+                    snprintf(val_str, sizeof(val_str), "-%llu%018llu",
+                             (unsigned long long)llabs(ahi),
+                             (unsigned long long)alo);
+                } else {
+                    snprintf(val_str, sizeof(val_str), "%lld * 2^64 + %llu",
+                             (long long)hi, (unsigned long long)lo);
+                }
+                break;
+            }
+            case 'f': {
+                float v; memcpy(&v, raw, 4);
+                snprintf(val_str, sizeof(val_str), "%g", (double)v);
+                break;
+            }
+            case 'd': {
+                double v; memcpy(&v, raw, 8);
+                snprintf(val_str, sizeof(val_str), "%.17g", v);
+                break;
+            }
+            case 'Q': {
+                long double v = 0.0L;
+                size_t ld_size = sizeof(long double);
+                memcpy(&v, raw, ld_size < 16 ? ld_size : 16);
+                snprintf(val_str, sizeof(val_str), "%.21Lg", v);
+                break;
+            }
+            case 'S': {
+                uint16_t v; memcpy(&v, raw, 2);
+                snprintf(val_str, sizeof(val_str), "%u", (unsigned)v);
+                break;
+            }
+            case 'I': {
+                uint32_t v; memcpy(&v, raw, 4);
+                snprintf(val_str, sizeof(val_str), "%u", v);
+                break;
+            }
+            case 'L': {
+                uint64_t v; memcpy(&v, raw, 8);
+                snprintf(val_str, sizeof(val_str), "%llu", (unsigned long long)v);
+                break;
+            }
+            default:
+                snprintf(val_str, sizeof(val_str), "(unknown)");
+        }
+
+        char line_buf[512];
+        snprintf(line_buf, sizeof(line_buf),
+                 "%08llX: (%s) %s", (unsigned long long)pos, label, val_str);
+
+        if (editor->scriptingflag) {
+            if (editor->verbose) printf("%s\n", line_buf);
+        } else if (multi) {
+            printf("%s\n", line_buf);
+            fflush(stdout);
+        } else {
+            display_clrmm(&editor->display);
+            terminal_color(&editor->term, 6, 0);
+            terminal_locate(&editor->term, 0, BOTTOMLN);
+            printf("%s", line_buf);
+            fflush(stdout);
+        }
+
+        pos += (uint64_t)size;
+        if (pos > end) break;
+    }
+
+    if (!editor->scriptingflag) {
+        if (multi) {
+            terminal_color(&editor->term, 4, 0);
+            printf("[ Hit any key ]");
+            fflush(stdout);
+            terminal_getch();
+            terminal_clear(&editor->term);
+        } else {
+            terminal_getch();
+            display_clrmm(&editor->display);
+        }
+    }
+}
+
 int editor_commandline(BiEditor *editor, const char *line) {
     editor->cp = display_fpos(&editor->display);
     const char *parsed_line = parser_comment(line);
     
     if (parsed_line[0] == '\0') return -1;
-    
+
+    /* エンディアン切り替え (_big / _little) */
+    if (parsed_line[0] == '_') {
+        if (strcmp(parsed_line, "_big") == 0) {
+            g_big_endian = true;
+            display_stdmm(&editor->display, "Switched to big endian.",
+                          editor->scriptingflag, editor->verbose);
+        } else if (strcmp(parsed_line, "_little") == 0) {
+            g_big_endian = false;
+            display_stdmm(&editor->display, "Switched to little endian.",
+                          editor->scriptingflag, editor->verbose);
+        } else {
+            display_stderr(&editor->display, "Unknown command. Use '_big' or '_little'.",
+                           editor->scriptingflag, editor->verbose);
+        }
+        return -1;
+    }
+
+    /* 型付き数値表示 (?s/?i/?l/?q/?f/?d/?Q/?us/?ui/?ul) — 範囲なし版はここで処理 */
+    if (parsed_line[0] == '?' && parsed_line[1] != '\0') {
+        char type_ch = 0;
+        if (strchr("silqfdQ", parsed_line[1]) && parsed_line[2] == '\0')
+            type_ch = parsed_line[1];
+        else if (parsed_line[1] == 'u' && parsed_line[2] != '\0' && parsed_line[3] == '\0') {
+            if      (parsed_line[2] == 's') type_ch = 'S';
+            else if (parsed_line[2] == 'i') type_ch = 'I';
+            else if (parsed_line[2] == 'l') type_ch = 'L';
+        }
+        if (type_ch) {
+            uint64_t cur = display_fpos(&editor->display);
+            cmd_typed_display(editor, cur, cur, false, type_ch);
+            return -1;
+        }
+    }
+
     // 終了コマンド
     if (strcmp(parsed_line, "q") == 0) {
         if (editor->memory.lastchange) {
@@ -2858,6 +3052,23 @@ int editor_commandline(BiEditor *editor, const char *line) {
 
 int execute_command(BiEditor *editor, const char *line, size_t idx, 
                     uint64_t x, uint64_t x2, bool xf, bool xf2) {
+    /* 型付き数値表示 (?s/?i/?l/?q/?f/?d/?Q/?us/?ui/?ul) — 範囲付き版 */
+    if (line[idx] == '?') {
+        char type_ch = 0;
+        const char *rest = line + idx + 1;
+        if (strchr("silqfdQ", rest[0]) && rest[1] == '\0')
+            type_ch = rest[0];
+        else if (rest[0] == 'u' && rest[1] != '\0' && rest[2] == '\0') {
+            if      (rest[1] == 's') type_ch = 'S';
+            else if (rest[1] == 'i') type_ch = 'I';
+            else if (rest[1] == 'l') type_ch = 'L';
+        }
+        if (type_ch) {
+            cmd_typed_display(editor, x, x2, xf2, type_ch);
+            return -1;
+        }
+    }
+
     // yank
     if (line[idx] == 'y') {
         idx++;

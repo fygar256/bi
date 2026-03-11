@@ -99,6 +99,16 @@ On command line mode
    [start,end]<<[[times],[01]] - left shift with bit 0,1 or rotate by multibyte
    [start,end]>>[[times],[01]] - right shift with bit 0,1 or rotate by multibyte
    <start>,<end>w<filename> ---- write data on file
+
+   [start,end]?s            ----- display in int16
+   [start,end]?i            ----- display in int32
+   [start,end]?l            ----- display in int64
+   [start,end]?us           ----- display in uint16
+   [start,end]?ui           ----- display in uint32
+   [start,end]?ul           ----- display in uint64
+   [start,end]?f            ----- display in float32
+   [start,end]?d            ----- display in float64
+
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
 Option
@@ -248,6 +258,7 @@ w<file> commands.
 2026-02-28 version 3.4.5.12 search command highlight and undo/redo command applied.
 2026-03-01 version 3.4.5.13 partial edit functionaliti added.
 2026-03-04 version 3.5.1.0 data comparison added.
+2026-03-11 version 3.5.1.25 typed display functionality added.
 --------------------
 
       I don't take any responsibility for the result of application of
