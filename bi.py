@@ -2613,9 +2613,9 @@ class BiEditor:
         line = f.readline()
         
         while line:
-            line=line.strip()
             if self.verbose:
-                print(line)
+                print(line,end='')
+            line=line.strip()
             flag = self.commandline(line)
             if flag == 0:
                 f.close()
