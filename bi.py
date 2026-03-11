@@ -2610,11 +2610,10 @@ class BiEditor:
             self.stderr("Script file open error.")
             return False
         
-        line = f.readline().strip()
-        flag = -1
-        self.scriptingflag = True
+        line = f.readline()
         
         while line:
+            line=line.strip()
             if self.verbose:
                 print(line)
             flag = self.commandline(line)
@@ -2624,7 +2623,7 @@ class BiEditor:
             elif flag == 1:
                 f.close()
                 return 1
-            line = f.readline().strip()
+            line = f.readline()
         
         f.close()
         return 0
