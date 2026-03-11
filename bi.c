@@ -4033,11 +4033,19 @@ void editor_shift_rotate(BiEditor *editor, uint64_t x, uint64_t x2, int times,
             uint64_t len = x2 - x + 1;
             if (len == 0 || x >= editor->memory.mem.size) continue;
             
-            // 値を読み出し
+            // 値を読み出し (エンディアンに従う)
             uint64_t v = 0;
-            for (uint64_t i = x2; i >= x && i < editor->memory.mem.size; i--) {
-                v = (v << 8) | memory_read(&editor->memory, i);
-                if (i == 0) break;
+            if (g_big_endian) {
+                /* ビッグエンディアン: x が MSB */
+                for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+                    v = (v << 8) | memory_read(&editor->memory, i);
+                }
+            } else {
+                /* リトルエンディアン: x が LSB */
+                for (uint64_t i = x2; i >= x && i < editor->memory.mem.size; i--) {
+                    v = (v << 8) | memory_read(&editor->memory, i);
+                    if (i == 0) break;
+                }
             }
             
             if (bit != 0 && bit != 1) {
@@ -4059,10 +4067,20 @@ void editor_shift_rotate(BiEditor *editor, uint64_t x, uint64_t x2, int times,
                 }
             }
             
-            // 値を書き戻し
-            for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
-                memory_set(&editor->memory, i, v & 0xFF);
-                v >>= 8;
+            // 値を書き戻し (エンディアンに従う)
+            if (g_big_endian) {
+                /* ビッグエンディアン: x2 から x へ LSB → MSB */
+                for (uint64_t i = x2; i >= x && i < editor->memory.mem.size; i--) {
+                    memory_set(&editor->memory, i, v & 0xFF);
+                    v >>= 8;
+                    if (i == 0) break;
+                }
+            } else {
+                /* リトルエンディアン: x から x2 へ LSB → MSB */
+                for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+                    memory_set(&editor->memory, i, v & 0xFF);
+                    v >>= 8;
+                }
             }
         }
     }

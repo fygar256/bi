@@ -108,6 +108,7 @@ On command line mode
    [start,end]?ul           ----- display in uint64
    [start,end]?f            ----- display in float32
    [start,end]?d            ----- display in float64
+   _{big|little}            ----- specify endianness.(default=little)
 
    <CR> without any command or <ESC>   ----- return to on-screen mode
 

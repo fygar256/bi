@@ -2630,14 +2630,29 @@ class BiEditor:
     
     def get_multibyte_value(self, x, x2):
         v = 0
-        for i in range(x2, x - 1, -1):
-            v = (v << 8) | self.memory.readmem(i)
+        be = (self.endian == 'big')
+        if be:
+            # ビッグエンディアン: x が MSB
+            for i in range(x, x2 + 1):
+                v = (v << 8) | self.memory.readmem(i)
+        else:
+            # リトルエンディアン: x が LSB
+            for i in range(x2, x - 1, -1):
+                v = (v << 8) | self.memory.readmem(i)
         return v
     
     def put_multibyte_value(self, x, x2, v):
-        for i in range(x, x2 + 1):
-            self.memory.setmem(i, v & 0xff)
-            v >>= 8
+        be = (self.endian == 'big')
+        if be:
+            # ビッグエンディアン: x2 から x へ LSB → MSB の順で書き戻す
+            for i in range(x2, x - 1, -1):
+                self.memory.setmem(i, v & 0xff)
+                v >>= 8
+        else:
+            # リトルエンディアン: x から x2 へ LSB → MSB の順で書き戻す
+            for i in range(x, x2 + 1):
+                self.memory.setmem(i, v & 0xff)
+                v >>= 8
     
     def left_shift_multibyte(self, x, x2, c):
         v = self.get_multibyte_value(x, x2)
