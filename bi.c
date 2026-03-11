@@ -2523,11 +2523,9 @@ int editor_commandline(BiEditor *editor, const char *line) {
                     terminal_locate(&editor->term, 0, BOTTOMLN + 1);
                     terminal_color(&editor->term, 6, 0);
                     printf("b");
-                    bool first=true;
                     for (int i = 63; i >= 0; i--) {
-                        if (i % 4 == 3 && !first) printf(" ");
+                        if (i % 4 == 3 && i!=63) printf(" ");
                         printf("%d", (int)((v >> i) & 1));
-                        first=false;
                     }
                     fflush(stdout);
                     terminal_getch();
@@ -2538,7 +2536,7 @@ int editor_commandline(BiEditor *editor, const char *line) {
                     // スクリプトモードではバイナリ表示のみ
                     printf("b");
                     for (int i = 63; i >= 0; i--) {
-                        if (i % 4 == 3) printf(" ");
+                        if (i % 4 == 3 && i!=63) printf(" ");
                         printf("%d", (int)((v >> i) & 1));
                     }
                     printf("\n");
@@ -2753,6 +2751,11 @@ int editor_commandline(BiEditor *editor, const char *line) {
     
     // 検索（n/N）
     else if (parsed_line[0] == 'n') {
+        if (!editor->search.regexp && editor->search.smem.size == 0) {
+            display_stderr(&editor->display, "No data to search.",
+                           editor->scriptingflag, editor->verbose);
+            return -1;
+        }
         size_t pos = search_next(&editor->search, display_fpos(&editor->display) + 1,
                                 editor->memory.mem.size);
         if (pos != (size_t)-1) {
@@ -2764,6 +2767,11 @@ int editor_commandline(BiEditor *editor, const char *line) {
         }
         return -1;
     } else if (parsed_line[0] == 'N') {
+        if (!editor->search.regexp && editor->search.smem.size == 0) {
+            display_stderr(&editor->display, "No data to search.",
+                           editor->scriptingflag, editor->verbose);
+            return -1;
+        }
         /* cur==0 のとき cur-1 は size_t アンダーフローするが、
          * search_last 内でクランプされるので呼び出し側はそのまま渡してよい。 */
         size_t pos = search_last(&editor->search, display_fpos(&editor->display) - 1,
@@ -2940,6 +2948,9 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             snprintf(msg, sizeof(msg), "%llu bytes Pasted.", (unsigned long long)editor->memory.yank.size);
             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
             display_jump(&editor->display, x + editor->memory.yank.size);
+        } else {
+            display_stderr(&editor->display, "Yank buffer empty.",
+                           editor->scriptingflag, editor->verbose);
         }
         return -1;
     }
@@ -2953,6 +2964,9 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             snprintf(msg, sizeof(msg), "%llu bytes Pasted (insert).", (unsigned long long)editor->memory.yank.size);
             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
             display_jump(&editor->display, x + editor->memory.yank.size);
+        } else {
+            display_stderr(&editor->display, "Yank buffer empty.",
+                           editor->scriptingflag, editor->verbose);
         }
         return -1;
     }
@@ -3040,15 +3054,19 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                 display_jump(&editor->display, x + read_size);
                 
                 free(buffer);
+                return -1;
             } else {
                 fclose(f);
                 display_stderr(&editor->display, "Memory allocation error.", 
                               editor->scriptingflag, editor->verbose);
+                return -1;
             }
         } else {
             fclose(f);
+            display_stderr(&editor->display, "File specified is empty.",
+                           editor->scriptingflag, editor->verbose);
+            return -1;
         }
-        return -1;
     }
     
     // delete
@@ -4134,6 +4152,10 @@ int main(int argc, char *argv[]) {
     // スクリプト実行またはインタラクティブモード
     if (scriptfile) {
         int result = editor_scripting(&editor, scriptfile);
+        
+        if (!editor.memory.lastchange) {
+            printf("Nothing done.\n");
+        }
         
         if (write_on_exit && editor.memory.lastchange) {
             char write_msg[256];

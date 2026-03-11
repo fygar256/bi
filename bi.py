@@ -1302,6 +1302,7 @@ class BiEditor:
     
     def call_exec(self, line):
         if len(line) <= 1:
+            self.stderr("No python code specified.")
             return
         line = line[1:]
 
@@ -1794,9 +1795,11 @@ class BiEditor:
         
         # 検索
         elif line[0] == 'n':
+            if not self.search.regexp and not self.search.smem:
+                self.stderr("No data to search.")
+                return -1
             pos = self.search.searchnext(self.display.fpos() + 1, len(self.memory))
-            if pos is not None and pos is not False:
-                # ハイライト範囲が空の場合、全マッチを再検索してハイライト
+            if pos is not None:
                 if not self.display.highlight_ranges:
                     matches = self.search.search_all(len(self.memory))
                     if matches:
@@ -1804,9 +1807,11 @@ class BiEditor:
                 self.display.jump(pos)
             return -1
         elif line[0] == 'N':
+            if not self.search.regexp and not self.search.smem:
+                self.stderr("No data to search.")
+                return -1
             pos = self.search.searchlast(self.display.fpos() - 1, len(self.memory))
-            if pos is not None and pos is not False:
-                # ハイライト範囲が空の場合、全マッチを再検索してハイライト
+            if pos is not None:
                 if not self.display.highlight_ranges:
                     matches = self.search.search_all(len(self.memory))
                     if matches:
@@ -1821,9 +1826,18 @@ class BiEditor:
         elif line[0] == '!':
             if len(line) >= 2:
                 self.invoke_shell(line[1:])
+            else:
+                self.stderr("No shell command specified.")
             return -1
         elif line[0] == '?':
-            self.printvalue(line[1:])
+            if len(line) >= 2:
+                v, _ = self.parser.expression(line[1:], 0)
+                if v == Parser.UNKNOWN:
+                    self.stderr("Invalid expression.")
+                else:
+                    self.printvalue(line[1:])
+            else:
+                self.stderr("Invalid expression.")
             return -1
         elif line[0] == '/':
             self.searchsub(line)
@@ -1939,6 +1953,8 @@ class BiEditor:
                 self.commit_undo()
                 self.stdmm(f"{len(y)} bytes pasted.")
                 self.display.jump(x + len(y))
+            else:
+                self.stderr("Yank buffer empty.")
             return -1
         
         if idx < len(line) and line[idx] == 'P':
@@ -1949,12 +1965,16 @@ class BiEditor:
                 self.commit_undo()
                 self.stdmm(f"{len(y)} bytes pasted (insert).")
                 self.display.jump(x + len(y))
+            else:
+                self.stderr("Yank buffer empty.")
             return -1
         
         # mark
         if idx + 1 < len(line) and line[idx] == 'm':
             if 'a' <= line[idx + 1] <= 'z':
                 self.memory.mark[ord(line[idx + 1]) - ord('a')] = x
+            else:
+                self.stderr("Invalid mark character (use 'ma' to 'mz').")
             return -1
         
         # partial read with new offset: [offset] rp  /  [offset,end] rp
@@ -1982,12 +2002,14 @@ class BiEditor:
             if fn == '':
                 fn = self.filemgr.filename  # 省略時はカレントファイル
             data = []
+            read_error = False
             try:
                 f = open(fn, "rb")
                 data = list(f.read())
                 f.close()
             except:
                 self.stderr("File read error.")
+                read_error = True
             if data:
                 self.save_undo_state()
                 if ch == 'r':
@@ -1996,6 +2018,8 @@ class BiEditor:
                     self.memory.insmem(x, data)
                 self.commit_undo()
                 self.display.jump(x + len(data))
+            elif not read_error:
+                self.stderr("File specified is empty.")
             return -1
         
         if idx < len(line):
@@ -2087,7 +2111,7 @@ class BiEditor:
                     self.stdmm(f"{len(data)} bytes filled.")
                     self.display.jump(x + len(data))
                 else:
-                    self.stderr("Invalid syntax.")
+                    self.stderr("No data specified.")
                 return -1
             
             if ch == 'I' and xf2:
@@ -2105,8 +2129,9 @@ class BiEditor:
                     self.memory.insmem(x, data)
                     self.commit_undo()
                     self.stdmm(f"{len(data)} bytes inserted.")
-                
                 self.display.jump(x + len(data))
+            else:
+                self.stderr("No data specified.")
             return -1
         
         # 残りのコマンドは第3引数が必要
@@ -2701,6 +2726,8 @@ def main():
     if args.script:
         try:
             editor.scripting(args.script)
+            if not editor.memory.lastchange:
+                print('Nothing done.')
             if args.write and editor.memory.lastchange:
                 if g_partial.active:
                     ok, wmsg = editor.filemgr.writefile_partial(args.file)
