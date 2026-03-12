@@ -1757,26 +1757,20 @@ class BiEditor:
             return -1
         
         # ファイル読み込み
-        elif line[0] == 'r':
+        elif line[0] == 'r' and len(line)>=2 and line[1]=='p':
             # :rp — 起動時コマンドラインで指定した範囲を再ロード
-            if len(line) >= 2 and line[1] == 'p':
-                success, msg = self.filemgr.readfile_partial(
-                    self.filemgr.filename,
-                    g_partial.init_offset,
-                    g_partial.init_length)
-                if success:
-                    self.display.jump(0)
-                    self.display.highlight_ranges = []
-                    self.stdmm(msg)
-                else:
-                    self.stderr(msg)
-                return -1
-            # :r / :r filename — パーシャルモードを解除せず再読み込み
-            #   パーシャル中 → 同じオフセット・長さで再ロード
-            #   通常モード  → ファイル全体を再ロード
-            rest = line[1:].lstrip() if len(line) >= 2 else ''
-            if rest:
-                self.filemgr.filename = rest
+            success, msg = self.filemgr.readfile_partial(
+                self.filemgr.filename,
+                g_partial.init_offset,
+                g_partial.init_length)
+            if success:
+                self.display.jump(0)
+                self.display.highlight_ranges = []
+                self.stdmm(msg)
+            else:
+                self.stderr(msg)
+            return -1
+        elif line[0] == 'r' and len(line)<2:
             if g_partial.active:
                 success, msg = self.filemgr.readfile_partial(
                     self.filemgr.filename,

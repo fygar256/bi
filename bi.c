@@ -2870,40 +2870,6 @@ int editor_commandline(BiEditor *editor, const char *line) {
                                editor->scriptingflag, editor->verbose);
             }
             return -1;
-        } else {
-            /* Fix: :r filename — Python版と同様、ファイル名を更新してリロードする。
-             * 以前はこのケースが範囲コマンドにフォールスルーし、execute_command の
-             * 'r' ハンドラ（カーソル位置への上書き読み込み）が誤って実行されていた。 */
-            const char *rest = parsed_line + 1;
-            while (*rest == ' ') rest++;
-            if (*rest != '\0') {
-                strncpy(editor->filemgr.filename, rest,
-                        sizeof(editor->filemgr.filename) - 1);
-                editor->filemgr.filename[sizeof(editor->filemgr.filename) - 1] = '\0';
-            }
-            char msg[256];
-            bool success;
-            if (g_partial.active) {
-                success = filemgr_readfile_partial(&editor->filemgr,
-                              editor->filemgr.filename,
-                              g_partial.offset, g_partial.length,
-                              msg, sizeof(msg));
-            } else {
-                success = filemgr_readfile(&editor->filemgr,
-                              editor->filemgr.filename, msg, sizeof(msg));
-            }
-            display_jump(&editor->display, 0);
-            matcharray_clear(&editor->display.highlight_ranges);
-            if (success) {
-                display_stdmm(&editor->display,
-                              msg[0] ? msg : "Original file read.",
-                              editor->scriptingflag, editor->verbose);
-            } else {
-                display_stderr(&editor->display,
-                               msg[0] ? msg : "Read error.",
-                               editor->scriptingflag, editor->verbose);
-            }
-            return -1;
         }
     }  /* end of else if (parsed_line[0] == 'r') */
     
