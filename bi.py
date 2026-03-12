@@ -408,29 +408,52 @@ class SearchEngine:
             m = self.memory.mem[addr:]
         
         byte_data = bytes(m)
-        try:
-            ms = byte_data.decode('utf-8', errors='replace')
-        except:
-            return -1
         
-        try:
-            f = re.match(self.remem, ms)
-        except:
-            return -1
+        # 複数のエンコーディングを試行（バイナリセーフ対応）
+        encodings = ['utf-8', 'latin-1', 'cp1252', 'shift-jis', 'euc-jp']
         
-        if f:
-            start, end = f.span()
-            self.span = end - start
-            matched_str = ms[start:end]
+        for encoding in encodings:
             try:
-                matched_bytes = matched_str.encode('utf-8')
-            except:
-                return -1
+                # まず文字列としてマッチを試みる
+                ms = byte_data.decode(encoding, errors='strict')
+                
+                try:
+                    f = re.match(self.remem, ms)
+                except re.error:
+                    # 正規表現パターンエラー
+                    return -1
+                
+                if f:
+                    start, end = f.span()
+                    matched_str = ms[start:end]
+                    
+                    # マッチした文字列を同じエンコーディングでバイト列に戻す
+                    try:
+                        matched_bytes = matched_str.encode(encoding)
+                        self.span = len(matched_bytes)
+                        return 1
+                    except (UnicodeEncodeError, UnicodeDecodeError):
+                        # このエンコーディングでは正確に変換できない
+                        continue
+                
+            except (UnicodeDecodeError, LookupError):
+                # このエンコーディングでデコードできない場合は次を試す
+                continue
+        
+        # すべてのエンコーディングで失敗した場合、バイト列として直接マッチを試みる
+        try:
+            # パターンをバイト列として扱う（latin-1は1バイト=1文字なので安全）
+            pattern_bytes = self.remem.encode('latin-1')
+            f = re.match(pattern_bytes, byte_data)
             
-            self.span = len(matched_bytes)
-            return 1
-        else:
-            return 0
+            if f:
+                start, end = f.span()
+                self.span = end - start
+                return 1
+        except (re.error, UnicodeEncodeError, UnicodeDecodeError):
+            pass
+        
+        return 0
     
     def searchnext(self, fp, mem_len):
         if mem_len == 0:
