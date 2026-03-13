@@ -3437,9 +3437,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     
     // substitute (s command)
     if (line[idx] == 's') {
-        editor_save_undo_state(editor);
         int r = editor_scommand(editor, x, x2, xf, xf2, line, idx + 1);
-        editor_commit_undo(editor);
         return r;
     }
     
@@ -4075,6 +4073,12 @@ size_t editor_searchnextnoloop(BiEditor *editor, size_t fp) {
 
 int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end, 
                     bool xf, bool xf2, const char *line, size_t idx) {
+    /*
+     * undo 記録はこの関数が自前で管理する。
+     * 呼び出し元で editor_save_undo_state / editor_commit_undo を呼ぶ必要はない。
+     */
+    editor_save_undo_state(editor);   /* 差分記録を開始 */
+
     editor->search.nff = false;
     size_t pos = display_fpos(&editor->display);
     
@@ -4108,6 +4112,7 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
             editor->search.remem[0] = '\0';
             editor->search.span = sm.size;
         } else {
+            editor_dec_undo(editor);  /* 変更なしのままキャンセル */
             display_stderr(&editor->display, "Invalid syntax.", 
                           editor->scriptingflag, editor->verbose);
             return -1;
@@ -4117,6 +4122,7 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
     /* Fix: 正規表現モードでは span はマッチ時に search_hitre() がセットするため
      *      ここでは 0 のまま正常。非正規表現（16進パターン）のみゼロチェックする。 */
     if (!editor->search.regexp && editor->search.span == 0) {
+        editor_dec_undo(editor);  /* 変更なしのままキャンセル */
         display_stderr(&editor->display, "Specify search object.", 
                       editor->scriptingflag, editor->verbose);
         return -1;
@@ -4131,6 +4137,7 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
         idx++;
         if (idx >= strlen(line)) {
             // 構文エラー: /の後に何もない
+            editor_dec_undo(editor);  /* 変更なしのままキャンセル */
             display_stderr(&editor->display, "Syntax error: Missing replacement pattern.", 
                           editor->scriptingflag, editor->verbose);
             bytearray_free(&replacement);
@@ -4157,6 +4164,7 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
         size_t found_pos = editor_searchnextnoloop(editor, display_fpos(&editor->display));
         
         if (found_pos == (size_t)-1) {
+            /* 検索エラー: それまでの置換分をコミット（0件なら commit_undo が自動で no-op にする） */
             break;
         }
         
@@ -4182,6 +4190,7 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
     display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
     
     bytearray_free(&replacement);
+    editor_commit_undo(editor);   /* 全置換完了でコミット（0件なら no-op） */
     return -1;
 }
 

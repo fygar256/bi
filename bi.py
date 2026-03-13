@@ -2175,9 +2175,7 @@ class BiEditor:
 
         # substitute
         elif ch == 's':
-            self.save_undo_state()
             self.scommand(x, x2, xf, xf2, line, idx + 1)
-            self.commit_undo()
             return -1
         
         # not
@@ -2690,7 +2688,11 @@ class BiEditor:
         self.put_multibyte_value(x, x2, (v >> 1) | (c << ((x2 - x) * 8 + 7)))
 
     def scommand(self, start, end, xf, xf2, line, idx):
-        """置換コマンド"""
+        """置換コマンド
+        undo 記録はこの関数が自前で管理する。
+        呼び出し元で save_undo_state / commit_undo を呼ぶ必要はない。
+        """
+        self.save_undo_state()   # undo 差分記録を開始
         self.search.nff = False
         pos = self.display.fpos()
         
@@ -2715,11 +2717,13 @@ class BiEditor:
                 self.search.remem = ''
                 self.search.span = len(self.search.smem)
             else:
-                self.stderr(f"Invalid syntax.")
+                self.dec_undo()  # 変更なしのままキャンセル
+                self.stderr("Invalid syntax.")
                 return
         
         if self.search.span == 0:
-            self.stderr(f"Specify search object.")
+            self.dec_undo()  # 変更なしのままキャンセル
+            self.stderr("Specify search object.")
             return
         
         n, idx = self.parser.get_str_or_hexs(line, idx)
@@ -2734,6 +2738,8 @@ class BiEditor:
             i = self.display.fpos()
             
             if f < 0:
+                # 検索エラー: それまでの置換分をコミット（0 件なら commit_undo が自動で no-op にする）
+                self.commit_undo()
                 return
             elif i <= end and f == 1:
                 self.memory.delmem(i, i + self.search.span - 1, False, self.memory.yankmem)
@@ -2744,6 +2750,7 @@ class BiEditor:
                 self.display.jump(i)
             else:
                 self.display.jump(pos)
+                self.commit_undo()   # 全置換完了でコミット
                 self.stdmm(f"  {cnt} times replaced.")
                 return
     
