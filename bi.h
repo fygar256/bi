@@ -18,8 +18,6 @@
 
 #define MAX_UNDO_LEVELS 100
 #define UNKNOWN         UINT64_MAX
-#define LENONSCR        (19 * 16)
-#define BOTTOMLN        22
 #define RELEN           128
 
 /* ========================================================================

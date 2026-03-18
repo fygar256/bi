@@ -1,5 +1,40 @@
 #define _POSIX_C_SOURCE 200809L
 #include "bi.h"
+#include <sys/ioctl.h>
+
+/* ========================================================================
+ * 画面サイズの動的計算
+ *   BOTTOMLN  = データ行の直後にあるメッセージ行の行番号 (0-origin)
+ *   LENONSCR  = 画面に表示できるバイト数
+ *   レイアウト:
+ *     0,1   : タイトル2行
+ *     2     : ヘッダー行
+ *     3..BOTTOMLN-1 : データ行
+ *     BOTTOMLN      : メッセージ行
+ *     BOTTOMLN+1    : カーソル情報行
+ * ======================================================================== */
+#define _HEADER_ROWS  3   /* タイトル2行 + ヘッダー1行 */
+#define _FOOTER_ROWS  2   /* メッセージ行 + カーソル情報行 */
+#define _MIN_DATA_ROWS 3  /* データ行の最小数 */
+
+static int g_bottomln = 22;
+static int g_lenonscr = (22 - 3) * 16;
+
+static void update_screen_size(void) {
+    struct winsize ws;
+    int rows = 24;   /* フォールバック */
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
+        rows = (int)ws.ws_row;
+    }
+    int data_rows = rows - _HEADER_ROWS - _FOOTER_ROWS;
+    if (data_rows < _MIN_DATA_ROWS) data_rows = _MIN_DATA_ROWS;
+    g_bottomln = _HEADER_ROWS + data_rows;
+    g_lenonscr = data_rows * 16;
+}
+
+/* マクロ互換エイリアス (コード中で BOTTOMLN / LENONSCR のまま参照できるようにする) */
+#define BOTTOMLN  g_bottomln
+#define LENONSCR  g_lenonscr
 
 /* ========================================================================
  * パーシャル編集の状態管理
@@ -869,6 +904,7 @@ int display_printchar(Display *disp, size_t a) {
 }
 
 void display_repaint(Display *disp, const char *filename) {
+    update_screen_size();   /* リサイズに追従 */
     // Print title
     terminal_locate(disp->term, 0, 0);
     terminal_color(disp->term, 6, 0);
@@ -976,11 +1012,11 @@ void display_printdata(Display *disp) {
     size_t file_addr = addr + g_partial.offset;  /* 実ファイル上のアドレス */
     uint8_t a = memory_read(disp->memory, addr);
     
-    /* ---- 行23: カーソル位置のバイト詳細 ---- */
-    terminal_locate(disp->term, 0, 23);
+    /* ---- 行: カーソル位置のバイト詳細 ---- */
+    terminal_locate(disp->term, 0, BOTTOMLN+1);
     terminal_color(disp->term, 6, 0);
     printf("                                                                                ");
-    terminal_locate(disp->term, 0, 23);
+    terminal_locate(disp->term, 0, BOTTOMLN+1);
     char s[4] = ".";
     if (a < 0x20) {
         snprintf(s, sizeof(s), "^%c", a + '@');
@@ -1000,8 +1036,8 @@ void display_printdata(Display *disp) {
         printf("%012zX : ~~                                                   ", file_addr);
     }
 
-    /* 行23: PARTIALステータス（アクティブの場合常時表示・オーバーライト） */
-    terminal_locate(disp->term, 0, 23);
+    /* 行: PARTIALステータス（アクティブの場合常時表示・オーバーライト） */
+    terminal_locate(disp->term, 0, BOTTOMLN+1);
     if (g_partial.active) {
         terminal_color(disp->term, 6, 0);
         printf(" PARTIAL  file_offset:0x%012zX  length:0x%zX(%zu) bytes   ",
@@ -2342,7 +2378,7 @@ static void cmd_typed_display(BiEditor *editor,
     int multi = (end > start);
 
     if (multi && !editor->scriptingflag) {
-        terminal_locate(&editor->term, 0, 23);
+        terminal_locate(&editor->term, 0, BOTTOMLN+1);
         terminal_color(&editor->term, 6, 0);
     }
 
@@ -4384,7 +4420,7 @@ int main(int argc, char *argv[]) {
         // 終了処理
         terminal_color(&editor.term, 7, 0);
         terminal_dispcursor(&editor.term);
-        terminal_locate(&editor.term, 0, 23);
+        terminal_locate(&editor.term, 0, BOTTOMLN+1);
         
         editor_free(&editor);
         return 0;

@@ -559,9 +559,11 @@ class SearchEngine:
 
 class Display:
     """画面表示クラス"""
-    LENONSCR = 19 * 16
-    BOTTOMLN = 22
-    
+    # クラス定数はフォールバック用の最小値として残す
+    _MIN_DATA_ROWS = 3   # データ行の最小数
+    _HEADER_ROWS   = 3   # タイトル2行 + ヘッダー1行
+    _FOOTER_ROWS   = 2   # メッセージ行 + カーソル情報行
+
     def __init__(self, terminal, memory_buffer):
         self.term = terminal
         self.memory = memory_buffer
@@ -572,6 +574,21 @@ class Display:
         self.insmod = False
         # 複数のハイライト範囲をリストで管理 [(pos, len), ...]
         self.highlight_ranges = []
+        # 画面サイズに応じた行数を初期化
+        self.update_screen_size()
+
+    def update_screen_size(self):
+        """端末サイズを取得して BOTTOMLN / LENONSCR を再計算する。
+        取得できない場合はデフォルト値 (BOTTOMLN=22) を使用する。"""
+        try:
+            rows = os.get_terminal_size().lines
+        except OSError:
+            rows = 24          # フォールバック
+        # BOTTOMLN = 最終データ行の次 (メッセージ行)
+        # レイアウト: 0,1=タイトル  2=ヘッダー  3..BOTTOMLN-1=データ  BOTTOMLN=メッセージ  BOTTOMLN+1=情報
+        data_rows = max(self._MIN_DATA_ROWS, rows - self._HEADER_ROWS - self._FOOTER_ROWS)
+        self.BOTTOMLN  = self._HEADER_ROWS + data_rows   # == data_rows + 3
+        self.LENONSCR  = data_rows * 16
     
     def fpos(self):
         return self.homeaddr + self.curx // 2 + self.cury * 16
@@ -660,6 +677,7 @@ class Display:
         print(f'file:[{fn:<35}] length:{len(self.memory.mem)} bytes [{("not " if not self.memory.modified else "")+"modified"}]    ')
     
     def repaint(self, filename):
+        self.update_screen_size()   # リサイズに追従
         self.print_title(filename)
         self.term.nocursor()
         self.term.locate(0, 2)
@@ -708,10 +726,10 @@ class Display:
         addr = self.fpos()
         file_addr = addr + g_partial.offset  # 実ファイル上のアドレス
         a = self.memory.readmem(addr)
-        # 行23: カーソル位置のバイト詳細（実ファイルアドレスで表示）
-        self.term.locate(0, 23)
-        print(" "*80)
-        self.term.locate(0, 23)
+        # カーソル位置のバイト詳細（実ファイルアドレスで表示）
+        self.term.locate(0, self.BOTTOMLN+1)
+        self.term.clrline()          # \n なしで行をクリア（末尾改行によるスクロール防止）
+        self.term.locate(0, self.BOTTOMLN+1)
         self.term.color(6)
         s = '.'
         if a < 0x20:
@@ -1265,7 +1283,7 @@ class BiEditor:
     
     def disp_marks(self):
         j = 0
-        self.term.locate(0, Display.BOTTOMLN)
+        self.term.locate(0, self.display.BOTTOMLN)
         self.term.color(7)
         for i in 'abcdefghijklmnopqrstuvwxyz':
             m = self.memory.mark[j]
@@ -1318,10 +1336,10 @@ class BiEditor:
         else:
             self.display.clrmm()
             self.term.color(6)
-            self.term.locate(0, Display.BOTTOMLN)
+            self.term.locate(0, self.display.BOTTOMLN)
             print(msg, end='', flush=True)
             Terminal.getch()
-            self.term.locate(0, Display.BOTTOMLN + 1)
+            self.term.locate(0, self.display.BOTTOMLN + 1)
             print(" " * 80, end='', flush=True)
     
     def call_exec(self, line):
@@ -1341,7 +1359,7 @@ class BiEditor:
             else:
                 self.display.clrmm()
                 self.term.color(7)
-                self.term.locate(0, Display.BOTTOMLN)
+                self.term.locate(0, self.display.BOTTOMLN)
                 exec(line, globals())
                 self.term.color(4)
                 self.term.clrline()
@@ -1459,7 +1477,7 @@ class BiEditor:
                 continue
             elif ch == 'j':
                 self.dec_undo()
-                if self.display.cury < Display.LENONSCR // 16 - 1:
+                if self.display.cury < self.display.LENONSCR // 16 - 1:
                     self.display.cury += 1
                 else:
                     self.display.scrdown()
@@ -1613,7 +1631,7 @@ class BiEditor:
     def do_search(self):
         """検索実行"""
         self.display.disp_curpos()
-        self.term.locate(0, Display.BOTTOMLN)
+        self.term.locate(0, self.display.BOTTOMLN)
         self.term.color(7)
         readline.set_pre_input_hook(lambda: (readline.insert_text('/'), readline.redisplay()))
         
@@ -1677,7 +1695,7 @@ class BiEditor:
     
     def commandln(self):
         """コマンドライン入力"""
-        self.term.locate(0, Display.BOTTOMLN)
+        self.term.locate(0, self.display.BOTTOMLN)
         self.term.color(7)
         readline.set_pre_input_hook(lambda: (readline.insert_text(''), readline.redisplay()))
         line = self.history.getln(':', "command").lstrip()
@@ -2010,7 +2028,7 @@ class BiEditor:
         else:
             self.display.clrmm()
             self.term.color(6)
-            self.term.locate(0, Display.BOTTOMLN)
+            self.term.locate(0, self.display.BOTTOMLN)
             # 複数行は1行にまとめて表示、長ければスクロール
             if len(lines_out) == 1:
                 print(lines_out[0], end='', flush=True)
@@ -2027,7 +2045,7 @@ class BiEditor:
                 self.term.clear()
                 return -1
             Terminal.getch()
-            self.term.locate(0, Display.BOTTOMLN)
+            self.term.locate(0, self.display.BOTTOMLN)
             print(" " * 80, end='', flush=True)
         return -1
 
@@ -2907,7 +2925,7 @@ def main():
     # 終了処理
     editor.term.color(7)
     editor.term.dispcursor()
-    editor.term.locate(0, 23)
+    editor.term.locate(0, editor.display.BOTTOMLN+1)
 
 
 if __name__ == "__main__":
