@@ -1046,7 +1046,24 @@ class FileManager:
         return True, f"Partial load: offset=0x{offset:X}, {actually_read} bytes read."
 
     def writefile_partial(self, fn):
-        """パーシャルライト: g_partial.offset から上書き"""
+        """パーシャルライト: g_partial.offset から上書き（テール保護あり）
+
+        ファイル構造:
+            [ヘッダ: 0 .. offset-1]
+            [パーシャル領域(旧): offset .. offset+g_partial.length-1]
+            [テール: offset+g_partial.length .. EOF]
+
+        旧実装の問題:
+            offset に新データを書くだけでテールを保護しなかった。
+            ・新データが旧領域より短い場合 → テール前に旧データが残留して破損
+            ・新データが旧領域より長い場合 → テールを上書きして破損
+
+        修正方針:
+            ① テール (offset+g_partial.length 以降) を読み退ける
+            ② offset に新データを書く
+            ③ テールをその直後に書く
+            ④ truncate して余剰バイトを除去
+        """
         global g_partial
         if not g_partial.active:
             return self.writefile(fn)
@@ -1054,6 +1071,7 @@ class FileManager:
         try:
             f = open(fn, "r+b")
         except OSError:
+            # ファイルが存在しない場合は新規作成
             try:
                 f = open(fn, "wb")
                 if g_partial.offset > 0:
@@ -1064,8 +1082,25 @@ class FileManager:
             except OSError:
                 return False, f"Partial write error: cannot create '{fn}'."
         try:
+            # ① テールを読み退ける
+            tail_start = g_partial.offset + g_partial.length
+            f.seek(0, 2)                  # ファイル末尾
+            file_size = f.tell()
+            tail = b''
+            if tail_start < file_size:
+                f.seek(tail_start)
+                tail = f.read()
+
+            # ② 新データを書く
             f.seek(g_partial.offset)
             written = f.write(bytes(self.memory.mem))
+
+            # ③ テールを書き戻す
+            if tail:
+                f.write(tail)
+
+            # ④ 余剰バイトを除去
+            f.truncate()
             f.close()
         except OSError:
             try: f.close()

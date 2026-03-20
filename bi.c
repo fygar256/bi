@@ -1,6 +1,10 @@
 #define _POSIX_C_SOURCE 200809L
 #include "bi.h"
 #include <sys/ioctl.h>
+/* bi.h が含まない可能性があるヘッダを明示的にインクルード */
+#include <signal.h>   /* signal, sigaction, SIGINT 等 */
+#include <stdlib.h>   /* mkstemp, free 等             */
+#include <unistd.h>   /* ftruncate, close 等           */
 
 /* ========================================================================
  * 画面サイズの動的計算
@@ -421,18 +425,54 @@ void terminal_highlight_color(Terminal *term) {
     fflush(stdout);
 }
 
+/* [Bug9修正] ターミナルをrawモードに変更中にシグナル(SIGINT等)が来ると
+ * tcsetattr(復元)が呼ばれずターミナルがrawモードのままハングする。
+ * g_saved_termios に旧設定をコピーしておき、シグナルハンドラで復元する。
+ * また tcgetattr の戻り値を確認し、stdin が tty でない場合は raw 変更をスキップする。 */
+
+static struct termios g_saved_termios;
+static bool           g_termios_saved = false;
+
+static void terminal_restore_on_signal(int sig) {
+    if (g_termios_saved) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_saved_termios);
+        g_termios_saved = false;
+    }
+    /* デフォルトハンドラを呼び出してプロセスを正常終了させる */
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+/* main() から一度だけ呼ぶ初期化関数 */
+static void terminal_setup_signal_handlers(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = terminal_restore_on_signal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT,  &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGHUP,  &sa, NULL);
+}
+
 int terminal_getch(void) {
-    struct termios old_settings, new_settings;
+    struct termios new_settings;
     int ch;
-    
-    tcgetattr(STDIN_FILENO, &old_settings);
-    new_settings = old_settings;
+
+    if (tcgetattr(STDIN_FILENO, &g_saved_termios) != 0) {
+        /* stdin が tty でない（スクリプトモード等）: rawモード変更をスキップ */
+        return getchar();
+    }
+    g_termios_saved = true;
+
+    new_settings = g_saved_termios;
     new_settings.c_lflag &= ~(ICANON | ECHO);
     tcsetattr(STDIN_FILENO, TCSANOW, &new_settings);
-    
+
     ch = getchar();
-    
-    tcsetattr(STDIN_FILENO, TCSANOW, &old_settings);
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &g_saved_termios);
+    g_termios_saved = false;
     return ch;
 }
 
@@ -605,8 +645,6 @@ int search_hit(SearchEngine *search, size_t addr) {
 int search_hitre(SearchEngine *search, size_t addr) {
     if (search->remem[0] == '\0') return -1;
     
-    regex_t regex;
-    regmatch_t match[1];
     int reti;
     
     // 検索範囲のデータを取得
@@ -617,28 +655,45 @@ int search_hitre(SearchEngine *search, size_t addr) {
                  RELEN : search->memory->mem.size - addr;
     if (len == 0) return -1;
     
-    // バイナリデータをNULL文字を考慮して処理
-    // NULL文字を空白に置き換える
+    /* [Bug8修正] regcomp/regfree を呼び出しごとに実行すると
+     * search_next/search_all から1バイトずつ呼ばれる構造上、
+     * 大ファイルで O(N) 回のコンパイルが走り実質ハングする。
+     * static キャッシュを使い、パターンが変化したときのみ再コンパイルする。 */
+    static char    s_cached_pattern[512] = "";
+    static regex_t s_cached_regex;
+    static bool    s_regex_valid = false;
+
+    if (!s_regex_valid || strcmp(s_cached_pattern, search->remem) != 0) {
+        /* パターンが変わった（または初回）: 再コンパイル */
+        if (s_regex_valid) {
+            regfree(&s_cached_regex);
+            s_regex_valid = false;
+        }
+        if (regcomp(&s_cached_regex, search->remem, REG_EXTENDED) != 0) {
+            return -1;   /* str はまだ未確保なので free 不要 */
+        }
+        strncpy(s_cached_pattern, search->remem, sizeof(s_cached_pattern) - 1);
+        s_cached_pattern[sizeof(s_cached_pattern) - 1] = '\0';
+        s_regex_valid = true;
+    }
+
     char *str = malloc(len + 1);
     if (!str) return -1;
     
+    /* [Bug5修正] 旧実装はNULバイト(0x00)をスペース(0x20)に置換していたため
+     * ・NULバイトの検索が不可能
+     * ・スペース(0x20)がNUL位置に誤マッチする
+     * という二重の破綻があった。
+     * NULを含むバイナリに対して POSIX regex を直接適用するには制限があるが、
+     * 少なくともデータをそのままコピーし str[len]='\0' で終端することで
+     * NULより前の範囲については正確にマッチできる。 */
     for (size_t i = 0; i < len; i++) {
-        uint8_t byte = search->memory->mem.data[addr + i];
-        // NULL文字を空白に置き換え、それ以外はそのまま
-        str[i] = (byte == 0) ? ' ' : byte;
+        str[i] = (char)search->memory->mem.data[addr + i];
     }
     str[len] = '\0';
     
-    // 正規表現コンパイル
-    reti = regcomp(&regex, search->remem, REG_EXTENDED);
-    if (reti) {
-        free(str);
-        return -1;
-    }
-    
-    // マッチング - 位置0から始まるマッチのみ
-    reti = regexec(&regex, str, 1, match, 0);
-    regfree(&regex);
+    regmatch_t match[1];
+    reti = regexec(&s_cached_regex, str, 1, match, 0);
     
     if (reti == 0 && match[0].rm_so == 0) {
         search->span = match[0].rm_eo - match[0].rm_so;
@@ -1147,30 +1202,51 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
         }
         
         // Pythonで評価
-        FILE *tmp = fopen("/tmp/bi_eval_tmp.py", "w");
-        if (tmp) {
-            fprintf(tmp, "print(int(%s))\n", expr);
-            fclose(tmp);
-            
-            FILE *pipe = popen("python3 /tmp/bi_eval_tmp.py 2>/dev/null", "r");
-            if (pipe) {
-                char result[64];
-                if (fgets(result, sizeof(result), pipe)) {
-                    v = strtoull(result, NULL, 10);
-                    pclose(pipe);
-                } else {
-                    pclose(pipe);
-                    unlink("/tmp/bi_eval_tmp.py");
-                    return UNKNOWN;
-                }
+        /* [Bug7修正] 旧実装は固定パス /tmp/bi_eval_tmp.py に expr を直接書き込み
+         * popen で実行していたため、以下の攻撃が可能だった:
+         *  ① コマンドインジェクション: {__import__('os').system('rm -rf /')} 等
+         *  ② TOCTOU / シンボリックリンク攻撃 (固定パスへの先回り)
+         * 修正:
+         *  a) mkstemp() で安全な一時ファイルを作成 (TOCTOU 排除)
+         *  b) 式をホワイトリスト（数値・演算子・括弧のみ）で事前検証
+         *     違反があれば Python を呼ばず即 UNKNOWN を返す */
+
+        /* ホワイトリスト検証: 数字・16進文字・演算子・スペースのみ許可 */
+        static const char *allowed = "0123456789abcdefABCDEFxX+-*/%()& |^~<>! \t";
+        for (size_t k = 0; k < expr_idx; k++) {
+            if (!strchr(allowed, (unsigned char)expr[k])) {
+                return UNKNOWN;   /* 不正文字 → 評価しない */
+            }
+        }
+
+        /* mkstemp は POSIX 標準。python3 は拡張子なしでも実行できる。 */
+        char tmp_path[] = "/tmp/bi_eval_XXXXXX";
+        int  tmp_fd = mkstemp(tmp_path);
+        if (tmp_fd < 0) return UNKNOWN;
+
+        FILE *tmp = fdopen(tmp_fd, "w");
+        if (!tmp) { close(tmp_fd); unlink(tmp_path); return UNKNOWN; }
+        fprintf(tmp, "print(int(%s))\n", expr);
+        fclose(tmp);   /* tmp_fd も close される */
+
+        char cmd[sizeof(tmp_path) + 32];
+        snprintf(cmd, sizeof(cmd), "python3 %s 2>/dev/null", tmp_path);
+        FILE *pipe = popen(cmd, "r");
+        if (pipe) {
+            char result[64];
+            if (fgets(result, sizeof(result), pipe)) {
+                v = strtoull(result, NULL, 10);
+                pclose(pipe);
             } else {
-                unlink("/tmp/bi_eval_tmp.py");
+                pclose(pipe);
+                unlink(tmp_path);
                 return UNKNOWN;
             }
-            unlink("/tmp/bi_eval_tmp.py");
         } else {
+            unlink(tmp_path);
             return UNKNOWN;
         }
+        unlink(tmp_path);
     } else if (ch == '.') {
         (*idx)++;
         v = display_fpos(parser->display);
@@ -1245,6 +1321,11 @@ uint64_t parser_expression(Parser *parser, const char *s, size_t *idx) {
     return x;
 }
 
+/* [Bug2修正] BOF 対策。
+ * bi.h は3引数で宣言しているためシグネチャを変更できない。
+ * 代わりに内部で j を LINE_MAX_SIZE-1 でキャップする。
+ * 呼び出し元バッファは4096バイトに拡大してあるので実用上オーバーフローしない。 */
+#define LINE_MAX_SIZE 4096
 size_t parser_get_restr(const char *s, size_t idx, char *result) {
     size_t j = 0;
     while (s[idx]) {
@@ -1252,17 +1333,17 @@ size_t parser_get_restr(const char *s, size_t idx, char *result) {
             break;
         }
         if (s[idx] == '\\' && s[idx + 1] == '\\') {
-            result[j++] = '\\';
-            result[j++] = '\\';
+            if (j + 2 < LINE_MAX_SIZE) { result[j++] = '\\'; result[j++] = '\\'; }
             idx += 2;
         } else if (s[idx] == '\\' && s[idx + 1] == '/') {
-            result[j++] = '/';
+            if (j + 1 < LINE_MAX_SIZE) result[j++] = '/';
             idx += 2;
         } else if (s[idx] == '\\' && !s[idx + 1]) {
             idx++;
             break;
         } else {
-            result[j++] = s[idx++];
+            if (j + 1 < LINE_MAX_SIZE) result[j++] = s[idx];
+            idx++;
         }
     }
     result[j] = '\0';
@@ -1677,7 +1758,57 @@ bool filemgr_writefile_partial(FileManager *fmgr, const char *filename,
         return true;
     }
 
+    /* ---------------------------------------------------------------
+     * テール保護付きパーシャルライト
+     *
+     * ファイル構造:
+     *   [ヘッダ: 0..offset-1]
+     *   [パーシャル領域(旧): offset..offset+g_partial.length-1]
+     *   [テール: offset+g_partial.length..EOF]
+     *
+     * 旧実装の問題:
+     *   offset に新データを書くだけでテールを保護しなかった。
+     *   ・新データが旧領域より短い → テール前に旧データが残留して破損
+     *   ・新データが旧領域より長い → テールを上書きして破損
+     *   (以前の Bug3 修正は ftruncate(offset+written) を追加したが、
+     *    これはテールごと削除するためやはり破損する)
+     *
+     * 修正方針:
+     *   ① テール (offset+g_partial.length 以降) を読み退ける
+     *   ② offset に新データを書く
+     *   ③ テールをその直後に書く
+     *   ④ ftruncate して余剰バイトを除去
+     * --------------------------------------------------------------- */
+
+    /* ① テールを読み退ける */
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); if (msg) snprintf(msg, msg_size, "Seek error."); return false; }
+    long file_size = ftell(f);
+    if (file_size < 0) { fclose(f); if (msg) snprintf(msg, msg_size, "Seek error."); return false; }
+
+    size_t tail_start = g_partial.offset + g_partial.length;
+    uint8_t *tail_buf = NULL;
+    size_t   tail_len = 0;
+
+    if (tail_start < (size_t)file_size) {
+        tail_len = (size_t)file_size - tail_start;
+        tail_buf = malloc(tail_len);
+        if (!tail_buf) {
+            fclose(f);
+            if (msg) snprintf(msg, msg_size, "Partial write error: out of memory for tail.");
+            return false;
+        }
+        if (fseek(f, (long)tail_start, SEEK_SET) != 0 ||
+            fread(tail_buf, 1, tail_len, f) != tail_len) {
+            free(tail_buf);
+            fclose(f);
+            if (msg) snprintf(msg, msg_size, "Partial write error: cannot read tail.");
+            return false;
+        }
+    }
+
+    /* ② offset に新データを書く */
     if (fseek(f, (long)g_partial.offset, SEEK_SET) != 0) {
+        free(tail_buf);
         fclose(f);
         if (msg) snprintf(msg, msg_size, "Seek error.");
         return false;
@@ -1686,6 +1817,31 @@ bool filemgr_writefile_partial(FileManager *fmgr, const char *filename,
     size_t written = 0;
     if (fmgr->memory->mem.size > 0) {
         written = fwrite(fmgr->memory->mem.data, 1, fmgr->memory->mem.size, f);
+        if (written != fmgr->memory->mem.size) {
+            free(tail_buf);
+            fclose(f);
+            if (msg) snprintf(msg, msg_size, "Partial write error: write failed.");
+            return false;
+        }
+    }
+
+    /* ③ テールを書き戻す */
+    if (tail_buf && tail_len > 0) {
+        if (fwrite(tail_buf, 1, tail_len, f) != tail_len) {
+            free(tail_buf);
+            fclose(f);
+            if (msg) snprintf(msg, msg_size, "Partial write error: tail write failed.");
+            return false;
+        }
+    }
+    free(tail_buf);
+
+    /* ④ 余剰バイトを除去 */
+    long new_size = (long)(g_partial.offset + written + tail_len);
+    if (ftruncate(fileno(f), (off_t)new_size) != 0) {
+        fclose(f);
+        if (msg) snprintf(msg, msg_size, "Partial write error: truncate failed.");
+        return false;
     }
     fclose(f);
 
@@ -1938,7 +2094,18 @@ void editor_fedit(BiEditor *editor) {
                 else if (c3 == 'B') ch = 'j';
                 else if (c3 == 'C') ch = 'l';
                 else if (c3 == 'D') ch = 'h';
-                else if (c3 == '2') ch = 'i';
+                else if (c3 == '2') {
+                    /* [Bug6修正] \x1b[2~ (Insert) は5バイトシーケンス。
+                     * c3=='2' の次の '~' を読み捨てないと次のコマンド文字として
+                     * 誤処理される。 */
+                    terminal_getch();   /* trailing '~' を消費 */
+                    ch = 'i';
+                } else if (c3 >= '1' && c3 <= '9') {
+                    /* Home/Delete/End/PgUp/PgDn 等の ~終端シーケンス
+                     * （現バージョンでは未割り当てだが誤処理防止のため消費する） */
+                    terminal_getch();   /* trailing '~' を消費 */
+                    ch = 0;            /* 未割り当て: 無視 */
+                }
             } else {
                 // ESC単独 - ハイライトクリア
                 matcharray_clear(&editor->display.highlight_ranges);
@@ -2100,8 +2267,8 @@ void editor_fedit(BiEditor *editor) {
                 } else if (strlen(line) > 1 && line[0] == '/') {
                     // 正規表現検索
                     // 末尾の / を削除
-                    char pattern[1024];
-                    strncpy(pattern, line + 1, sizeof(pattern) - 1);
+                    char pattern[LINE_MAX_SIZE];
+                    strncpy(pattern, line + 1, LINE_MAX_SIZE - 1);
                     pattern[sizeof(pattern) - 1] = '\0';
                     
                     // 末尾の / を探して削除
@@ -2650,33 +2817,48 @@ int editor_commandline(BiEditor *editor, const char *line) {
             }
             
             // 一時ファイルにPythonコードを書き出し
-            FILE *tmp = fopen("/tmp/bi_python_tmp.py", "w");
-            if (tmp) {
-                fprintf(tmp, "%s\n", python_code);
-                fclose(tmp);
-                
-                if (!editor->scriptingflag) {
-                    display_clrmm(&editor->display);
-                    terminal_color(&editor->term, 7, 0);
-                    terminal_locate(&editor->term, 0, BOTTOMLN);
-                }
-                
-                int ret = system("python3 /tmp/bi_python_tmp.py 2>&1");
-                (void)ret;
-                
-                if (!editor->scriptingflag) {
-                    terminal_color(&editor->term, 4, 0);
-                    printf("[ Hit a key ]");
-                    fflush(stdout);
-                    terminal_getch();
-                    terminal_clear(&editor->term);
-                }
-                
-                unlink("/tmp/bi_python_tmp.py");
-            } else {
+            /* [Bug7修正] 固定パス /tmp/bi_python_tmp.py を mkstemp() に変更。
+             * 旧実装は固定パスへのシンボリックリンク攻撃 (TOCTOU) が可能だった。
+             * @コマンドはユーザーが自分で書くコードを実行する機能なので
+             * インジェクション検証は行わず、ファイル生成の安全性のみ確保する。 */
+            /* mkstemp は POSIX 標準。python3 は拡張子なしでも実行できる。 */
+            char tmp_path[] = "/tmp/bi_exec_XXXXXX";
+            int  tmp_fd = mkstemp(tmp_path);
+            if (tmp_fd < 0) {
                 display_stderr(&editor->display, "Cannot create temporary file.", 
                               editor->scriptingflag, editor->verbose);
+                return -1;
             }
+            FILE *tmp = fdopen(tmp_fd, "w");
+            if (!tmp) {
+                close(tmp_fd); unlink(tmp_path);
+                display_stderr(&editor->display, "Cannot create temporary file.", 
+                              editor->scriptingflag, editor->verbose);
+                return -1;
+            }
+            fprintf(tmp, "%s\n", python_code);
+            fclose(tmp);   /* tmp_fd も close される */
+
+            if (!editor->scriptingflag) {
+                display_clrmm(&editor->display);
+                terminal_color(&editor->term, 7, 0);
+                terminal_locate(&editor->term, 0, BOTTOMLN);
+            }
+
+            char cmd[sizeof(tmp_path) + 32];
+            snprintf(cmd, sizeof(cmd), "python3 %s 2>&1", tmp_path);
+            int ret = system(cmd);
+            (void)ret;
+
+            if (!editor->scriptingflag) {
+                terminal_color(&editor->term, 4, 0);
+                printf("[ Hit a key ]");
+                fflush(stdout);
+                terminal_getch();
+                terminal_clear(&editor->term);
+            }
+
+            unlink(tmp_path);
         } else {
             // 構文エラー: @の後に何もない
             display_stderr(&editor->display, "Syntax error: No Python code specified.",
@@ -2810,8 +2992,8 @@ int editor_commandline(BiEditor *editor, const char *line) {
         } else if (strlen(parsed_line) > 1 && parsed_line[0] == '/') {
             // 正規表現検索
             // 末尾の / を削除
-            char pattern[1024];
-            strncpy(pattern, parsed_line + 1, sizeof(pattern) - 1);
+            char pattern[LINE_MAX_SIZE];
+            strncpy(pattern, parsed_line + 1, LINE_MAX_SIZE - 1);
             pattern[sizeof(pattern) - 1] = '\0';
             
             // 末尾の / を探して削除
@@ -3315,7 +3497,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
 
         // まずパターンを読む（/.../ か 16進数列）
         if (line[idx] == '/') {
-            char str[1024];
+            char str[LINE_MAX_SIZE];
             idx = parser_get_restr(line, idx + 1, str);
             for (size_t i = 0; str[i]; i++) {
                 bytearray_push(&pattern, (uint8_t)str[i]);
@@ -4029,56 +4211,65 @@ void editor_shift_rotate(BiEditor *editor, uint64_t x, uint64_t x2, int times,
                 }
             }
         } else {
-            // マルチバイト
+            /* [Bug1修正] マルチバイトshift/rotate
+             * 旧実装は uint64_t (8バイト) で値を保持していたため、
+             * 9バイト以上の範囲を指定すると上位バイトが脱落し、
+             * len*8-1 >= 64 のとき 1ULL<<(len*8-1) が C 規格上の UB になっていた。
+             * 修正: __uint128_t (16バイト) を使い最大16バイトまで対応する。
+             * 16バイト超は有限ビット幅の問題なので先頭16バイトにクランプする。 */
             uint64_t len = x2 - x + 1;
             if (len == 0 || x >= editor->memory.mem.size) continue;
-            
-            // 値を読み出し (エンディアンに従う)
-            uint64_t v = 0;
+            /* 16バイト超は先頭16バイトにクランプ（__uint128_t の上限） */
+            if (len > 16) len = 16;
+            uint64_t x2c = x + len - 1;   /* クランプ後の実際の終端 */
+
+            /* 値を読み出し (エンディアンに従う) */
+            __uint128_t v = 0;
             if (g_big_endian) {
-                /* ビッグエンディアン: x が MSB */
-                for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
+                for (uint64_t i = x; i <= x2c && i < editor->memory.mem.size; i++)
                     v = (v << 8) | memory_read(&editor->memory, i);
-                }
             } else {
-                /* リトルエンディアン: x が LSB */
-                for (uint64_t i = x2; i >= x && i < editor->memory.mem.size; i--) {
+                for (uint64_t i = x2c; i >= x && i < editor->memory.mem.size; i--) {
                     v = (v << 8) | memory_read(&editor->memory, i);
                     if (i == 0) break;
                 }
             }
-            
+
+            /* len*8 ビット幅マスク（len<=16 なので len*8<=128、UBなし） */
+            __uint128_t mask = (len * 8 < 128)
+                               ? (((__uint128_t)1 << (len * 8)) - 1)
+                               : ~(__uint128_t)0;
+            __uint128_t msb_mask = (__uint128_t)1 << (len * 8 - 1);
+
             if (bit != 0 && bit != 1) {
-                // ローテート
+                /* ローテート */
                 if (direction == '<') {
-                    uint64_t c = (v & (1ULL << (len * 8 - 1))) ? 1 : 0;
-                    v = (v << 1) | c;
+                    __uint128_t c = (v & msb_mask) ? 1 : 0;
+                    v = ((v << 1) | c) & mask;
                 } else {
-                    uint64_t c = (v & 1) ? 1 : 0;
-                    v = (v >> 1) | (c << (len * 8 - 1));
+                    __uint128_t c = (v & 1) ? msb_mask : 0;
+                    v = ((v >> 1) | c) & mask;
                 }
             } else {
-                // シフト
-                uint64_t carry = bit & 1;
+                /* シフト */
+                __uint128_t carry = bit & 1;
                 if (direction == '<') {
-                    v = (v << 1) | carry;
+                    v = ((v << 1) | carry) & mask;
                 } else {
-                    v = (v >> 1) | (carry << (len * 8 - 1));
+                    v = ((v >> 1) | (carry << (len * 8 - 1))) & mask;
                 }
             }
-            
-            // 値を書き戻し (エンディアンに従う)
+
+            /* 値を書き戻し (エンディアンに従う) */
             if (g_big_endian) {
-                /* ビッグエンディアン: x2 から x へ LSB → MSB */
-                for (uint64_t i = x2; i >= x && i < editor->memory.mem.size; i--) {
-                    memory_set(&editor->memory, i, v & 0xFF);
+                for (uint64_t i = x2c; i >= x && i < editor->memory.mem.size; i--) {
+                    memory_set(&editor->memory, i, (uint8_t)(v & 0xFF));
                     v >>= 8;
                     if (i == 0) break;
                 }
             } else {
-                /* リトルエンディアン: x から x2 へ LSB → MSB */
-                for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
-                    memory_set(&editor->memory, i, v & 0xFF);
+                for (uint64_t i = x; i <= x2c && i < editor->memory.mem.size; i++) {
+                    memory_set(&editor->memory, i, (uint8_t)(v & 0xFF));
                     v >>= 8;
                 }
             }
@@ -4129,7 +4320,7 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
         idx++;
         if (idx < strlen(line) && line[idx] != '/') {
             // 正規表現
-            char pattern[1024];
+            char pattern[LINE_MAX_SIZE];
             idx = parser_get_restr(line, idx, pattern);
             editor->search.regexp = true;
             strncpy(editor->search.remem, pattern, sizeof(editor->search.remem) - 1);
@@ -4184,7 +4375,7 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
             idx = parser_get_hexs(&editor->parser, line, idx + 1, &replacement);
         } else {
             // 文字列
-            char str[1024];
+            char str[LINE_MAX_SIZE];
             idx = parser_get_restr(line, idx, str);
             for (size_t i = 0; str[i]; i++) {
                 bytearray_push(&replacement, str[i]);
@@ -4212,7 +4403,10 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
             if (replacement.size > 0) {
                 memory_insert(&editor->memory, i, replacement.data, replacement.size);
             }
-            pos = i + replacement.size;
+            /* [Bug4修正] replacement.size == 0（空文字列への置換）のとき
+             * pos = i のまま同一位置に再マッチして無限ループになる。
+             * 必ず1バイト以上前進させて同じ位置の再マッチを防ぐ。 */
+            pos = i + (replacement.size > 0 ? replacement.size : 1);
             cnt++;
             display_jump(&editor->display, pos);
         } else {
@@ -4278,6 +4472,10 @@ int editor_scripting(BiEditor *editor, const char *scriptfile) {
  * main関数
  * ======================================================================== */
 int main(int argc, char *argv[]) {
+    /* [Bug9修正] SIGINTなどでターミナルがrawモードのままにならないよう
+     * シグナルハンドラを最初に設置する。 */
+    terminal_setup_signal_handlers();
+
     // コマンドライン引数処理
     const char *filename = NULL;
     const char *scriptfile = NULL;
