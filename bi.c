@@ -406,11 +406,17 @@ void terminal_clrline(Terminal *term) {
 
 void terminal_color(Terminal *term, int col1, int col2) {
     if (terminal_scripting(term)) return;
-    if (strcmp(term->termcol, "black") == 0) {
+    if (strcmp(term->termcol, "color") == 0) {
+        /* coltab フルカラーモード（UI要素ごとに色が変わる・従来の挙動） */
         printf("\x1b[3%dm\x1b[4%dm", term->coltab[col1], term->coltab[col2]);
-    } else {
-        printf("\x1b[3%dm\x1b[4%dm", term->coltab[0], term->coltab[7]);
+    } else if (strcmp(term->termcol, "black") == 0) {
+        /* 黒地に白: fg=白(37), bg=黒(40) 固定 */
+        printf("\x1b[37m\x1b[40m");
+    } else if (strcmp(term->termcol, "white") == 0) {
+        /* 白地に黒: fg=黒(30), bg=白(47) 固定 */
+        printf("\x1b[30m\x1b[47m");
     }
+    /* else: 指定なし → カラーエスケープを出力しない（端末本来の色を維持） */
     fflush(stdout);
 }
 
@@ -4479,7 +4485,7 @@ int main(int argc, char *argv[]) {
     // コマンドライン引数処理
     const char *filename = NULL;
     const char *scriptfile = NULL;
-    const char *termcol = "black";
+    const char *termcol = "";
     bool verbose = false;
     bool write_on_exit = false;
     size_t partial_offset = 0;
@@ -4491,7 +4497,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "  Options can appear before or after <file>.\n");
         fprintf(stderr, "Options:\n");
         fprintf(stderr, "  -s <script>  Execute script file\n");
-        fprintf(stderr, "  -t <color>   Terminal color (black/white)\n");
+        fprintf(stderr, "  -t <color>   Color scheme: 'black' (white on black), 'white' (black on white), 'color' (multi-color); omit for terminal default\n");
         fprintf(stderr, "  -v           Verbose mode (show commands when scripting)\n");
         fprintf(stderr, "  -w           Write file when exiting script\n");
         fprintf(stderr, "  -o <offset>  Partial edit: start offset (hex)\n");

@@ -105,7 +105,7 @@ class Terminal:
     """ターミナル制御を担当するクラス"""
     ESC = '['
     
-    def __init__(self, termcol='black', get_scripting=None):
+    def __init__(self, termcol='', get_scripting=None):
         self.termcol = termcol
         self.coltab = [0, 1, 4, 5, 2, 6, 3, 7]
         # () -> bool を返すコールバック。True のときエスケープシーケンスを抑制する
@@ -165,10 +165,16 @@ class Terminal:
     
     def color(self, col1=7, col2=0):
         if self._scripting(): return
-        if self.termcol == 'black':
+        if self.termcol == 'color':
+            # coltab フルカラーモード（UI要素ごとに色が変わる・従来の挙動）
             print(f"{self.ESC}3{self.coltab[col1]}m{self.ESC}4{self.coltab[col2]}m", end='', flush=True)
-        else:
-            print(f"{self.ESC}3{self.coltab[0]}m{self.ESC}4{self.coltab[7]}m", end='', flush=True)
+        elif self.termcol == 'black':
+            # 黒地に白: fg=白(37), bg=黒(40) 固定
+            print(f"{self.ESC}37m{self.ESC}40m", end='', flush=True)
+        elif self.termcol == 'white':
+            # 白地に黒: fg=黒(30), bg=白(47) 固定
+            print(f"{self.ESC}30m{self.ESC}47m", end='', flush=True)
+        # else: 指定なし → カラーエスケープを出力しない（端末本来の色を維持）
     
     def resetcolor(self):
         if self._scripting(): return
@@ -1113,7 +1119,7 @@ class FileManager:
 
 class BiEditor:
     """バイナリエディタのメインクラス"""
-    def __init__(self, termcol='black'):
+    def __init__(self, termcol=''):
         self.scriptingflag = False
         self.verbose = False
         self.term = Terminal(termcol, get_scripting=lambda: self.scriptingflag)
@@ -2872,8 +2878,8 @@ def main():
     ap.add_argument('file', help='file to edit')
     ap.add_argument('-s', '--script', type=str, default='', metavar='script.bi',
                     help='bi script file')
-    ap.add_argument('-t', '--termcolor', type=str, default='black',
-                    help="background color of terminal (default: 'black')")
+    ap.add_argument('-t', '--termcolor', type=str, default='',
+                    help="color scheme: 'black' (white on black), 'white' (black on white), 'color' (multi-color mode); omit to use terminal default")
     ap.add_argument('-v', '--verbose', action='store_true',
                     help='verbose when processing script')
     ap.add_argument('-w', '--write', action='store_true',
