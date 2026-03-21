@@ -113,6 +113,7 @@ On command line mode
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
 Option
+    -t {black|white|color} color black=white on black|white=black on white|color=multi color|none=terminal default color.
     -s script.bi   scripting
     -v             verbose when scripting
     -o <offset>    partial edit beginning offset
