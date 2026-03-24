@@ -2017,45 +2017,47 @@ class BiEditor:
         lines_out = []
         pos = start
         while pos <= end:
-            raw = bytes([self.memory.readmem(pos + i) for i in range(size)])
-            try:
-                if type_char == 's':
-                    val = struct.unpack(endian_ch + 'h', raw)[0]
-                    s = str(val)
-                elif type_char == 'i':
-                    val = struct.unpack(endian_ch + 'i', raw)[0]
-                    s = str(val)
-                elif type_char == 'l':
-                    val = struct.unpack(endian_ch + 'q', raw)[0]
-                    s = str(val)
-                elif type_char == 'q':
-                    val = int.from_bytes(raw, 'big' if be else 'little', signed=True)
-                    s = str(val)
-                elif type_char == 'f':
-                    val = struct.unpack(endian_ch + 'f', raw)[0]
-                    s = repr(val)
-                elif type_char == 'd':
-                    val = struct.unpack(endian_ch + 'd', raw)[0]
-                    s = repr(val)
-                elif type_char == 'Q':
-                    # 128-bit float: ctypes long double (platform dependent)
-                    if be:
-                        raw = raw[::-1]
-                    buf = (ctypes.c_ubyte * 16)(*raw)
-                    ld = ctypes.cast(buf, ctypes.POINTER(ctypes.c_longdouble)).contents.value
-                    s = repr(ld)
-                elif type_char == 'us':
-                    val = struct.unpack(endian_ch + 'H', raw)[0]
-                    s = str(val)
-                elif type_char == 'ui':
-                    val = struct.unpack(endian_ch + 'I', raw)[0]
-                    s = str(val)
-                elif type_char == 'ul':
-                    val = struct.unpack(endian_ch + 'Q', raw)[0]
-                    s = str(val)
-            except Exception as e:
-                s = f'(error: {e})'
-
+            if len(self.memory.mem)>pos+size:
+                raw = bytes([self.memory.readmem(pos + i) for i in range(size)])
+                try:
+                    if type_char == 's':
+                        val = struct.unpack(endian_ch + 'h', raw)[0]
+                        s = str(val)
+                    elif type_char == 'i':
+                        val = struct.unpack(endian_ch + 'i', raw)[0]
+                        s = str(val)
+                    elif type_char == 'l':
+                        val = struct.unpack(endian_ch + 'q', raw)[0]
+                        s = str(val)
+                    elif type_char == 'q':
+                        val = int.from_bytes(raw, 'big' if be else 'little', signed=True)
+                        s = str(val)
+                    elif type_char == 'f':
+                        val = struct.unpack(endian_ch + 'f', raw)[0]
+                        s = repr(val)
+                    elif type_char == 'd':
+                        val = struct.unpack(endian_ch + 'd', raw)[0]
+                        s = repr(val)
+                    elif type_char == 'Q':
+                        # 128-bit float: ctypes long double (platform dependent)
+                        if be:
+                            raw = raw[::-1]
+                        buf = (ctypes.c_ubyte * 16)(*raw)
+                        ld = ctypes.cast(buf, ctypes.POINTER(ctypes.c_longdouble)).contents.value
+                        s = repr(ld)
+                    elif type_char == 'us':
+                        val = struct.unpack(endian_ch + 'H', raw)[0]
+                        s = str(val)
+                    elif type_char == 'ui':
+                        val = struct.unpack(endian_ch + 'I', raw)[0]
+                        s = str(val)
+                    elif type_char == 'ul':
+                        val = struct.unpack(endian_ch + 'Q', raw)[0]
+                        s = str(val)
+                except Exception as e:
+                    s = f'(error: {e})'
+            else:
+                s='~~~~~~~~'
             lines_out.append(f"{pos:08X}: ({label_map[type_char]}) {s}")
             pos += size
             if pos > end and end != start:
@@ -2074,10 +2076,9 @@ class BiEditor:
             if len(lines_out) == 1:
                 print(lines_out[0], end='', flush=True)
             else:
+                self.term.locate(0,self.display.BOTTOMLN+1)
                 # 複数: 画面下に表示してキー待ち
-                self.term.locate(0, 0)
-                self.term.clraftcur()
-                self.term.color(6)
+                print("", flush=True)
                 for ln in lines_out:
                     print(ln)
                 self.term.color(4)
