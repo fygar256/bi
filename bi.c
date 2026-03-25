@@ -779,10 +779,6 @@ size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
     if (!search->regexp && search->smem.size == 0) return (size_t)-1;
     if (fp >= mem_len) {
         fp = mem_len - 1;
-        display_stdmm_wait(search->display, 
-            "Search reached TOP, wrap around to BOTTOM", 
-            search->editor->scriptingflag,
-            search->editor->verbose);
         wrapped=true;
     }
 
@@ -808,6 +804,11 @@ size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
         }
         
         if (curpos == 0) {
+            display_stdmm_wait(search->display, 
+                "Search reached TOP, wrap around to BOTTOM", 
+                search->editor->scriptingflag,
+                search->editor->verbose);
+            wrapped=true;
             curpos = mem_len > 0 ? mem_len - 1 : 0;
         } else {
             curpos--;
@@ -2538,9 +2539,11 @@ static void cmd_typed_display(BiEditor *editor,
         case 'f': size = 4;  label = "float32";  break;
         case 'd': size = 8;  label = "float64";  break;
         case 'Q': size = 16; label = "float128"; break;
-        case 'S': size = 2;  label = "uint16";   break;
-        case 'I': size = 4;  label = "uint32";   break;
-        case 'L': size = 8;  label = "uint64";   break;
+        /* 符号なし: type_char を負値で区別するため別途文字列引数が必要なので
+         * ここでは type_char に ASCII の 'S','I','L' を内部コードとして使う */
+        case 'S': size = 2;  label = "uint16";   break;  /* ?us */
+        case 'I': size = 4;  label = "uint32";   break;  /* ?ui */
+        case 'L': size = 8;  label = "uint64";   break;  /* ?ul */
         default:  return;
     }
 
@@ -2551,25 +2554,18 @@ static void cmd_typed_display(BiEditor *editor,
     if (multi && !editor->scriptingflag) {
         terminal_locate(&editor->term, 0, BOTTOMLN+1);
         terminal_color(&editor->term, 6, 0);
-        printf("\n");
     }
 
     uint64_t pos = start;
     while (pos <= end) {
         uint8_t raw[16] = {0};
-        bool    data_exists = true;
-
         for (int i = 0; i < size; i++) {
             size_t addr = (size_t)(pos + i);
-            if (addr < editor->memory.mem.size) {
-                raw[i] = editor->memory.mem.data[addr];
-            } else {
-                raw[i] = 0;
-                data_exists = false;   /* 一度でも範囲外なら全体を~~~~~~~~扱い */
-            }
+            raw[i] = addr < editor->memory.mem.size
+                   ? editor->memory.mem.data[addr] : 0;
         }
 
-        /* エンディアン変換 */
+        /* エンディアン変換 (ビッグエンディアン指定時はバイト反転) */
         if (g_big_endian) {
             uint8_t tmp[16];
             for (int i = 0; i < size; i++) tmp[i] = raw[size - 1 - i];
@@ -2577,82 +2573,79 @@ static void cmd_typed_display(BiEditor *editor,
         }
 
         char val_str[256];
-        if (!data_exists) {
-            snprintf(val_str, sizeof(val_str), "~~~~~~~~");
-        } else {
-            switch (type_char) {
-                case 's': {
-                    int16_t v; memcpy(&v, raw, 2);
-                    snprintf(val_str, sizeof(val_str), "%d", (int)v);
-                    break;
-                }
-                case 'i': {
-                    int32_t v; memcpy(&v, raw, 4);
-                    snprintf(val_str, sizeof(val_str), "%d", v);
-                    break;
-                }
-                case 'l': {
-                    int64_t v; memcpy(&v, raw, 8);
-                    snprintf(val_str, sizeof(val_str), "%lld", (long long)v);
-                    break;
-                }
-                case 'q': {
-                    uint64_t lo; int64_t hi;
-                    memcpy(&lo, raw,     8);
-                    memcpy(&hi, raw + 8, 8);
-                    if (hi == 0) {
-                        snprintf(val_str, sizeof(val_str), "%llu",
-                                 (unsigned long long)lo);
-                    } else if (hi == -1LL && (lo >> 63)) {
-                        uint64_t alo = ~lo + 1;
-                        int64_t  ahi = ~hi + (alo == 0 ? 1 : 0);
-                        snprintf(val_str, sizeof(val_str), "-%llu%018llu",
-                                 (unsigned long long)llabs(ahi),
-                                 (unsigned long long)alo);
-                    } else {
-                        snprintf(val_str, sizeof(val_str), "%lld * 2^64 + %llu",
-                                 (long long)hi, (unsigned long long)lo);
-                    }
-                    break;
-                }
-                case 'f': {
-                    float v; memcpy(&v, raw, 4);
-                    snprintf(val_str, sizeof(val_str), "%g", (double)v);
-                    break;
-                }
-                case 'd': {
-                    double v; memcpy(&v, raw, 8);
-                    snprintf(val_str, sizeof(val_str), "%.17g", v);
-                    break;
-                }
-                case 'Q': {
-                    long double v = 0.0L;
-                    size_t ld_size = sizeof(long double);
-                    memcpy(&v, raw, ld_size < 16 ? ld_size : 16);
-                    snprintf(val_str, sizeof(val_str), "%.21Lg", v);
-                    break;
-                }
-                case 'S': {
-                    uint16_t v; memcpy(&v, raw, 2);
-                    snprintf(val_str, sizeof(val_str), "%u", (unsigned)v);
-                    break;
-                }
-                case 'I': {
-                    uint32_t v; memcpy(&v, raw, 4);
-                    snprintf(val_str, sizeof(val_str), "%u", v);
-                    break;
-                }
-                case 'L': {
-                    uint64_t v; memcpy(&v, raw, 8);
-                    snprintf(val_str, sizeof(val_str), "%llu", (unsigned long long)v);
-                    break;
-                }
-                default:
-                    snprintf(val_str, sizeof(val_str), "(unknown)");
+        switch (type_char) {
+            case 's': {
+                int16_t v; memcpy(&v, raw, 2);
+                snprintf(val_str, sizeof(val_str), "%d", (int)v);
+                break;
             }
+            case 'i': {
+                int32_t v; memcpy(&v, raw, 4);
+                snprintf(val_str, sizeof(val_str), "%d", v);
+                break;
+            }
+            case 'l': {
+                int64_t v; memcpy(&v, raw, 8);
+                snprintf(val_str, sizeof(val_str), "%lld", (long long)v);
+                break;
+            }
+            case 'q': {
+                /* 128-bit: hi/lo 形式 */
+                uint64_t lo; int64_t hi;
+                memcpy(&lo, raw,     8);
+                memcpy(&hi, raw + 8, 8);
+                if (hi == 0) {
+                    snprintf(val_str, sizeof(val_str), "%llu",
+                             (unsigned long long)lo);
+                } else if (hi == -1LL && (lo >> 63)) {
+                    uint64_t alo = ~lo + 1;
+                    int64_t  ahi = ~hi + (alo == 0 ? 1 : 0);
+                    snprintf(val_str, sizeof(val_str), "-%llu%018llu",
+                             (unsigned long long)llabs(ahi),
+                             (unsigned long long)alo);
+                } else {
+                    snprintf(val_str, sizeof(val_str), "%lld * 2^64 + %llu",
+                             (long long)hi, (unsigned long long)lo);
+                }
+                break;
+            }
+            case 'f': {
+                float v; memcpy(&v, raw, 4);
+                snprintf(val_str, sizeof(val_str), "%g", (double)v);
+                break;
+            }
+            case 'd': {
+                double v; memcpy(&v, raw, 8);
+                snprintf(val_str, sizeof(val_str), "%.17g", v);
+                break;
+            }
+            case 'Q': {
+                long double v = 0.0L;
+                size_t ld_size = sizeof(long double);
+                memcpy(&v, raw, ld_size < 16 ? ld_size : 16);
+                snprintf(val_str, sizeof(val_str), "%.21Lg", v);
+                break;
+            }
+            case 'S': {
+                uint16_t v; memcpy(&v, raw, 2);
+                snprintf(val_str, sizeof(val_str), "%u", (unsigned)v);
+                break;
+            }
+            case 'I': {
+                uint32_t v; memcpy(&v, raw, 4);
+                snprintf(val_str, sizeof(val_str), "%u", v);
+                break;
+            }
+            case 'L': {
+                uint64_t v; memcpy(&v, raw, 8);
+                snprintf(val_str, sizeof(val_str), "%llu", (unsigned long long)v);
+                break;
+            }
+            default:
+                snprintf(val_str, sizeof(val_str), "(unknown)");
         }
 
-        char line_buf[4096];
+        char line_buf[512];
         snprintf(line_buf, sizeof(line_buf),
                  "%08llX: (%s) %s", (unsigned long long)pos, label, val_str);
 

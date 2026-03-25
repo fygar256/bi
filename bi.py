@@ -505,8 +505,6 @@ class SearchEngine:
             return None
         wrapped = False
         if fp < 0:
-            self.stdmm_wait("Search reached TOP, wrap around to BOTTOM.")
-            wrapped = True
             fp = mem_len - 1
         curpos = fp
         start = fp
@@ -528,6 +526,8 @@ class SearchEngine:
             
             curpos -= 1
             if curpos < 0:
+                self.stdmm_wait("Search reached TOP, wrap around to BOTTOM.")
+                wrapped = True
                 curpos = mem_len - 1
             
             if curpos == start:
