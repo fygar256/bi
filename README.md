@@ -8,7 +8,7 @@ It uses ANSI terminal escape sequences, so it is for ANSI terminals. It should w
 
 Development environment and operation verification was done on ArchLinux and FreeBSD. 
 
-If the terminal background color is white, use any string other than `black` for the -t option, or omit the option if it is black.
+Try the option `-t color` for multi color terminal.
 
 The bi is designed to be with high functionality, flexible, lightweight, simple, compact, user-friendly and smoothly responsive. bi can handle original script.
 
@@ -30,27 +30,8 @@ sudo cp bi.py /usr/local/bin/bi
 sudo cp bi.1.gz /usr/share/man/man1/
 sudo mandb
 ```
-## in go high speed version only on FreeBSD
 
-This is a fast version of 'bi', the Binary editor like vi, written in Go. It doesn't support Python calls such as eval() and exec(), but it runs much faster than the Python version, making it ideal for working with large files.
-
-The manual, commands, and operation methods are the same as those for the Python version of bi.
-
-The following explains how to initialize the Go directory:
-
-```
-go mod init bi
-go get golang.org/x/term
-```
-
-To build:
-
-```
-go build -o bi bi.go
-sudo cp bi /usr/local/bin
-```
-
-## in C best speed version
+## in C high speed version
 
 This is a version of 'bi', the Binary editor like vi, written in C. It doen't support Python calls such as eval() and exec(), but it runs much faster than Python version, making it ideal for working with large files.
 
@@ -59,16 +40,6 @@ Originally, bi was written in C in 1991, therefore I recreated bi recently in C 
 ```
 cc bi.c -o bi
 sudo cp bi /usr/local/bin
-```
-
-## in Ruby readable version
-
-This is a version of 'bi' for human to read in Ruby.
-
-#### installation
-```
-chmod +x bi.rb
-sudo cp bi.rb /usr/local/bin/bi
 ```
 
 ##### execution
