@@ -112,14 +112,28 @@ On command line mode
 
    <CR> without any command or <ESC>   ----- return to on-screen mode
 
-Option
-    -t {black|white|color} color black=white on black|white=black on white|color=multi color|none=terminal default color.
-    -s script.bi   scripting
-    -v             verbose when scripting
-    -o <offset>    partial edit beginning offset
-    -e <offset>    partial edit ending offset
-    -l <length>    partial edit length
-    -h             help
+usage: bi.py [-h] [options] <file> [options]
+
+Binary editor. Options can appear before or after <file>.
+
+positional arguments:
+  file                  file to edit
+
+options:
+  -h, --help            show this help message and exit
+  -s script.bi, --script script.bi
+                        bi script file
+  -t TERMCOLOR, --termcolor TERMCOLOR
+                        color scheme: 'black' (white on black), 'white' (black on white), 'color' (multi-color mode);
+                        omit to use terminal default
+  -v, --verbose         verbose when processing script
+  -w, --write           write file when exiting script
+  -o OFFSET, --offset OFFSET
+                        partial edit: start offset (hex)
+  -l LENGTH, --length LENGTH
+                        partial edit: length in bytes (hex)
+  -e END, --end END     partial edit: end offset inclusive (hex)
+
 Remarks
 
     Regular expression can be used for string search.
