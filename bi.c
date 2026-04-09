@@ -2952,13 +2952,15 @@ int editor_commandline(BiEditor *editor, const char *line) {
                     printf("%*s", 80, "");
                     fflush(stdout);
                 } else {
-                    // スクリプトモードではバイナリ表示のみ
-                    printf("b");
-                    for (int i = 63; i >= 0; i--) {
-                        if (i % 4 == 3 && i!=63) printf(" ");
-                        printf("%d", (int)((v >> i) & 1));
+                    // スクリプトモード
+                    if (editor->verbose) {
+                        printf("b");
+                        for (int i = 63; i >= 0; i--) {
+                            if (i % 4 == 3 && i!=63) printf(" ");
+                            printf("%d", (int)((v >> i) & 1));
+                        }
+                        printf("\n");
                     }
-                    printf("\n");
                 }
             }
         }
@@ -3833,6 +3835,9 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             display_stderr(&editor->display,
                 "Invalid range. Usage: start,end f start2",
                 editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+        if (editor->scriptingflag && !editor->verbose) {
             return -1;
         }
 

@@ -2399,7 +2399,8 @@ class BiEditor:
             if not xf or not xf2 or x > x2:
                 self.stderr("Invalid range. Usage: start,end f start2")
                 return -1
-
+            if self.scripting and not self.verbose:
+                return -1
             FCMP_SPAN = 10
             FCMP_MAXN = 8192
 
