@@ -3997,10 +3997,21 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         }
 
         /* ---- 表示: 8ペア/行, 白ベース・差異を赤 ---- */
-        printf("\x1b[0;36m");   /* シアン */
-        printf("  R1-offs R2-offs  Region1 (%-8zX)       |   Region2 (%-8zX)\n",
-               (size_t)x + g_partial.offset, (size_t)x3 + g_partial.offset);
-        printf("\x1b[0;37m");   /* 白 */
+        /* 絶対アドレスフォーマットヘルパー (負値対応, 12桁hex, buf は20バイト以上必要) */
+#define FMTADDR(buf, a) do { \
+    long long _fa = (long long)(a); \
+    if (_fa < 0) snprintf(buf, 20, "-%012llX", (unsigned long long)((-_fa) & 0xFFFFFFFFFFFFULL)); \
+    else         snprintf(buf, 20, "%012llX",  (unsigned long long)(  _fa  & 0xFFFFFFFFFFFFULL)); \
+} while(0)
+        long long addr1_base = (long long)(size_t)x  + (long long)g_partial.offset;
+        long long addr2_base = (long long)(size_t)x3 + (long long)g_partial.offset;
+        char _hbuf1[20], _hbuf2[20];
+        FMTADDR(_hbuf1, addr1_base);
+        FMTADDR(_hbuf2, addr2_base);
+        terminal_color(&editor->term,5,0);
+        printf("  R1-addr        Region1 (%s)     R2-addr        Region2 (%s)\n",
+               _hbuf1, _hbuf2);
+        terminal_color(&editor->term,7,0);
         fflush(stdout);
 
         bool any_diff = false;
@@ -4034,44 +4045,47 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                 if (align_a[k] != align_b[k] || oob_a[ki] != oob_b[ki])
                     { row_diff = true; any_diff = true; break; }
             }
-            (void)row_diff;
+            (void)row_diff; /* row_diff は末尾 * 表示で使用 */
 
-            /* オフセット表示: Region1 / Region2 それぞれの実バイト位置 */
-            printf("  +%05zX  +%05zX   ", row_off1, row_off2);
+            /* アドレス表示: Region1 / Region2 それぞれの実バイト絶対アドレス */
+            char _abuf1[20], _abuf2[20];
+            FMTADDR(_abuf1, addr1_base + (long long)row_off1);
+            FMTADDR(_abuf2, addr2_base + (long long)row_off2);
+            printf("  %s   ", _abuf1);
 
             /* Region1 */
             for (size_t k = rs; k < rs + 8; k++) {
                 if (k < re) {
                     size_t ki = k - rs;
                     bool diff = (align_a[k] != align_b[k] || oob_a[ki] != oob_b[ki]);
-                    if (diff)  printf("\x1b[1;31m");
+                    if (diff)  terminal_color(&editor->term,1,0);
                     if (align_a[k] < 0)  printf("-- ");
                     else if (oob_a[ki])  printf("~~ ");
                     else                 printf("%02X ", (uint8_t)align_a[k]);
-                    if (diff)  printf("\x1b[0;37m");
+                    if (diff)  terminal_color(&editor->term,7,0);
                 } else {
                     printf("   ");
                 }
             }
 
-            printf(" |   ");
+            printf("   %s   ", _abuf2);
 
             /* Region2 */
             for (size_t k = rs; k < rs + 8; k++) {
                 if (k < re) {
                     size_t ki = k - rs;
                     bool diff = (align_a[k] != align_b[k] || oob_a[ki] != oob_b[ki]);
-                    if (diff)  printf("\x1b[1;31m");
+                    if (diff)  terminal_color(&editor->term,1,0);
                     if (align_b[k] < 0)  printf("-- ");
                     else if (oob_b[ki])  printf("~~ ");
                     else                 printf("%02X ", (uint8_t)align_b[k]);
-                    if (diff)  printf("\x1b[0;37m");
+                    if (diff)  terminal_color(&editor->term,7,0);
                 } else {
                     printf("   ");
                 }
             }
 
-            printf("\n");
+            printf("%s\n", row_diff ? "  *" : "");
             fflush(stdout);
 
             /* この行で消費した実バイト数をオフセットに加算（ギャップは除く） */
@@ -4088,10 +4102,11 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         free(s1_buf); free(s2_buf);
 
         if (!editor->scriptingflag) {
-            printf("\x1b[0;32m");   /* 緑 */
+            terminal_color(&editor->term,4,0);
             char *msg=!any_diff?"  Identical. [ hit a key ]":"  Differences found. [ hit a key ]";
             printf("%s",msg);
             terminal_getch();
+            printf("\x1b[0m");   /* 色リセット */
             terminal_clear(&editor->term);
             display_repaint(&editor->display, editor->filemgr.filename);
         }
@@ -4475,6 +4490,20 @@ int editor_scripting(BiEditor *editor, const char *scriptfile) {
     return 0;
 }
 
+int print_usage(char *fn) {
+    fprintf(stderr, "Usage: %s [options] <file> [options]\n", fn);
+    fprintf(stderr, "  Options can appear before or after <file>.\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -s <script>  Execute script file\n");
+    fprintf(stderr, "  -t <color>   Color scheme: 'black' (white on black), 'white' (black on white), 'color' (multi-color); omit for terminal default\n");
+    fprintf(stderr, "  -v           Verbose mode (show commands when scripting)\n");
+    fprintf(stderr, "  -w           Write file when exiting script\n");
+    fprintf(stderr, "  -o <offset>  Partial edit: start offset (hex)\n");
+    fprintf(stderr, "  -l <length>  Partial edit: length in bytes (hex)\n");
+    fprintf(stderr, "  -e <end>     Partial edit: end offset inclusive (hex)\n");
+    return 1;
+}
+
 /* ========================================================================
  * main関数
  * ======================================================================== */
@@ -4494,16 +4523,7 @@ int main(int argc, char *argv[]) {
     bool   partial_mode   = false;
     
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s [options] <file> [options]\n", argv[0]);
-        fprintf(stderr, "  Options can appear before or after <file>.\n");
-        fprintf(stderr, "Options:\n");
-        fprintf(stderr, "  -s <script>  Execute script file\n");
-        fprintf(stderr, "  -t <color>   Color scheme: 'black' (white on black), 'white' (black on white), 'color' (multi-color); omit for terminal default\n");
-        fprintf(stderr, "  -v           Verbose mode (show commands when scripting)\n");
-        fprintf(stderr, "  -w           Write file when exiting script\n");
-        fprintf(stderr, "  -o <offset>  Partial edit: start offset (hex)\n");
-        fprintf(stderr, "  -l <length>  Partial edit: length in bytes (hex)\n");
-        fprintf(stderr, "  -e <end>     Partial edit: end offset inclusive (hex)\n");
+        print_usage(argv[0]);
         return 1;
     }
 
@@ -4554,8 +4574,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (filename == NULL) {
-        fprintf(stderr, "Error: No filename specified.\n");
-        fprintf(stderr, "Usage: %s [options] <file> [options]\n", argv[0]);
+        print_usage(argv[0]);
         return 1;
     }
     

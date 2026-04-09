@@ -2514,8 +2514,14 @@ class BiEditor:
             np_ = len(align_a)
 
             # 表示: 8ペア/行
-            print(f"\x1b[0;36m  R1-offs R2-offs  Region1 ({int(x) + g_partial.offset:<8X})       |   Region2 ({int(x3) + g_partial.offset:<8X})")
-            print("\x1b[0;37m", end='', flush=True)
+            def _fmt_addr(a):
+                if a < 0:
+                    return f"-{(-a):012X}"
+                return f"{a:012X}"
+            addr1_base = int(x) + g_partial.offset
+            addr2_base = int(x3) + g_partial.offset
+            self.term.color(5)
+            print(f"  R1-addr        Region1 ({_fmt_addr(addr1_base)})     R2-addr        Region2 ({_fmt_addr(addr2_base)})")
 
             any_diff = False
             off1 = 0
@@ -2547,7 +2553,9 @@ class BiEditor:
                 row_off1 = off1
                 row_off2 = off2
 
-                print(f"  +{row_off1:05X}  +{row_off2:05X}   ", end='')
+                r1_abs = addr1_base + row_off1
+                r2_abs = addr2_base + row_off2
+                print(f"  {_fmt_addr(r1_abs)}   ", end='')
 
                 # Region1
                 for k in range(rs, rs + 8):
@@ -2555,7 +2563,7 @@ class BiEditor:
                         ki = k - rs
                         diff = (align_a[k] != align_b[k] or oob_a[ki] != oob_b[ki])
                         if diff:
-                            print("\x1b[1;31m", end='')
+                            self.term.color(1)
                         if align_a[k] < 0:
                             print("-- ", end='')
                         elif oob_a[ki]:
@@ -2563,11 +2571,11 @@ class BiEditor:
                         else:
                             print(f"{align_a[k]:02X} ", end='')
                         if diff:
-                            print("\x1b[0;37m", end='')
+                            self.term.color(7)
                     else:
                         print("   ", end='')
 
-                print(" |   ", end='')
+                print(f"   {_fmt_addr(r2_abs)}   ", end='')
 
                 # Region2
                 for k in range(rs, rs + 8):
@@ -2575,7 +2583,7 @@ class BiEditor:
                         ki = k - rs
                         diff = (align_a[k] != align_b[k] or oob_a[ki] != oob_b[ki])
                         if diff:
-                            print("\x1b[1;31m", end='')
+                            self.term.color(1)
                         if align_b[k] < 0:
                             print("-- ", end='')
                         elif oob_b[ki]:
@@ -2583,11 +2591,11 @@ class BiEditor:
                         else:
                             print(f"{align_b[k]:02X} ", end='')
                         if diff:
-                            print("\x1b[0;37m", end='')
+                            self.term.color(7)
                     else:
                         print("   ", end='')
 
-                print()
+                print("  *") if row_diff else print()
                 sys.stdout.flush()
 
                 for k in range(rs, re):
@@ -2601,7 +2609,7 @@ class BiEditor:
             print("\x1b[0m", end='', flush=True)
 
             if not self.scriptingflag:
-                print("\x1b[0;32m", end='')
+                self.term.color(4)
                 if not any_diff:
                     msg = "  Identical. [ hit a key ]"
                 else:
