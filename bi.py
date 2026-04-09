@@ -2522,7 +2522,7 @@ class BiEditor:
             addr1_base = int(x) + g_partial.offset
             addr2_base = int(x3) + g_partial.offset
             self.term.color(5)
-            print(f"  R1-addr        Region1 ({_fmt_addr(addr1_base)})     R2-addr        Region2 ({_fmt_addr(addr2_base)})")
+            print(f" R1-addr      Region1 ({_fmt_addr(addr1_base)})   R2-addr      Region2 ({_fmt_addr(addr2_base)})")
 
             any_diff = False
             off1 = 0
@@ -2556,7 +2556,7 @@ class BiEditor:
 
                 r1_abs = addr1_base + row_off1
                 r2_abs = addr2_base + row_off2
-                print(f"  {_fmt_addr(r1_abs)}   ", end='')
+                print(f" {_fmt_addr(r1_abs)} ", end='')
 
                 # Region1
                 for k in range(rs, rs + 8):
@@ -2576,7 +2576,7 @@ class BiEditor:
                     else:
                         print("   ", end='')
 
-                print(f"   {_fmt_addr(r2_abs)}   ", end='')
+                print(f" {_fmt_addr(r2_abs)} ", end='')
 
                 # Region2
                 for k in range(rs, rs + 8):
@@ -2596,7 +2596,7 @@ class BiEditor:
                     else:
                         print("   ", end='')
 
-                print("  *") if row_diff else print()
+                print("*") if row_diff else print()
                 sys.stdout.flush()
 
                 for k in range(rs, re):
