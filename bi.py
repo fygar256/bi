@@ -152,6 +152,16 @@ class Terminal:
     
     def clear(self):
         if self._scripting(): return
+        if self.termcol == 'color':
+            # coltab フルカラーモード
+            print("\033[40m", end='')
+        elif self.termcol == 'black':
+            # 黒地に白: fg=白(37), bg=黒(40) 固定
+            print("\033[40m", end='')
+        elif self.termcol == 'white':
+            # 白地に黒: fg=黒(30), bg=白(47) 固定
+            print(f"\033[47m", end='')
+
         print(f"{self.ESC}2J", end='', flush=True)
         self.locate()
     

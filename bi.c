@@ -393,6 +393,13 @@ void terminal_locate(Terminal *term, int x, int y) {
 
 void terminal_clear(Terminal *term) {
     if (terminal_scripting(term)) return;
+    if (strcmp(term->termcol, "black") == 0)
+        printf("\x1b[40m");
+    else if (strcmp(term->termcol, "white") == 0)
+        printf("\x1b[47m");
+    else if (strcmp(term->termcol, "color") == 0)
+        printf("\x1b[40m");
+
     printf("\x1b[2J");
     fflush(stdout);
     terminal_locate(term, 0, 0);
@@ -415,8 +422,8 @@ void terminal_color(Terminal *term, int col1, int col2) {
     } else if (strcmp(term->termcol, "white") == 0) {
         /* 白地に黒: fg=黒(30), bg=白(47) 固定 */
         printf("\x1b[30m\x1b[47m");
-    }
-    /* else: 指定なし → カラーエスケープを出力しない（端末本来の色を維持） */
+    } else {}
+        /* else: 指定なし → カラーエスケープを出力しない（端末本来の色を維持） */
     fflush(stdout);
 }
 
