@@ -1926,6 +1926,7 @@ class BiEditor:
         # 特殊コマンド
         elif line[0] == '@':
             self.call_exec(line)
+            self.display.jump(cp)
             return -1
         elif line[0] == '!':
             if len(line) >= 2:
