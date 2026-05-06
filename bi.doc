@@ -98,7 +98,6 @@ On command line mode
    [start,end]>[[times],[01]]  - right shift with bit 0,1 or rotate by byte
    [start,end]<<[[times],[01]] - left shift with bit 0,1 or rotate by multibyte
    [start,end]>>[[times],[01]] - right shift with bit 0,1 or rotate by multibyte
-   <start>,<end>w<filename> ---- write data on file
 
    [start,end]?s            ----- display in int16
    [start,end]?i            ----- display in int32
