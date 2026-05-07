@@ -107,7 +107,8 @@ class Terminal:
     
     def __init__(self, termcol='', get_scripting=None):
         self.termcol = termcol
-        self.coltab = [0, 1, 4, 5, 2, 6, 3, 7]
+        self.coltab = [30, 91, 94, 95, 92, 96, 93, 97]
+        self.bcoltab = [40, 101, 104, 105, 102, 106, 103, 107]
         # () -> bool を返すコールバック。True のときエスケープシーケンスを抑制する
         self.get_scripting = get_scripting
     
@@ -177,7 +178,7 @@ class Terminal:
         if self._scripting(): return
         if self.termcol == 'color':
             # coltab フルカラーモード（UI要素ごとに色が変わる・従来の挙動）
-            print(f"{self.ESC}3{self.coltab[col1]}m{self.ESC}4{self.coltab[col2]}m", end='', flush=True)
+            print(f"{self.ESC}1;{self.coltab[col1]};{self.bcoltab[col2]}m", end='', flush=True)
         elif self.termcol == 'black':
             # 黒地に白: fg=白(37), bg=黒(40) 固定
             print(f"{self.ESC}37m{self.ESC}40m", end='', flush=True)
@@ -2410,7 +2411,7 @@ class BiEditor:
             if not xf or not xf2 or x > x2:
                 self.stderr("Invalid range. Usage: start,end f start2")
                 return -1
-            if self.scripting and not self.verbose:
+            if self.scriptingflag and not self.verbose:
                 return -1
             FCMP_SPAN = 10
             FCMP_MAXN = 8192

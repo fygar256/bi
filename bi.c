@@ -364,8 +364,10 @@ static void apply_diff_forward(MemoryBuffer *mem, DiffLog *log) {
 void terminal_init(Terminal *term, const char *termcol, BiEditor *editor) {
     strncpy(term->termcol, termcol, sizeof(term->termcol) - 1);
     term->termcol[sizeof(term->termcol) - 1] = '\0';
-    int coltab[] = {0, 1, 4, 5, 2, 6, 3, 7};
+    int coltab[] = {30, 91, 94, 95, 92, 96, 93, 97};
+    int bcoltab[] = {40, 101, 104, 105, 102, 106, 103, 107};
     memcpy(term->coltab, coltab, sizeof(coltab));
+    memcpy(term->bcoltab, bcoltab, sizeof(bcoltab));
     term->editor = editor;
 }
 
@@ -415,7 +417,7 @@ void terminal_color(Terminal *term, int col1, int col2) {
     if (terminal_scripting(term)) return;
     if (strcmp(term->termcol, "color") == 0) {
         /* coltab フルカラーモード（UI要素ごとに色が変わる・従来の挙動） */
-        printf("\x1b[3%dm\x1b[4%dm", term->coltab[col1], term->coltab[col2]);
+        printf("\x1b[1;%d;%dm", term->coltab[col1], term->bcoltab[col2]);
     } else if (strcmp(term->termcol, "black") == 0) {
         /* 黒地に白: fg=白(37), bg=黒(40) 固定 */
         printf("\x1b[37m\x1b[40m");

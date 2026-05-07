@@ -136,6 +136,7 @@ void diffstack_free(DiffStack *stack);
 typedef struct {
     char      termcol[32];
     int       coltab[8];
+    int       bcoltab[8];
     BiEditor *editor;
 } Terminal;
 
