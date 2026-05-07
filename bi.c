@@ -413,6 +413,18 @@ void terminal_clrline(Terminal *term) {
     fflush(stdout);
 }
 
+void terminal_rev(Terminal *term) {
+    if (terminal_scripting(term)) return;
+    printf("\x1b[7m");
+    fflush(stdout);
+}
+
+void terminal_revreset(Terminal *term) {
+    if (terminal_scripting(term)) return;
+    printf("\x1b[27m");
+    fflush(stdout);
+}
+
 void terminal_color(Terminal *term, int col1, int col2) {
     if (terminal_scripting(term)) return;
     if (strcmp(term->termcol, "color") == 0) {
@@ -4068,15 +4080,16 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             printf(" %s ", _abuf1);
 
             /* Region1 */
+            terminal_color(&editor->term,7,0);
             for (size_t k = rs; k < rs + 8; k++) {
                 if (k < re) {
                     size_t ki = k - rs;
                     bool diff = (align_a[k] != align_b[k] || oob_a[ki] != oob_b[ki]);
-                    if (diff)  terminal_color(&editor->term,1,0);
-                    if (align_a[k] < 0)  printf("-- ");
+                    if (diff)  terminal_rev(&editor->term);
+                    if (align_a[k] < 0)  printf("~~ ");
                     else if (oob_a[ki])  printf("~~ ");
                     else                 printf("%02X ", (uint8_t)align_a[k]);
-                    if (diff)  terminal_color(&editor->term,7,0);
+                    if (diff)  terminal_revreset(&editor->term);
                 } else {
                     printf("   ");
                 }
@@ -4085,15 +4098,16 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             printf(" %s ", _abuf2);
 
             /* Region2 */
+            terminal_color(&editor->term,7,0);
             for (size_t k = rs; k < rs + 8; k++) {
                 if (k < re) {
                     size_t ki = k - rs;
                     bool diff = (align_a[k] != align_b[k] || oob_a[ki] != oob_b[ki]);
-                    if (diff)  terminal_color(&editor->term,1,0);
-                    if (align_b[k] < 0)  printf("-- ");
+                    if (diff)  terminal_rev(&editor->term);
+                    if (align_b[k] < 0)  printf("~~ ");
                     else if (oob_b[ki])  printf("~~ ");
                     else                 printf("%02X ", (uint8_t)align_b[k]);
-                    if (diff)  terminal_color(&editor->term,7,0);
+                    if (diff)  terminal_revreset(&editor->term);
                 } else {
                     printf("   ");
                 }

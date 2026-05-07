@@ -174,6 +174,15 @@ class Terminal:
         if self._scripting(): return
         print(f"{self.ESC}2K", end='', flush=True)
     
+    def rev(self):
+        if self._scripting(): return
+        print(f"{self.ESC}7m",end='',flush=True)
+
+    def revreset(self):
+        if self._scripting(): return
+        print(f"{self.ESC}27m",end='',flush=True)
+
+
     def color(self, col1=7, col2=0):
         if self._scripting(): return
         if self.termcol == 'color':
@@ -2576,15 +2585,15 @@ class BiEditor:
                         ki = k - rs
                         diff = (align_a[k] != align_b[k] or oob_a[ki] != oob_b[ki])
                         if diff:
-                            self.term.color(1)
+                            self.term.rev()
                         if align_a[k] < 0:
-                            print("-- ", end='')
+                            print("~~ ", end='')
                         elif oob_a[ki]:
                             print("~~ ", end='')
                         else:
                             print(f"{align_a[k]:02X} ", end='')
                         if diff:
-                            self.term.color(7)
+                            self.term.revreset()
                     else:
                         print("   ", end='')
 
@@ -2596,15 +2605,15 @@ class BiEditor:
                         ki = k - rs
                         diff = (align_a[k] != align_b[k] or oob_a[ki] != oob_b[ki])
                         if diff:
-                            self.term.color(1)
+                            self.term.rev()
                         if align_b[k] < 0:
-                            print("-- ", end='')
+                            print("~~ ", end='')
                         elif oob_b[ki]:
                             print("~~ ", end='')
                         else:
                             print(f"{align_b[k]:02X} ", end='')
                         if diff:
-                            self.term.color(7)
+                            self.term.revreset()
                     else:
                         print("   ", end='')
 
