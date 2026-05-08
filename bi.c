@@ -4034,7 +4034,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         char _hbuf1[20], _hbuf2[20];
         FMTADDR(_hbuf1, addr1_base);
         FMTADDR(_hbuf2, addr2_base);
-        terminal_color(&editor->term,5,0);
+        terminal_color(&editor->term,4,0);
         printf(" R1-addr      Region1 (%s)   R2-addr      Region2 (%s)\n",
                _hbuf1, _hbuf2);
         terminal_color(&editor->term,7,0);
@@ -4077,6 +4077,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             char _abuf1[20], _abuf2[20];
             FMTADDR(_abuf1, addr1_base + (long long)row_off1);
             FMTADDR(_abuf2, addr2_base + (long long)row_off2);
+            terminal_color(&editor->term,5,0);
             printf(" %s ", _abuf1);
 
             /* Region1 */
@@ -4095,6 +4096,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                 }
             }
 
+            terminal_color(&editor->term,5,0);
             printf(" %s ", _abuf2);
 
             /* Region2 */

@@ -2542,7 +2542,7 @@ class BiEditor:
                 return f"{a:012X}"
             addr1_base = int(x) + g_partial.offset
             addr2_base = int(x3) + g_partial.offset
-            self.term.color(5)
+            self.term.color(4)
             print(f" R1-addr      Region1 ({_fmt_addr(addr1_base)})   R2-addr      Region2 ({_fmt_addr(addr2_base)})")
 
             any_diff = False
@@ -2577,7 +2577,9 @@ class BiEditor:
 
                 r1_abs = addr1_base + row_off1
                 r2_abs = addr2_base + row_off2
+                self.term.color(5)
                 print(f" {_fmt_addr(r1_abs)} ", end='')
+                self.term.color(7)
 
                 # Region1
                 for k in range(rs, rs + 8):
@@ -2597,7 +2599,9 @@ class BiEditor:
                     else:
                         print("   ", end='')
 
+                self.term.color(5)
                 print(f" {_fmt_addr(r2_abs)} ", end='')
+                self.term.color(7)
 
                 # Region2
                 for k in range(rs, rs + 8):
