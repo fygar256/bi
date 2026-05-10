@@ -2586,7 +2586,7 @@ class BiEditor:
                     if k < re:
                         ki = k - rs
                         diff = (align_a[k] != align_b[k] or oob_a[ki] != oob_b[ki])
-                        if diff:
+                        if not diff:
                             self.term.rev()
                         if align_a[k] < 0:
                             print("~~ ", end='')
@@ -2594,7 +2594,7 @@ class BiEditor:
                             print("~~ ", end='')
                         else:
                             print(f"{align_a[k]:02X} ", end='')
-                        if diff:
+                        if not diff:
                             self.term.revreset()
                     else:
                         print("   ", end='')
@@ -2608,7 +2608,7 @@ class BiEditor:
                     if k < re:
                         ki = k - rs
                         diff = (align_a[k] != align_b[k] or oob_a[ki] != oob_b[ki])
-                        if diff:
+                        if not diff:
                             self.term.rev()
                         if align_b[k] < 0:
                             print("~~ ", end='')
@@ -2616,7 +2616,7 @@ class BiEditor:
                             print("~~ ", end='')
                         else:
                             print(f"{align_b[k]:02X} ", end='')
-                        if diff:
+                        if not diff:
                             self.term.revreset()
                     else:
                         print("   ", end='')

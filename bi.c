@@ -4110,11 +4110,11 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                 if (k < re) {
                     size_t ki = k - rs;
                     bool diff = (align_a[k] != align_b[k] || oob_a[ki] != oob_b[ki]);
-                    if (diff)  terminal_rev(&editor->term);
+                    if (!diff)  terminal_rev(&editor->term);
                     if (align_a[k] < 0)  printf("~~ ");
                     else if (oob_a[ki])  printf("~~ ");
                     else                 printf("%02X ", (uint8_t)align_a[k]);
-                    if (diff)  terminal_revreset(&editor->term);
+                    if (!diff)  terminal_revreset(&editor->term);
                 } else {
                     printf("   ");
                 }
@@ -4129,11 +4129,11 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                 if (k < re) {
                     size_t ki = k - rs;
                     bool diff = (align_a[k] != align_b[k] || oob_a[ki] != oob_b[ki]);
-                    if (diff)  terminal_rev(&editor->term);
+                    if (!diff)  terminal_rev(&editor->term);
                     if (align_b[k] < 0)  printf("~~ ");
                     else if (oob_b[ki])  printf("~~ ");
                     else                 printf("%02X ", (uint8_t)align_b[k]);
-                    if (diff)  terminal_revreset(&editor->term);
+                    if (!diff)  terminal_revreset(&editor->term);
                 } else {
                     printf("   ");
                 }
