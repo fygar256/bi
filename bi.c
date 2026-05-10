@@ -2087,7 +2087,29 @@ bool editor_redo(BiEditor *editor) {
 }
 
 
-
+void disp_curpos(BiEditor *editor) {
+    if (!editor->scriptingflag) {
+        terminal_locate(&editor->term, editor->display.curx/2*3+12,editor->display.cury+3);
+        terminal_color(&editor->term, 4, 0);
+        printf("[");
+        terminal_locate(&editor->term, editor->display.curx/2*3+15,editor->display.cury+3);
+        printf("]");
+        terminal_color(&editor->term, 7, 0);
+        terminal_locate(&editor->term, 0,BOTTOMLN);
+    }
+}
+    
+void erase_curpos(BiEditor *editor) {
+    if (!editor->scriptingflag) {
+        terminal_locate(&editor->term, editor->display.curx/2*3+12,editor->display.cury+3);
+        terminal_color(&editor->term, 4, 0);
+        printf(" ");
+        terminal_locate(&editor->term, editor->display.curx/2*3+15,editor->display.cury+3);
+        printf(" ");
+        terminal_locate(&editor->term, 0,BOTTOMLN);
+    }
+}
+    
 /* ========================================================================
  * Editor fedit - フルスクリーンエディタモード
  * ======================================================================== */
@@ -2509,11 +2531,13 @@ void editor_fedit(BiEditor *editor) {
         } else if (ch == ':') {
             // コマンドモード
             size_t before_len = editor->memory.mem.size;
+            disp_curpos(editor);
             char *line = history_getln(&editor->history, ":", "command");
             int f = editor_commandline(editor, line);
             if (editor->memory.mem.size != before_len) {
                 matcharray_clear(&editor->display.highlight_ranges);
             }
+            erase_curpos(editor);
             if (f == 1) return;
             else if (f == 0) return;
         }
