@@ -187,7 +187,7 @@ class Terminal:
         if self._scripting(): return
         if self.termcol == 'color':
             # coltab フルカラーモード（UI要素ごとに色が変わる・従来の挙動）
-            print(f"{self.ESC}1;{self.coltab[col1]};{self.bcoltab[col2]}m", end='', flush=True)
+            print(f"{self.ESC}{self.coltab[col1]};{self.bcoltab[col2]}m", end='', flush=True)
         elif self.termcol == 'black':
             # 黒地に白: fg=白(37), bg=黒(40) 固定
             print(f"{self.ESC}37m{self.ESC}40m", end='', flush=True)

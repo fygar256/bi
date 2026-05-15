@@ -429,7 +429,7 @@ void terminal_color(Terminal *term, int col1, int col2) {
     if (terminal_scripting(term)) return;
     if (strcmp(term->termcol, "color") == 0) {
         /* coltab フルカラーモード（UI要素ごとに色が変わる・従来の挙動） */
-        printf("\x1b[1;%d;%dm", term->coltab[col1], term->bcoltab[col2]);
+        printf("\x1b[%d;%dm", term->coltab[col1], term->bcoltab[col2]);
     } else if (strcmp(term->termcol, "black") == 0) {
         /* 黒地に白: fg=白(37), bg=黒(40) 固定 */
         printf("\x1b[37m\x1b[40m");
