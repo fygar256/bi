@@ -2727,7 +2727,9 @@ static void cmd_typed_display(BiEditor *editor,
 
 int editor_commandline(BiEditor *editor, const char *line) {
     editor->cp = display_fpos(&editor->display);
-    const char *parsed_line = parser_comment(line);
+    /* '@'コマンド(Python exec)行はコメント除去をしない。
+     * 文字列リテラル内の '#' がコメントと誤認識されるのを防ぐため。 */
+    const char *parsed_line = (line[0] == '@') ? line : parser_comment(line);
     
     if (parsed_line[0] == '\0') return -1;
 

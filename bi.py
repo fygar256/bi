@@ -1777,7 +1777,12 @@ class BiEditor:
         global mem, cp
         mem = self.memory.mem
         cp  = self.cp
-        line = self.parser.comment(line)
+        if line.startswith('@'):
+            # '@'コマンド(Python exec)行はコメント除去をしない。
+            # 文字列リテラル内の '#' がコメントと誤認識されるのを防ぐため。
+            pass
+        else:
+            line = self.parser.comment(line)
         if line == '':
             return -1
         
