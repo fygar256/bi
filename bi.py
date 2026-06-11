@@ -992,10 +992,20 @@ class FileManager:
     def readfile(self, fn):
         try:
             f = open(fn, "rb")
-        except:
+        except FileNotFoundError:
+            # 存在しないファイルのみ「新規ファイル」として空バッファで開く。
             self.newfile = True
             self.memory.mem = []
             return True, "<new file>"
+        except IsADirectoryError:
+            # ディレクトリを誤って指定した場合は明確に拒否する。
+            # (空バッファ化して保存すると元データ破壊につながるため)
+            return False, f"Cannot open '{fn}': is a directory."
+        except PermissionError:
+            return False, f"Cannot open '{fn}': permission denied."
+        except OSError as e:
+            # その他の I/O エラーも新規ファイル扱いにせず原因を報告する。
+            return False, f"Cannot open '{fn}': {e.strerror or e}."
         else:
             self.newfile = False
             try:
@@ -1005,6 +1015,11 @@ class FileManager:
             except MemoryError:
                 f.close()
                 return False, "Memory overflow."
+            except OSError as e:
+                # 読み込み中の I/O エラーも握り潰さず報告する。
+                try: f.close()
+                except OSError: pass
+                return False, f"Read error on '{fn}': {e.strerror or e}."
     
     def writefile(self, fn):
         self.memory.regulate_mem()
@@ -1034,13 +1049,20 @@ class FileManager:
         global g_partial
         try:
             f = open(fn, "rb")
-        except OSError:
+        except FileNotFoundError:
+            # 存在しないファイルのみ新規パーシャルファイルとして開く。
             self.newfile = True
             self.memory.mem = []
             g_partial.active = True
             g_partial.offset = offset
             g_partial.length = 0
             return True, "<new file>"
+        except IsADirectoryError:
+            return False, f"Cannot open '{fn}': is a directory."
+        except PermissionError:
+            return False, f"Cannot open '{fn}': permission denied."
+        except OSError as e:
+            return False, f"Cannot open '{fn}': {e.strerror or e}."
         try:
             fsize = f.seek(0, 2)
         except OSError:
@@ -1414,6 +1436,18 @@ class BiEditor:
         mem = self.memory.mem
         cp  = self.cp
 
+        # @exec はバッファ(mem)を任意に書き換えられるが、通常コマンドと違い
+        # MemoryBuffer.setmem() を経由しないため差分ログに乗らない。
+        # そこで exec 実行前のバッファ全体をスナップショットしておき、
+        # 実行後に旧バッファと比較して差分を undo_stack に積む。
+        # (対話モードのみ。scripting 中は既存仕様どおり undo を取らない)
+        undo_enabled = not self.scriptingflag
+        if undo_enabled:
+            buf_before = list(self.memory.mem)
+            mark_before = list(self.memory.mark)
+            meta_before = (self.memory.modified, self.memory.lastchange)
+            cursor_before = self.display.fpos()
+
         try:
             if self.scriptingflag:
                 exec(line, globals())
@@ -1436,6 +1470,56 @@ class BiEditor:
         self.memory.mem = mem
         self.memory.modified   = True
         self.memory.lastchange = True
+
+        # exec 前後でバッファが変化していれば差分を undo_stack に記録する。
+        if undo_enabled:
+            buf_after = list(self.memory.mem)
+            if buf_after != buf_before:
+                diff_log = self._build_exec_diff(buf_before, buf_after)
+                if diff_log:
+                    state = {
+                        'diff': diff_log,
+                        'mark_before': mark_before,
+                        'mark_after': list(self.memory.mark),
+                        'modified_before': meta_before[0],
+                        'lastchange_before': meta_before[1],
+                        'cursor_before': cursor_before,
+                        'cursor_after': self.display.fpos(),
+                    }
+                    self.undo_stack.append(state)
+                    if len(self.undo_stack) > self.max_undo_levels:
+                        self.undo_stack.pop(0)
+                    self.redo_stack = []
+
+    def _build_exec_diff(self, before, after):
+        """exec 前後のバッファを比較し、undo 用の差分リストを生成する。
+        共通の先頭・末尾を除いた中央の変化区間のみを ovw_region / ins / del
+        で表現する。_apply_diff_inverse / _apply_diff_forward と互換。
+        """
+        lb, la = len(before), len(after)
+        # 先頭の共通部分長
+        head = 0
+        while head < lb and head < la and before[head] == after[head]:
+            head += 1
+        # 末尾の共通部分長 (head と重ならない範囲で)
+        tail = 0
+        while (tail < lb - head and tail < la - head and
+               before[lb - 1 - tail] == after[la - 1 - tail]):
+            tail += 1
+        old_mid = before[head:lb - tail]
+        new_mid = after[head:la - tail]
+        diff = []
+        if len(old_mid) == len(new_mid):
+            # 長さ不変: 領域上書き1エントリで表現
+            # ('ovw_region', start, old_region, new_region, orig_len)
+            diff.append(('ovw_region', head, old_mid, new_mid, lb))
+        else:
+            # 長さ変化: 旧中央を削除してから新中央を挿入する2エントリ
+            if old_mid:
+                diff.append(('del', head, old_mid))
+            if new_mid:
+                diff.append(('ins', head, new_mid))
+        return diff
 
     def fedit(self):
         """フルスクリーンエディタモード"""
