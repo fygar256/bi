@@ -663,7 +663,8 @@ class Display:
                 m = [self.memory.readmem(a), self.memory.readmem(a + 1)]
                 try:
                     ch = bytes(m).decode('utf-8')
-                    print(f"{ch}", end='', flush=True)
+                    # 2バイト=2桁ぶんに揃えるため末尾空白1つ(3/4バイト分岐と同様の整列)
+                    print(f"{ch} ", end='', flush=True)
                     return 2
                 except:
                     print(".", end='')
@@ -760,7 +761,7 @@ class Display:
         s = '.'
         if a < 0x20:
             s = '^' + chr(a + ord('@'))
-        elif a >= 0x7e:
+        elif a > 0x7e:
             s = '.'
         else:
             s = "'" + chr(a) + "'"
@@ -773,9 +774,12 @@ class Display:
         self.term.locate(0, self.BOTTOMLN+1)
         if g_partial.active:
             self.term.color(6)
+            # g_partial.length は元の読込長(writefile_partial のtail算出に使う)なので変更せず、
+            # 表示は編集後の現在のバッファ長を見せる。
+            cur_len = len(self.memory.mem)
             print(
                 f" PARTIAL  file_offset:0x{g_partial.offset:012X}"
-                f"  length:0x{g_partial.length:X}({g_partial.length}) bytes   ",
+                f"  length:0x{cur_len:X}({cur_len}) bytes   ",
                 end='', flush=True
             )
     
@@ -1399,17 +1403,25 @@ class BiEditor:
         s = ' . '
         if v < 0x20:
             s = '^' + chr(v + ord('@')) + ' '
-        elif v >= 0x7e:
+        elif v > 0x7e:
             s = ' . '
         else:
             s = "'" + chr(v) + "'"
         
-        x = f"{v:016X}"
-        spaced_hex = ' '.join([x[i:i+4] for i in range(0, 16, 4)])
-        o = f"{v:024o}"
-        spaced_oct = ' '.join([o[i:i+4] for i in range(0, 24, 4)])
-        b = f"{v:064b}"
-        spaced_bin = ' '.join([b[i:i+4] for i in range(0, 64, 4)])
+        # 値のビット長に応じて桁幅を拡張し、64bit超の値が切り捨てられないようにする。
+        # 既定幅(hex16/oct24/bin64)を下限とし、グルーピング単位(4桁)に切り上げる。
+        def _w(need, default):
+            return max(default, ((need + 3) // 4) * 4)
+        bits = v.bit_length()
+        hexw = _w((bits + 3) // 4, 16)   # 必要16進桁数 = ceil(bits/4)
+        octw = _w((bits + 2) // 3, 24)   # 必要8進桁数  = ceil(bits/3)
+        binw = _w(bits, 64)
+        x = f"{v:0{hexw}X}"
+        spaced_hex = ' '.join([x[i:i+4] for i in range(0, hexw, 4)])
+        o = f"{v:0{octw}o}"
+        spaced_oct = ' '.join([o[i:i+4] for i in range(0, octw, 4)])
+        b = f"{v:0{binw}b}"
+        spaced_bin = ' '.join([b[i:i+4] for i in range(0, binw, 4)])
         
         msg = f"d{v:>10}  x{spaced_hex}  o{spaced_oct} {s}\nb{spaced_bin}"
         
@@ -1621,21 +1633,24 @@ class BiEditor:
                 self.display.curx = 30
                 continue
             elif ch == 'j':
-                self.dec_undo()
+                self.commit_undo()   # 入力途中のニブルを破棄せず undo 可能な形で確定
+                stroke = False
                 if self.display.cury < self.display.LENONSCR // 16 - 1:
                     self.display.cury += 1
                 else:
                     self.display.scrdown()
                 continue
             elif ch == 'k':
-                self.dec_undo()
+                self.commit_undo()   # 入力途中のニブルを破棄せず undo 可能な形で確定
+                stroke = False
                 if self.display.cury > 0:
                     self.display.cury -= 1
                 else:
                     self.display.scrup()
                 continue
             elif ch == 'h':
-                self.dec_undo()
+                self.commit_undo()   # 入力途中のニブルを破棄せず undo 可能な形で確定
+                stroke = False
                 if self.display.curx > 0:
                     self.display.curx -= 1
                 else:
@@ -1647,7 +1662,8 @@ class BiEditor:
                             self.display.scrup()
                 continue
             elif ch == 'l':
-                self.dec_undo()
+                self.commit_undo()   # 入力途中のニブルを破棄せず undo 可能な形で確定
+                stroke = False
                 self.display.inccurx()
                 continue
             
@@ -1744,7 +1760,7 @@ class BiEditor:
                     if not stroke:
                         self.commit_undo()  # 1バイト分の入力完了でコミット
                 else:
-                    if (self.display.curx & 1) == 0:  # 上位ニブルの入力時のみ記録開始
+                    if self.memory._diff_log is None:  # 記録中の差分が無ければ開始（移動でcurxが奇数のまま戻っても確実に再武装）
                         self.save_undo_state()
                     self.memory.setmem(addr, self.memory.readmem(addr) & mask | c << sh)
                     if (self.display.curx & 1) == 1:  # 下位ニブル完了でコミット
@@ -1796,6 +1812,14 @@ class BiEditor:
     def searchstr(self, s):
         """文字列検索 - 全てのマッチをハイライト"""
         if s != "":
+            # '/' 検索は正規表現として扱う。不正な正規表現を「Not found」と
+            # 取り違えないよう、ここでパターンを検証して明示的にエラー表示する。
+            # 不正時は検索状態を変更せず、直前の有効なパターンを保持する。
+            try:
+                re.compile(s)
+            except re.error as e:
+                self.stdmm(f"Invalid regular expression: {e}")
+                return False
             self.search.regexp = True
             self.search.remem = s
             
@@ -2127,7 +2151,7 @@ class BiEditor:
         lines_out = []
         pos = start
         while pos <= end:
-            if len(self.memory.mem)>pos+size:
+            if len(self.memory.mem)>=pos+size:
                 raw = bytes([self.memory.readmem(pos + i) for i in range(size)])
                 try:
                     if type_char == 's':
@@ -2925,6 +2949,14 @@ class BiEditor:
                 self.commit_undo()
                 return
             elif i <= end and f == 1:
+                # ゼロ幅正規表現マッチ (例: a* / x? が空文字列にマッチ) は
+                # 置換幅 0 のため delmem が no-op となり、検索位置も前進せず
+                # 無限ループ／暴走挿入に陥る。幅 0 のときは何もせず停止する。
+                if self.search.regexp and self.search.span == 0:
+                    self.display.jump(pos)
+                    self.commit_undo()
+                    self.stdmm(f"  {cnt} times replaced.")
+                    return
                 self.memory.delmem(i, i + self.search.span - 1, False, self.memory.yankmem)
                 self.memory.insmem(i, n)
                 pos = i + len(n)

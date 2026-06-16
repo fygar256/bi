@@ -939,7 +939,8 @@ int display_printchar(Display *disp, size_t a) {
                 if ((bytes[1] & 0xC0) == 0x80) {
                     // 妥当なUTF-8
                     char utf8str[3] = {bytes[0], bytes[1], 0};
-                    printf("%s", utf8str);
+                    /* [#7b修正] 2バイト=2桁ぶんに揃えるため末尾空白1つ(3/4バイト分岐と同様の整列) */
+                    printf("%s ", utf8str);
                     return 2;
                 }
             }
@@ -1103,7 +1104,7 @@ void display_printdata(Display *disp) {
     char s[4] = ".";
     if (a < 0x20) {
         snprintf(s, sizeof(s), "^%c", a + '@');
-    } else if (a >= 0x7E) {
+    } else if (a > 0x7E) {
         strcpy(s, ".");
     } else {
         snprintf(s, sizeof(s), "'%c'", a);
@@ -1123,8 +1124,11 @@ void display_printdata(Display *disp) {
     terminal_locate(disp->term, 0, BOTTOMLN+1);
     if (g_partial.active) {
         terminal_color(disp->term, 6, 0);
+        /* [#6修正] g_partial.length は元の読込長(writefile_partial のtail算出に使う)なので
+         * 変更せず、表示は編集後の現在のバッファ長を見せる。 */
+        size_t cur_len = disp->memory->mem.size;
         printf(" PARTIAL  file_offset:0x%012zX  length:0x%zX(%zu) bytes   ",
-               g_partial.offset, g_partial.length, g_partial.length);
+               g_partial.offset, cur_len, cur_len);
     } 
     
     fflush(stdout);
@@ -2111,6 +2115,25 @@ void erase_curpos(BiEditor *editor) {
 }
     
 /* ========================================================================
+ * [#4修正] '/' 検索の正規表現を事前検証する。
+ *   妥当なら true。不正なら false を返し errbuf に regerror メッセージを格納する。
+ *   これにより「正規表現が不正」を「Not found」と取り違えない。
+ *   search_hitre は別途キャッシュ済み regex を使うため、ここでの検証用コンパイルは
+ *   検索開始時の1回のみで、1バイト毎のコストにはならない。
+ * ======================================================================== */
+static bool editor_regex_valid(const char *pattern, char *errbuf, size_t errsz) {
+    regex_t re;
+    int rc = regcomp(&re, pattern, REG_EXTENDED);
+    if (rc != 0) {
+        if (errbuf && errsz) regerror(rc, &re, errbuf, errsz);
+        /* regcomp 失敗時は preg が未定義のため regfree しない */
+        return false;
+    }
+    regfree(&re);
+    return true;
+}
+
+/* ========================================================================
  * Editor fedit - フルスクリーンエディタモード
  * ======================================================================== */
 
@@ -2238,6 +2261,8 @@ void editor_fedit(BiEditor *editor) {
             editor->display.curx = 30;
             continue;
         } else if (ch == 'j') {
+            editor_commit_undo(editor);  /* [#2修正] 入力途中のニブルを破棄せず確定し、移動でバイト境界をリセット */
+            stroke = false;
             if (editor->display.cury < LENONSCR / 16 - 1) {
                 editor->display.cury++;
             } else {
@@ -2245,6 +2270,8 @@ void editor_fedit(BiEditor *editor) {
             }
             continue;
         } else if (ch == 'k') {
+            editor_commit_undo(editor);  /* [#2修正] 入力途中のニブルを破棄せず確定し、移動でバイト境界をリセット */
+            stroke = false;
             if (editor->display.cury > 0) {
                 editor->display.cury--;
             } else if (editor->display.homeaddr >= 16) {
@@ -2252,6 +2279,8 @@ void editor_fedit(BiEditor *editor) {
             }
             continue;
         } else if (ch == 'h') {
+            editor_commit_undo(editor);  /* [#2修正] 入力途中のニブルを破棄せず確定し、移動でバイト境界をリセット */
+            stroke = false;
             if (editor->display.curx > 0) {
                 editor->display.curx--;
             } else if (display_fpos(&editor->display) != 0) {
@@ -2264,6 +2293,8 @@ void editor_fedit(BiEditor *editor) {
             }
             continue;
         } else if (ch == 'l') {
+            editor_commit_undo(editor);  /* [#2修正] 入力途中のニブルを破棄せず確定し、移動でバイト境界をリセット */
+            stroke = false;
             if (editor->display.curx < 31) {
                 editor->display.curx++;
             } else {
@@ -2328,6 +2359,14 @@ void editor_fedit(BiEditor *editor) {
                     }
                     
                     if (pattern[0]) {
+                        char rerr_[128];
+                        if (!editor_regex_valid(pattern, rerr_, sizeof(rerr_))) {
+                            char emsg_[256];
+                            snprintf(emsg_, sizeof(emsg_),
+                                     "Invalid regular expression: %s", rerr_);
+                            display_stdmm(&editor->display, emsg_,
+                                          editor->scriptingflag, editor->verbose);
+                        } else {
                         strncpy(editor->search.remem, pattern, sizeof(editor->search.remem) - 1);
                         editor->search.remem[sizeof(editor->search.remem) - 1] = '\0';
                         editor->search.regexp = true;
@@ -2346,6 +2385,7 @@ void editor_fedit(BiEditor *editor) {
                             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                         } else {
                             display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
+                        }
                         }
                     }
                 }
@@ -2500,7 +2540,7 @@ void editor_fedit(BiEditor *editor) {
                 stroke = (editor->display.curx & 1) ? false : !stroke;
                 if (!stroke) editor_commit_undo(editor); /* 1バイト完了でコミット */
             } else {
-                if ((editor->display.curx & 1) == 0) {
+                if (!editor->diff_active) {   /* [#2修正] 記録中の差分が無ければ開始(移動でcurxが奇数のまま戻っても確実に再武装) */
                     editor_save_undo_state(editor);
                 }
                 memory_set(&editor->memory, addr, (memory_read(&editor->memory, addr) & mask) | (c << sh));
@@ -2971,7 +3011,7 @@ int editor_commandline(BiEditor *editor, const char *line) {
                 char s[4] = ".";
                 if (v < 0x20) {
                     snprintf(s, sizeof(s), "^%c", (char)(v + '@'));
-                } else if (v >= 0x7E) {
+                } else if (v > 0x7E) {
                     strcpy(s, ".");
                 } else {
                     snprintf(s, sizeof(s), "'%c'", (char)v);
@@ -3064,6 +3104,14 @@ int editor_commandline(BiEditor *editor, const char *line) {
             }
             
             if (pattern[0]) {
+                char rerr_[128];
+                if (!editor_regex_valid(pattern, rerr_, sizeof(rerr_))) {
+                    char emsg_[256];
+                    snprintf(emsg_, sizeof(emsg_),
+                             "Invalid regular expression: %s", rerr_);
+                    display_stdmm(&editor->display, emsg_,
+                                  editor->scriptingflag, editor->verbose);
+                } else {
                 strncpy(editor->search.remem, pattern, sizeof(editor->search.remem) - 1);
                 editor->search.remem[sizeof(editor->search.remem) - 1] = '\0';
                 editor->search.regexp = true;
@@ -3082,6 +3130,7 @@ int editor_commandline(BiEditor *editor, const char *line) {
                     display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                 } else {
                     display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
+                }
                 }
             } else {
                 // 構文エラー: 空の正規表現
@@ -4477,14 +4526,19 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
         size_t i = display_fpos(&editor->display);
         
         if (i <= end) {
+            /* [#1修正] ゼロ幅正規表現マッチ (例: a* / x? が空文字列にマッチ) は
+             * 置換幅 0 のため delete が no-op となり、検索位置も前進せず
+             * 無限ループ／全位置への暴走挿入に陥る。幅 0 のときは何もせず停止する。 */
+            if (editor->search.regexp && editor->search.span == 0) {
+                break;
+            }
             memory_delete(&editor->memory, i, i + editor->search.span - 1, false, memory_yank);
             if (replacement.size > 0) {
                 memory_insert(&editor->memory, i, replacement.data, replacement.size);
             }
-            /* [Bug4修正] replacement.size == 0（空文字列への置換）のとき
-             * pos = i のまま同一位置に再マッチして無限ループになる。
-             * 必ず1バイト以上前進させて同じ位置の再マッチを防ぐ。 */
-            pos = i + (replacement.size > 0 ? replacement.size : 1);
+            /* 非ゼロ幅マッチでは span(>0) バイト削除でバッファが必ず縮むため、
+             * pos = i + replacement.size で同一位置の再マッチ無限ループは起きない。 */
+            pos = i + replacement.size;
             cnt++;
             display_jump(&editor->display, pos);
         } else {
