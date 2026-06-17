@@ -898,14 +898,20 @@ class Parser:
     
     def expression(self, s, idx):
         x, idx = self.get_value(s, idx)
-        if len(s) > idx and x != self.UNKNOWN and s[idx] == '+':
+        # +/- を左から右へ連鎖評価する（単発のみだった旧実装の修正）。
+        # 右オペランドが解釈不能(UNKNOWN)なら、その演算子を適用せず停止する
+        # （末尾に演算子が残る "100+" 等で巨大値が混入するのを防ぐ）。
+        while len(s) > idx and x != self.UNKNOWN and s[idx] in '+-':
+            op = s[idx]
             y, idx = self.get_value(s, idx + 1)
-            x = x + y
-        elif len(s) > idx and x != self.UNKNOWN and s[idx] == '-':
-            y, idx = self.get_value(s, idx + 1)
-            x = x - y
-            if x < 0:
-                x = 0
+            if y == self.UNKNOWN:
+                break
+            if op == '+':
+                x = x + y
+            else:
+                x = x - y
+                if x < 0:
+                    x = 0
         return x, idx
     
     @staticmethod
