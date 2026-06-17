@@ -2444,6 +2444,9 @@ class BiEditor:
                 self.stderr("Invalid syntax.")
                 return -1
             
+            if length == Parser.UNKNOWN:
+                self.stderr("Invalid repeat count after '*'.")
+                return -1
             data = m * length
             if data:
                 self.save_undo_state()
