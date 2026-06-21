@@ -4837,7 +4837,10 @@ int main(int argc, char *argv[]) {
             g_cmdmode = false;
         }
 
-        if (write_on_exit && editor.memory.lastchange) {
+        /* -c 実行時は変更があれば自動で書き込む（-w 指定がなくても）。
+         * -s 単独の挙動は従来どおり（-w 指定時のみ書き込み）。 */
+        bool auto_write = write_on_exit || (command != NULL);
+        if (auto_write && editor.memory.lastchange) {
             char write_msg[256];
             if (partial_mode || g_partial.active) {
                 success = filemgr_writefile_partial(&editor.filemgr, filename,

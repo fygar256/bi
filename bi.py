@@ -3199,7 +3199,10 @@ def main():
                 editor.cmdmode = True
                 editor.commandline(args.command)
                 editor.cmdmode = False
-            if args.write and editor.memory.lastchange:
+            # -c 実行時は変更があれば自動で書き込む（-w 指定がなくても）。
+            # -s 単独の挙動は従来どおり（-w 指定時のみ書き込み）。
+            auto_write = args.write or (args.command is not None)
+            if auto_write and editor.memory.lastchange:
                 if g_partial.active:
                     ok, wmsg = editor.filemgr.writefile_partial(args.file)
                 else:
