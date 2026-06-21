@@ -85,6 +85,7 @@ On command line mode
    <start>,<end> C <dest>  ----- insert data to <dest> (data will be yanked)
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
    [start,end] v <dest>    ----- move data
+   [start,end] x           ----- dump data in hexadecimal
    [start,end] s /regexp/str            ----- replace regexp with str
    [start,end] s /regexp//xx xx xx ...  ----- replace regexp with data
    [start,end] s //xx xx xx .../str     ----- replace data1 with str
@@ -132,6 +133,7 @@ options:
   -l LENGTH, --length LENGTH
                         partial edit: length in bytes (hex)
   -e END, --end END     partial edit: end offset inclusive (hex)
+  -c COMMAND            execute single command and then exit.
 
 Remarks
 
@@ -274,6 +276,7 @@ w<file> commands.
 2026-03-01 version 3.4.5.13 partial edit functionaliti added.
 2026-03-04 version 3.5.1.0 data comparison added.
 2026-03-11 version 3.5.1.25 typed display functionality added.
+2026-06-21 version 3.5.1.81 added -c option and x command.
 --------------------
 
       I don't take any responsibility for the result of application of
