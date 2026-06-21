@@ -111,6 +111,9 @@ class Terminal:
         self.bcoltab = [40, 101, 104, 105, 102, 106, 103, 107]
         # () -> bool を返すコールバック。True のときエスケープシーケンスを抑制する
         self.get_scripting = get_scripting
+        # True のときスクリプト中でもカラー系エスケープのみ出力を許可する
+        # （f コマンドを -c で色付き出力するために使用）。
+        self.force_color = False
     
     def _scripting(self):
         return self.get_scripting is not None and self.get_scripting()
@@ -175,16 +178,16 @@ class Terminal:
         print(f"{self.ESC}2K", end='', flush=True)
     
     def rev(self):
-        if self._scripting(): return
+        if self._scripting() and not self.force_color: return
         print(f"{self.ESC}7m",end='',flush=True)
 
     def revreset(self):
-        if self._scripting(): return
+        if self._scripting() and not self.force_color: return
         print(f"{self.ESC}27m",end='',flush=True)
 
 
     def color(self, col1=7, col2=0):
-        if self._scripting(): return
+        if self._scripting() and not self.force_color: return
         if self.termcol == 'color':
             # coltab フルカラーモード（UI要素ごとに色が変わる・従来の挙動）
             print(f"{self.ESC}{self.coltab[col1]};{self.bcoltab[col2]}m", end='', flush=True)
@@ -197,12 +200,12 @@ class Terminal:
         # else: 指定なし → カラーエスケープを出力しない（端末本来の色を維持）
     
     def resetcolor(self):
-        if self._scripting(): return
+        if self._scripting() and not self.force_color: return
         print(f"{self.ESC}0m", end='')
 
     def highlight_color(self):
         """検索ヒット箇所のハイライト色 (緑地に明るいシアン・太字)"""
-        if self._scripting(): return
+        if self._scripting() and not self.force_color: return
         print(f"\x1b[1;96;44m", end='', flush=True)
     
     @staticmethod
@@ -2521,7 +2524,15 @@ class BiEditor:
                 return -1
             
             if ch == 'I' and xf2:
-                self.stderr("Invalid syntax.")
+                if len(m):
+                    self.save_undo_state()
+                    data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
+                    self.memory.insmem(x, data)
+                    self.commit_undo()
+                    self.stdmm(f"{len(data)} bytes inserted.")
+                    self.display.jump(x + len(data))
+                else:
+                    self.stderr("No data specified.")
                 return -1
             
             if length == Parser.UNKNOWN:
@@ -2738,6 +2749,8 @@ class BiEditor:
                 return f"{a:012X}"
             addr1_base = int(x) + g_partial.offset
             addr2_base = int(x3) + g_partial.offset
+            # -c (cmdmode) 実行時もカラーのエスケープシーケンスを出力する。
+            self.term.force_color = self.cmdmode
             self.term.color(4)
             print(f" R1-addr      Region1 ({_fmt_addr(addr1_base)})   R2-addr      Region2 ({_fmt_addr(addr2_base)})")
 
@@ -2828,15 +2841,19 @@ class BiEditor:
 
                 rs += 8
 
+            if not self.scriptingflag or self.cmdmode:
+                self.term.color(4)
+            if not any_diff:
+                msg = "  Identical."
+            else:
+                msg = "  Differences found."
+            print(msg,  flush=True)
             print("\x1b[0m", end='', flush=True)
+            self.term.force_color = False
 
             if not self.scriptingflag:
                 self.term.color(4)
-                if not any_diff:
-                    msg = "  Identical. [ hit a key ]"
-                else:
-                    msg = "  Differences found. [ hit a key ]"
-                print(msg, end='', flush=True)
+                print("[ Hit a key ]",end="",flush=True)
                 Terminal.getch()
                 self.term.clear()
                 self.display.repaint(self.filemgr.filename)

@@ -383,6 +383,7 @@ void terminal_init(Terminal *term, const char *termcol, BiEditor *editor) {
     memcpy(term->coltab, coltab, sizeof(coltab));
     memcpy(term->bcoltab, bcoltab, sizeof(bcoltab));
     term->editor = editor;
+    term->force_color = false;
 }
 
 bool terminal_scripting(Terminal *term) {
@@ -428,19 +429,19 @@ void terminal_clrline(Terminal *term) {
 }
 
 void terminal_rev(Terminal *term) {
-    if (terminal_scripting(term)) return;
+    if (terminal_scripting(term) && !term->force_color) return;
     printf("\x1b[7m");
     fflush(stdout);
 }
 
 void terminal_revreset(Terminal *term) {
-    if (terminal_scripting(term)) return;
+    if (terminal_scripting(term) && !term->force_color) return;
     printf("\x1b[27m");
     fflush(stdout);
 }
 
 void terminal_color(Terminal *term, int col1, int col2) {
-    if (terminal_scripting(term)) return;
+    if (terminal_scripting(term) && !term->force_color) return;
     if (strcmp(term->termcol, "color") == 0) {
         /* coltab フルカラーモード（UI要素ごとに色が変わる・従来の挙動） */
         printf("\x1b[%d;%dm", term->coltab[col1], term->bcoltab[col2]);
@@ -456,12 +457,12 @@ void terminal_color(Terminal *term, int col1, int col2) {
 }
 
 void terminal_resetcolor(Terminal *term) {
-    if (terminal_scripting(term)) return;
+    if (terminal_scripting(term) && !term->force_color) return;
     printf("\x1b[0m");
 }
 
 void terminal_highlight_color(Terminal *term) {
-    if (terminal_scripting(term)) return;
+    if (terminal_scripting(term) && !term->force_color) return;
     printf("\x1b[1;96;44m");
     fflush(stdout);
 }
@@ -4206,6 +4207,8 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         char _hbuf1[20], _hbuf2[20];
         FMTADDR(_hbuf1, addr1_base);
         FMTADDR(_hbuf2, addr2_base);
+        /* -c (g_cmdmode) 実行時もカラーのエスケープシーケンスを出力する。 */
+        editor->term.force_color = g_cmdmode;
         terminal_color(&editor->term,4,0);
         printf(" R1-addr      Region1 (%s)   R2-addr      Region2 (%s)\n",
                _hbuf1, _hbuf2);
@@ -4297,18 +4300,26 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             }
         }
 
-        printf("\x1b[0m");   /* 色リセット */
+        /*
+        printf("\x1b[0m");   // 色リセット
         fflush(stdout);
+        */
 
         free(align_a); free(align_b);
         free(s1_buf); free(s2_buf);
 
+        if ((!editor->scriptingflag)||g_cmdmode) {
+            terminal_color(&editor->term,4,0);
+        }
+        editor->term.force_color = false;
+        char *msg=!any_diff?"  Identical.":"  Differences found.";
+        printf("%s\n",msg);
+        fflush(stdout);
+        printf("\x1b[0m");   /* 色リセット */
         if (!editor->scriptingflag) {
             terminal_color(&editor->term,4,0);
-            char *msg=!any_diff?"  Identical. [ hit a key ]":"  Differences found. [ hit a key ]";
-            printf("%s",msg);
+            printf("[ Hit a key ]");
             terminal_getch();
-            printf("\x1b[0m");   /* 色リセット */
             terminal_clear(&editor->term);
             display_repaint(&editor->display, editor->filemgr.filename);
         }
