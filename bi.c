@@ -57,6 +57,10 @@ static PartialState g_partial = {false, 0, 0, 0, 0};
 /* エンディアン設定: false=リトルエンディアン(デフォルト), true=ビッグエンディアン */
 static bool g_big_endian = false;
 
+/* -c での単発コマンド実行中フラグ。
+ * true のとき x/?/f 等の表示系コマンドは -v 非依存で標準出力へ出す。 */
+static bool g_cmdmode = false;
+
 /* ========================================================================
  * readline代替実装（readlineライブラリがない環境用）
  * ======================================================================== */
@@ -2735,7 +2739,7 @@ static void cmd_typed_display(BiEditor *editor,
                  "%08llX: (%s) %s", (unsigned long long)pos, label, val_str);
 
         if (editor->scriptingflag) {
-            if (editor->verbose) printf("%s\n", line_buf);
+            if (editor->verbose || g_cmdmode) printf("%s\n", line_buf);
         } else if (multi) {
             printf("%s\n", line_buf);
             fflush(stdout);
@@ -2762,6 +2766,74 @@ static void cmd_typed_display(BiEditor *editor,
             terminal_getch();
             display_clrmm(&editor->display);
         }
+    }
+}
+
+/* ========================================================================
+ * 16進ダンプ表示ヘルパー: [start],[end] x
+ *   範囲 [x..x2] を 16バイト/行で「アドレス + 16進 + ASCII」表示する。
+ *   行頭は16バイト境界に丸めて桁を揃える。
+ *   - 対話モード      : 画面クリア後に表示し、キー入力で元画面へ復帰。
+ *   - スクリプト/-c   : -v 指定時のみ標準出力へプレーン出力（非verboseでは無出力）。
+ *   表示アドレスはファイル絶対値 (バッファ index + g_partial.offset)。
+ *   範囲省略時 (xf2 無し) は 1 バイトのみ対象。
+ * ======================================================================== */
+static void cmd_hexdump(BiEditor *editor,
+                        uint64_t x, uint64_t x2, bool xf, bool xf2)
+{
+    (void)xf;
+    /* スクリプト(-s)モードで非verbose時は無出力。-c コマンド実行時は出力する。 */
+    if (editor->scriptingflag && !editor->verbose && !g_cmdmode) return;
+
+    uint64_t start = x;
+    uint64_t end   = xf2 ? x2 : x;
+    if (end < start) { uint64_t t = start; start = end; end = t; }
+    size_t mem_len = editor->memory.mem.size;
+
+    if (!editor->scriptingflag) {
+        terminal_clear(&editor->term);
+        terminal_color(&editor->term, 6, 0);
+        terminal_locate(&editor->term, 0, 0);
+    }
+
+    uint64_t row = start - (start % 16);   /* 16バイト境界へ丸める */
+    while (row <= end) {
+        uint64_t file_addr = (row + (uint64_t)g_partial.offset) & 0xffffffffffffULL;
+        char hexpart[64];   /* "XX " * 16 + 8バイト目区切り + 終端 */
+        char ascpart[20];
+        size_t hp = 0, ap = 0;
+        for (int i = 0; i < 16; i++) {
+            uint64_t cur = row + (uint64_t)i;
+            if (i == 8) { hexpart[hp++] = ' '; }   /* 前半/後半の区切り */
+            if (cur < start || cur > end) {
+                hexpart[hp++] = ' '; hexpart[hp++] = ' '; hexpart[hp++] = ' ';
+                ascpart[ap++] = ' ';
+            } else if (cur >= mem_len) {
+                hexpart[hp++] = '~'; hexpart[hp++] = '~'; hexpart[hp++] = ' ';
+                ascpart[ap++] = '~';
+            } else {
+                uint8_t b = editor->memory.mem.data[cur];
+                char tmp[4];
+                snprintf(tmp, sizeof(tmp), "%02X ", b);
+                hexpart[hp++] = tmp[0]; hexpart[hp++] = tmp[1]; hexpart[hp++] = tmp[2];
+                ascpart[ap++] = (b >= 0x20 && b <= 0x7e) ? (char)b : '.';
+            }
+        }
+        hexpart[hp] = '\0';
+        ascpart[ap] = '\0';
+        printf("%012llX  %s %s\n",
+               (unsigned long long)file_addr, hexpart, ascpart);
+        row += 16;
+    }
+    fflush(stdout);
+
+    if (!editor->scriptingflag) {
+        terminal_color(&editor->term, 4, 0);
+        printf("[ hit a key ]");
+        fflush(stdout);
+        terminal_getch();
+        terminal_clear(&editor->term);
+        display_repaint(&editor->display, editor->filemgr.filename);
     }
 }
 
@@ -3358,6 +3430,12 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         }
     }
 
+    /* 16進ダンプ: [start],[end] x */
+    if (line[idx] == 'x') {
+        cmd_hexdump(editor, x, x2, xf, xf2);
+        return -1;
+    }
+
     // yank
     if (line[idx] == 'y') {
         idx++;
@@ -3933,7 +4011,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                 editor->scriptingflag, editor->verbose);
             return -1;
         }
-        if (editor->scriptingflag && !editor->verbose) {
+        if (editor->scriptingflag && !editor->verbose && !g_cmdmode) {
             return -1;
         }
 
@@ -4611,6 +4689,7 @@ int print_usage(char *fn) {
     fprintf(stderr, "  -o <offset>  Partial edit: start offset (hex)\n");
     fprintf(stderr, "  -l <length>  Partial edit: length in bytes (hex)\n");
     fprintf(stderr, "  -e <end>     Partial edit: end offset inclusive (hex)\n");
+    fprintf(stderr, "  -c <command> Execute a single bi command non-interactively, then exit\n");
     return 1;
 }
 
@@ -4625,6 +4704,7 @@ int main(int argc, char *argv[]) {
     // コマンドライン引数処理
     const char *filename = NULL;
     const char *scriptfile = NULL;
+    const char *command = NULL;   /* -c で指定された単発コマンド */
     const char *termcol = "";
     bool verbose = false;
     bool write_on_exit = false;
@@ -4661,6 +4741,8 @@ int main(int argc, char *argv[]) {
             end_offset_raw = (size_t)strtoull(argv[++i], NULL, 16);
             has_end_opt    = true;
             partial_mode   = true;
+        } else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
+            command = argv[++i];
         } else if (argv[i][0] != '-') {
             /* オプションでない引数 = ファイル名（最初の1つのみ採用） */
             if (filename == NULL) {
@@ -4694,11 +4776,12 @@ int main(int argc, char *argv[]) {
     editor.verbose = verbose;
     strncpy(editor.filemgr.filename, filename, sizeof(editor.filemgr.filename) - 1);
     
-    // 画面クリア（スクリプトモード以外）
-    if (!scriptfile) {
-        terminal_clear(&editor.term);
-    } else {
+    // 画面クリア（非対話モード以外）。-s スクリプト または -c コマンドは非対話。
+    bool noninteractive = (scriptfile != NULL) || (command != NULL);
+    if (noninteractive) {
         editor.scriptingflag = true;
+    } else {
+        terminal_clear(&editor.term);
     }
     
     // 起動時パーシャル範囲を保存（:rp コマンドで再ロードに使用）
@@ -4723,14 +4806,21 @@ int main(int argc, char *argv[]) {
         display_stdmm(&editor.display, msg, editor.scriptingflag, editor.verbose);
     }
     
-    // スクリプト実行またはインタラクティブモード
-    if (scriptfile) {
-        int result = editor_scripting(&editor, scriptfile);
-        
-        if (!editor.memory.lastchange) {
-            printf("Nothing done.\n");
+    // スクリプト/コマンド実行、またはインタラクティブモード
+    if (noninteractive) {
+        int result = 0;
+        if (scriptfile) {
+            result = editor_scripting(&editor, scriptfile);
+            if (!editor.memory.lastchange) {
+                printf("Nothing done.\n");
+            }
         }
-        
+        if (command) {
+            g_cmdmode = true;
+            editor_commandline(&editor, command);
+            g_cmdmode = false;
+        }
+
         if (write_on_exit && editor.memory.lastchange) {
             char write_msg[256];
             if (partial_mode || g_partial.active) {
@@ -4744,7 +4834,7 @@ int main(int argc, char *argv[]) {
                 printf("%s\n", write_msg);
             }
         }
-        
+
         editor_free(&editor);
         return result;
     } else {

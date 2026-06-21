@@ -1174,6 +1174,9 @@ class BiEditor:
     def __init__(self, termcol=''):
         self.scriptingflag = False
         self.verbose = False
+        # -c での単発コマンド実行中フラグ。
+        # True のとき x/?/f 等の表示系コマンドは -v 非依存で標準出力へ出す。
+        self.cmdmode = False
         self.term = Terminal(termcol, get_scripting=lambda: self.scriptingflag)
         self.memory = MemoryBuffer()
         self.display = Display(self.term, self.memory)
@@ -2206,7 +2209,7 @@ class BiEditor:
         output = '\n'.join(lines_out)
 
         if self.scriptingflag:
-            if self.verbose:
+            if self.verbose or self.cmdmode:
                 print(output)
         else:
             self.display.clrmm()
@@ -2231,6 +2234,65 @@ class BiEditor:
             print(" " * 80, end='', flush=True)
         return -1
 
+    def cmd_hexdump(self, x, x2, xf, xf2):
+        """16進ダンプ表示コマンド: [start],[end] x
+
+        範囲 [x..x2] を 16バイト/行で「アドレス + 16進 + ASCII」表示する。
+        行頭は 16 バイト境界に丸めて桁を揃える。
+        - 対話モード      : 画面をクリアして表示し、キー入力で元画面へ復帰。
+        - スクリプト/-c   : -v 指定時のみ標準出力へプレーン出力（非verboseでは無出力）。
+        表示アドレスはファイル絶対値 (バッファ index + g_partial.offset)。
+        範囲省略時 (xf2 無し) は 1 バイトのみ対象。
+        """
+        # スクリプト(-s)モードで非verbose時は無出力。-c コマンド実行時は出力する。
+        if self.scriptingflag and not self.verbose and not self.cmdmode:
+            return
+        start = int(x)
+        end = int(x2) if xf2 else start
+        if end < start:
+            start, end = end, start
+        mem_len = len(self.memory.mem)
+
+        lines_out = []
+        row = start - (start % 16)          # 16バイト境界へ丸める
+        while row <= end:
+            file_addr = (row + g_partial.offset) & 0xffffffffffff
+            hexs = []
+            ascs = []
+            for i in range(16):
+                cur = row + i
+                if cur < start or cur > end:
+                    hexs.append("  ")       # 指定範囲外の余白
+                    ascs.append(" ")
+                elif cur >= mem_len:
+                    hexs.append("~~")       # バッファ外
+                    ascs.append("~")
+                else:
+                    b = self.memory.mem[cur] & 0xff
+                    hexs.append(f"{b:02X}")
+                    ascs.append(chr(b) if 0x20 <= b <= 0x7e else '.')
+            # 8バイト目で区切りスペースを1つ入れて読みやすくする
+            hexstr = ' '.join(hexs[:8]) + '  ' + ' '.join(hexs[8:])
+            lines_out.append(f"{file_addr:012X}  {hexstr}  {''.join(ascs)}")
+            row += 16
+
+        if self.scriptingflag:
+            for ln in lines_out:
+                print(ln)
+            return
+
+        # 対話モード: 全文を表示してキー待ち、その後に元画面を再描画
+        self.term.clear()
+        self.term.color(6)
+        self.term.locate(0, 0)
+        for ln in lines_out:
+            print(ln)
+        self.term.color(4)
+        print("[ hit a key ]", end='', flush=True)
+        Terminal.getch()
+        self.term.clear()
+        self.display.repaint(self.filemgr.filename)
+
     def execute_command(self, line, idx, x, x2, xf, xf2):
         """個別コマンドの実行"""
         # 型付き数値表示 (?s/?i/?l/?q/?f/?d/?Q/?us/?ui/?ul)
@@ -2238,6 +2300,11 @@ class BiEditor:
             rest = line[idx + 1:]
             if rest in ('s', 'i', 'l', 'q', 'f', 'd', 'Q', 'us', 'ui', 'ul'):
                 return self.cmd_typed_display(x, x2, xf, xf2, rest)
+
+        # 16進ダンプ: [start],[end] x
+        if idx < len(line) and line[idx] == 'x':
+            self.cmd_hexdump(x, x2, xf, xf2)
+            return -1
 
         # yank
         if idx < len(line) and line[idx] == 'y':
@@ -2542,7 +2609,7 @@ class BiEditor:
             if not xf or not xf2 or x > x2:
                 self.stderr("Invalid range. Usage: start,end f start2")
                 return -1
-            if self.scriptingflag and not self.verbose:
+            if self.scriptingflag and not self.verbose and not self.cmdmode:
                 return -1
             FCMP_SPAN = 10
             FCMP_MAXN = 8192
@@ -3055,6 +3122,8 @@ def main():
                     metavar='LENGTH', help='partial edit: length in bytes (hex)')
     ap.add_argument('-e', '--end', type=lambda x: int(x, 16), default=None,
                     metavar='END', help='partial edit: end offset inclusive (hex)')
+    ap.add_argument('-c', '--command', type=str, default=None, metavar='COMMAND',
+                    help='execute a single bi command non-interactively, then exit')
     args = ap.parse_args()
 
     # パーシャルモードの判定・長さ計算
@@ -3084,11 +3153,14 @@ def main():
     editor.filemgr.filename = args.file
     editor.verbose = args.verbose
 
-    # 画面クリア（スクリプトモード以外）
-    if not args.script:
-        editor.term.clear()
-    else:
+    # 非対話モード判定（-s スクリプト または -c コマンド）
+    noninteractive = bool(args.script) or (args.command is not None)
+
+    # 画面クリア（非対話モード以外）
+    if noninteractive:
         editor.scriptingflag = True
+    else:
+        editor.term.clear()
 
     # ファイル読み込み
     if partial_mode:
@@ -3102,12 +3174,17 @@ def main():
     elif msg:
         editor.stdmm(msg)
 
-    # スクリプト実行またはインタラクティブモード
-    if args.script:
+    # スクリプト/コマンド実行、またはインタラクティブモード
+    if noninteractive:
         try:
-            editor.scripting(args.script)
-            if not editor.memory.lastchange:
-                print('Nothing done.')
+            if args.script:
+                editor.scripting(args.script)
+                if not editor.memory.lastchange:
+                    print('Nothing done.')
+            if args.command is not None:
+                editor.cmdmode = True
+                editor.commandline(args.command)
+                editor.cmdmode = False
             if args.write and editor.memory.lastchange:
                 if g_partial.active:
                     ok, wmsg = editor.filemgr.writefile_partial(args.file)
