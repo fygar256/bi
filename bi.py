@@ -2239,8 +2239,8 @@ class BiEditor:
 
         範囲 [x..x2] を 16バイト/行で「アドレス + 16進 + ASCII」表示する。
         行頭は 16 バイト境界に丸めて桁を揃える。
-        - 対話モード      : 画面をクリアして表示し、キー入力で元画面へ復帰。
-        - スクリプト/-c   : -v 指定時のみ標準出力へプレーン出力（非verboseでは無出力）。
+        - 対話モード      : 画面はクリアせず、最下行からシアンで表示してキー入力で復帰。
+        - スクリプト/-c   : -v または -c 実行時に標準出力へプレーン出力（-s 非verboseでは無出力）。
         表示アドレスはファイル絶対値 (バッファ index + g_partial.offset)。
         範囲省略時 (xf2 無し) は 1 バイトのみ対象。
         """
@@ -2272,25 +2272,28 @@ class BiEditor:
                     hexs.append(f"{b:02X}")
                     ascs.append(chr(b) if 0x20 <= b <= 0x7e else '.')
             # 8バイト目で区切りスペースを1つ入れて読みやすくする
-            hexstr = ' '.join(hexs[:8]) + '  ' + ' '.join(hexs[8:])
-            lines_out.append(f"{file_addr:012X}  {hexstr}  {''.join(ascs)}")
+            hexstr = ' '.join(hexs) 
+            lines_out.append(f"{file_addr:012X} {hexstr} {''.join(ascs)}")
             row += 16
 
         if self.scriptingflag:
+            print("             +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF")
             for ln in lines_out:
                 print(ln)
             return
 
-        # 対話モード: 全文を表示してキー待ち、その後に元画面を再描画
-        self.term.clear()
-        self.term.color(6)
-        self.term.locate(0, 0)
+        # 対話モード: 画面はクリアせず、最下行からシアンで表示してキー待ち
+        self.term.locate(0, self.display.BOTTOMLN + 1)
+        self.term.color(4)          # シアン (coltab[5]=96)
+        print("             +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF")
+        self.term.color(5)          # シアン (coltab[5]=96)
         for ln in lines_out:
             print(ln)
         self.term.color(4)
         print("[ hit a key ]", end='', flush=True)
         Terminal.getch()
         self.term.clear()
+        self.term.resetcolor()
         self.display.repaint(self.filemgr.filename)
 
     def execute_command(self, line, idx, x, x2, xf, xf2):

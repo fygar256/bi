@@ -2773,8 +2773,8 @@ static void cmd_typed_display(BiEditor *editor,
  * 16進ダンプ表示ヘルパー: [start],[end] x
  *   範囲 [x..x2] を 16バイト/行で「アドレス + 16進 + ASCII」表示する。
  *   行頭は16バイト境界に丸めて桁を揃える。
- *   - 対話モード      : 画面クリア後に表示し、キー入力で元画面へ復帰。
- *   - スクリプト/-c   : -v 指定時のみ標準出力へプレーン出力（非verboseでは無出力）。
+ *   - 対話モード      : 画面はクリアせず、最下行からシアンで表示しキー入力で復帰。
+ *   - スクリプト/-c   : -v または -c 実行時に標準出力へプレーン出力（-s 非verboseは無出力）。
  *   表示アドレスはファイル絶対値 (バッファ index + g_partial.offset)。
  *   範囲省略時 (xf2 無し) は 1 バイトのみ対象。
  * ======================================================================== */
@@ -2791,9 +2791,15 @@ static void cmd_hexdump(BiEditor *editor,
     size_t mem_len = editor->memory.mem.size;
 
     if (!editor->scriptingflag) {
-        terminal_clear(&editor->term);
-        terminal_color(&editor->term, 6, 0);
-        terminal_locate(&editor->term, 0, 0);
+        /* 画面はクリアせず、最下行からシアンで表示する */
+        terminal_locate(&editor->term, 0, BOTTOMLN + 1);
+        terminal_color(&editor->term, 4, 0);   /* シアン (coltab[5]=96) */
+    }
+
+    printf("             +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF\n");
+
+    if (!editor->scriptingflag) {
+        terminal_color(&editor->term, 5, 0);   /* シアン (coltab[5]=96) */
     }
 
     uint64_t row = start - (start % 16);   /* 16バイト境界へ丸める */
@@ -2804,7 +2810,7 @@ static void cmd_hexdump(BiEditor *editor,
         size_t hp = 0, ap = 0;
         for (int i = 0; i < 16; i++) {
             uint64_t cur = row + (uint64_t)i;
-            if (i == 8) { hexpart[hp++] = ' '; }   /* 前半/後半の区切り */
+            // if (i == 8) { hexpart[hp++] = ' '; }   /* 前半/後半の区切り */
             if (cur < start || cur > end) {
                 hexpart[hp++] = ' '; hexpart[hp++] = ' '; hexpart[hp++] = ' ';
                 ascpart[ap++] = ' ';
@@ -2821,7 +2827,7 @@ static void cmd_hexdump(BiEditor *editor,
         }
         hexpart[hp] = '\0';
         ascpart[ap] = '\0';
-        printf("%012llX  %s %s\n",
+        printf("%012llX %s%s\n",
                (unsigned long long)file_addr, hexpart, ascpart);
         row += 16;
     }
@@ -2833,6 +2839,7 @@ static void cmd_hexdump(BiEditor *editor,
         fflush(stdout);
         terminal_getch();
         terminal_clear(&editor->term);
+        terminal_resetcolor(&editor->term);
         display_repaint(&editor->display, editor->filemgr.filename);
     }
 }
