@@ -127,8 +127,13 @@ void bytearray_push(ByteArray *arr, uint8_t val) {
 
 void bytearray_insert(ByteArray *arr, size_t pos, const uint8_t *data, size_t len) {
     if (len == 0) return;
-    
-    size_t new_size = arr->size + len;
+
+    /* 挿入位置が末尾を超える場合は、間を 0 で埋めてから末尾にデータを置く。
+     * Python 版 insmem と同一の挙動。これにより 0,ff C 300 のような末尾外への
+     * Copy(挿入) が c(上書き) と同じ結果になり、pos>size での領域外書き込み
+     * （ヒープ破壊）も防がれる。 */
+    size_t gap = (pos > arr->size) ? (pos - arr->size) : 0;
+    size_t new_size = arr->size + gap + len;
     if (new_size > arr->capacity) {
         size_t new_cap = arr->capacity == 0 ? 16 : arr->capacity;
         while (new_cap < new_size) new_cap *= 2;
@@ -140,11 +145,16 @@ void bytearray_insert(ByteArray *arr, size_t pos, const uint8_t *data, size_t le
         arr->data = new_data;
         arr->capacity = new_cap;
     }
-    
+
     if (pos < arr->size) {
         memmove(arr->data + pos + len, arr->data + pos, arr->size - pos);
+        memcpy(arr->data + pos, data, len);
+    } else {
+        if (gap > 0) {
+            memset(arr->data + arr->size, 0, gap);
+        }
+        memcpy(arr->data + arr->size + gap, data, len);
     }
-    memcpy(arr->data + pos, data, len);
     arr->size = new_size;
 }
 
