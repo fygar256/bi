@@ -1197,6 +1197,9 @@ class BiEditor:
         self._undo_mark_snapshot = None    # begin_undo() 時点の mark スナップショット
         self._undo_meta_snapshot = None    # begin_undo() 時点の modified/lastchange
         self._undo_cursor_snapshot = None  # begin_undo() 時点のカーソル位置
+        # stderr() を経由したエラーが一度でも発生したかを記録する。
+        # 非対話(-s/-c)実行時の終了コード判定に使う（対話編集中は無視）。
+        self.error_occurred = False
     
     def stdmm(self, s):
         self.display.stdmm(s, self.scriptingflag, self.verbose)
@@ -1375,6 +1378,7 @@ class BiEditor:
         return True
     
     def stderr(self, s):
+        self.error_occurred = True
         self.display.stderr(s, self.scriptingflag, self.verbose)
     
     def disp_marks(self):
@@ -1827,7 +1831,7 @@ class BiEditor:
             try:
                 re.compile(s)
             except re.error as e:
-                self.stdmm(f"Invalid regular expression: {e}")
+                self.stderr(f"Invalid regular expression: {e}")
                 return False
             self.search.regexp = True
             self.search.remem = s
@@ -2235,7 +2239,7 @@ class BiEditor:
         return -1
 
     def cmd_hexdump(self, x, x2, xf, xf2):
-        """16進ダンプ表示コマンド: [start],[end] x
+        """16進ダンプ表示コマンド: [start],[end] h
 
         範囲 [x..x2] を 16バイト/行で「アドレス + 16進 + ASCII」表示する。
         行頭は 16 バイト境界に丸めて桁を揃える。
@@ -2304,8 +2308,8 @@ class BiEditor:
             if rest in ('s', 'i', 'l', 'q', 'f', 'd', 'Q', 'us', 'ui', 'ul'):
                 return self.cmd_typed_display(x, x2, xf, xf2, rest)
 
-        # 16進ダンプ: [start],[end] x
-        if idx < len(line) and line[idx] == 'x':
+        # 16進ダンプ: [start],[end] h
+        if idx < len(line) and line[idx] == 'h':
             self.cmd_hexdump(x, x2, xf, xf2)
             return -1
 
@@ -3036,8 +3040,14 @@ class BiEditor:
                     self.commit_undo()
                     self.stdmm(f"  {cnt} times replaced.")
                     return
-                self.memory.delmem(i, i + self.search.span - 1, False, self.memory.yankmem)
+                # 今回のヒット幅を確定（regex は hitre が span を都度更新する）
+                span_here = self.search.span
+                self.memory.delmem(i, i + span_here - 1, False, self.memory.yankmem)
                 self.memory.insmem(i, n)
+                # 置換でバッファ長が len(n)-span_here だけ変化し、以降の
+                # 位置がその分ずれる。走査範囲の終端 end も同量ずらして
+                # 元の論理範囲を保つ（伸長時に途中で打ち切られる不具合の修正）。
+                end += len(n) - span_here
                 pos = i + len(n)
                 cnt += 1
                 i = pos
@@ -3143,7 +3153,7 @@ def main():
         if args.end < partial_offset:
             print(f"Error: -e value (0x{args.end:X}) is less than -o value (0x{partial_offset:X}).",
                   file=sys.stderr)
-            return
+            sys.exit(1)
         partial_length = args.end - partial_offset + 1
         partial_mode = True
 
@@ -3173,11 +3183,12 @@ def main():
 
     if not success:
         print(msg, file=sys.stderr)
-        return
+        sys.exit(1)
     elif msg:
         editor.stdmm(msg)
 
     # スクリプト/コマンド実行、またはインタラクティブモード
+    exit_code = 0
     if noninteractive:
         try:
             if args.script:
@@ -3198,20 +3209,31 @@ def main():
                         print(wmsg)
                 else:
                     print(wmsg, file=sys.stderr)
+                    exit_code = 1
         except Exception as exc:
             editor.filemgr.writefile("file.save")
             editor.stderr(f"Some error occured ({exc}). memory saved to file.save.")
+            exit_code = 1
+        # 非対話実行中に stderr() を経由したエラーが出ていれば失敗扱い。
+        if editor.error_occurred:
+            exit_code = 1
     else:
         try:
             editor.fedit()
         except Exception as exc:
             editor.filemgr.writefile("file.save")
             editor.stderr(f"Some error occured ({exc}). memory saved to file.save.")
+            exit_code = 1
+        # 対話モードでは通常の操作エラー（タイプミス等）は終了コードに
+        # 影響させない。想定外の例外で file.save へ退避した場合のみ exit(1)。
 
     # 終了処理
     editor.term.color(7)
     editor.term.dispcursor()
     editor.term.locate(0, editor.display.BOTTOMLN+1)
+
+    if exit_code:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":

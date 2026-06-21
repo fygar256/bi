@@ -85,7 +85,7 @@ On command line mode
    <start>,<end> C <dest>  ----- insert data to <dest> (data will be yanked)
    <start>,<end> c <dest>  ----- copy data (data will be yanked)
    [start,end] v <dest>    ----- move data
-   [start,end] x           ----- dump data in hexadecimal
+   [start,end] h           ----- dump data in hexadecimal
    [start,end] s /regexp/str            ----- replace regexp with str
    [start,end] s /regexp//xx xx xx ...  ----- replace regexp with data
    [start,end] s //xx xx xx .../str     ----- replace data1 with str
@@ -277,6 +277,7 @@ w<file> commands.
 2026-03-04 version 3.5.1.0 data comparison added.
 2026-03-11 version 3.5.1.25 typed display functionality added.
 2026-06-21 version 3.5.1.81 added -c option and x command.
+2026-06-22 version 3.5.1.86 rename x command to h and error exit applied.
 --------------------
 
       I don't take any responsibility for the result of application of

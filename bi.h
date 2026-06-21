@@ -215,6 +215,8 @@ struct Display {
     bool          insmod;
     int           repsw;
     MatchArray    highlight_ranges;
+    bool          error_occurred;  /* display_stderr() を経由したエラーが一度でも出たか
+                                       (-s/-c 非対話実行時の終了コード判定に使う) */
 };
 
 void   display_init(Display *disp, Terminal *term, MemoryBuffer *mem);

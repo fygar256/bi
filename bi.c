@@ -895,6 +895,7 @@ void display_init(Display *disp, Terminal *term, MemoryBuffer *mem) {
     disp->utf8 = false;
     disp->repsw = 0;
     disp->insmod = false;
+    disp->error_occurred = false;
     matcharray_init(&disp->highlight_ranges);
 }
 
@@ -1174,6 +1175,7 @@ void display_stdmm_wait(Display *disp, const char *msg, bool scripting, bool ver
 }
 
 void display_stderr(Display *disp, const char *msg, bool scripting, bool verbose) {
+    disp->error_occurred = true;
     if (scripting) {
         fprintf(stderr, "%s\n", msg);
     } else {
@@ -2368,7 +2370,7 @@ void editor_fedit(BiEditor *editor) {
                             char emsg_[256];
                             snprintf(emsg_, sizeof(emsg_),
                                      "Invalid regular expression: %s", rerr_);
-                            display_stdmm(&editor->display, emsg_,
+                            display_stderr(&editor->display, emsg_,
                                           editor->scriptingflag, editor->verbose);
                         } else {
                         strncpy(editor->search.remem, pattern, sizeof(editor->search.remem) - 1);
@@ -2770,7 +2772,7 @@ static void cmd_typed_display(BiEditor *editor,
 }
 
 /* ========================================================================
- * 16進ダンプ表示ヘルパー: [start],[end] x
+ * 16進ダンプ表示ヘルパー: [start],[end] h
  *   範囲 [x..x2] を 16バイト/行で「アドレス + 16進 + ASCII」表示する。
  *   行頭は16バイト境界に丸めて桁を揃える。
  *   - 対話モード      : 画面はクリアせず、最下行からシアンで表示しキー入力で復帰。
@@ -3188,7 +3190,7 @@ int editor_commandline(BiEditor *editor, const char *line) {
                     char emsg_[256];
                     snprintf(emsg_, sizeof(emsg_),
                              "Invalid regular expression: %s", rerr_);
-                    display_stdmm(&editor->display, emsg_,
+                    display_stderr(&editor->display, emsg_,
                                   editor->scriptingflag, editor->verbose);
                 } else {
                 strncpy(editor->search.remem, pattern, sizeof(editor->search.remem) - 1);
@@ -3437,8 +3439,8 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         }
     }
 
-    /* 16進ダンプ: [start],[end] x */
-    if (line[idx] == 'x') {
+    /* 16進ダンプ: [start],[end] h */
+    if (line[idx] == 'h') {
         cmd_hexdump(editor, x, x2, xf, xf2);
         return -1;
     }
@@ -4617,10 +4619,17 @@ int editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
             if (editor->search.regexp && editor->search.span == 0) {
                 break;
             }
-            memory_delete(&editor->memory, i, i + editor->search.span - 1, false, memory_yank);
+            /* 今回のヒット幅を確定（regex は search_hitre が span を都度更新する） */
+            size_t span_here = editor->search.span;
+            memory_delete(&editor->memory, i, i + span_here - 1, false, memory_yank);
             if (replacement.size > 0) {
                 memory_insert(&editor->memory, i, replacement.data, replacement.size);
             }
+            /* 置換でバッファ長が replacement.size - span_here だけ変化し、以降の
+             * 位置がその分ずれる。走査範囲の終端 end も同量ずらして元の論理範囲を
+             * 保つ（伸長時に途中で打ち切られる不具合の修正）。size_t の法演算により
+             * 縮小（負の差分）も正しく反映される。 */
+            end += replacement.size - span_here;
             /* 非ゼロ幅マッチでは span(>0) バイト削除でバッファが必ず縮むため、
              * pos = i + replacement.size で同一位置の再マッチ無限ループは起きない。 */
             pos = i + replacement.size;
@@ -4815,9 +4824,9 @@ int main(int argc, char *argv[]) {
     
     // スクリプト/コマンド実行、またはインタラクティブモード
     if (noninteractive) {
-        int result = 0;
+        int exit_code = 0;
         if (scriptfile) {
-            result = editor_scripting(&editor, scriptfile);
+            editor_scripting(&editor, scriptfile);
             if (!editor.memory.lastchange) {
                 printf("Nothing done.\n");
             }
@@ -4837,13 +4846,24 @@ int main(int argc, char *argv[]) {
                 success = filemgr_writefile(&editor.filemgr, filename,
                                             write_msg, sizeof(write_msg));
             }
-            if (success && editor.verbose) {
-                printf("%s\n", write_msg);
+            if (success) {
+                if (editor.verbose) {
+                    printf("%s\n", write_msg);
+                }
+            } else {
+                fprintf(stderr, "%s\n", write_msg);
+                exit_code = 1;
             }
         }
 
+        /* -s/-c 実行中に display_stderr() を経由したエラーが一度でも出ていれば
+         * 失敗として exit(1) を返す（通常の終了種別フラグは終了コードに使わない）。 */
+        if (editor.display.error_occurred) {
+            exit_code = 1;
+        }
+
         editor_free(&editor);
-        return result;
+        return exit_code;
     } else {
         // インタラクティブモード
         editor_fedit(&editor);
