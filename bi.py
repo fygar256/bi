@@ -2506,7 +2506,12 @@ class BiEditor:
         # insert/Insert
         if ch == 'i' or ch == 'I':
             idx = self.parser.skipspc(line, idx)
-            if idx < len(line) and line[idx] == '/':
+            if line[idx:idx+2] == '//':
+                # 明示的な16進データ指定: i//xx yy zz / I//xx yy zz
+                # （素の "i xx yy zz" と同じく16進列を読むが、文字列形式
+                #  "i/text" と書式を揃えて明示できるようにする）
+                m, idx = self.parser.get_hexs(line, idx + 2)
+            elif idx < len(line) and line[idx] == '/':
                 m, idx = self.parser.get_str(line, idx + 1)
             else:
                 m, idx = self.parser.get_hexs(line, idx)

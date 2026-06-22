@@ -3708,8 +3708,14 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         bool is_repeat = false;
         uint64_t repeat_count = 1;
 
-        // まずパターンを読む（/.../ か 16進数列）
-        if (line[idx] == '/') {
+        // まずパターンを読む（//16進列 か /.../文字列 か 素の16進列）
+        if (line[idx] == '/' && line[idx + 1] == '/') {
+            /* 明示的な16進データ指定: i//xx yy zz / I//xx yy zz
+             * （素の "i xx yy zz" と同じ16進列だが、文字列形式 "i/text" と
+             *  書式を揃えて明示できるようにする。parser_get_hexs が先頭の
+             *  "//" を読み飛ばすので idx をそのまま渡す） */
+            idx = parser_get_hexs(&editor->parser, line, idx, &pattern);
+        } else if (line[idx] == '/') {
             char str[LINE_MAX_SIZE];
             idx = parser_get_restr(line, idx + 1, str);
             for (size_t i = 0; str[i]; i++) {
