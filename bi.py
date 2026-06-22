@@ -2636,6 +2636,12 @@ class BiEditor:
                 return -1
             if self.scriptingflag and not self.verbose and not self.cmdmode:
                 return -1
+            # パーシャル編集中: x3(region2開始)もバッファ相対へ変換する。
+            # x/x2 は parse_range_command で変換済みだが x3 は未変換のため、
+            # c/C/v と同じくここで offset を引く（未対応だと region2 が
+            # バッファ外を読み、表示アドレスもズレる不具合の修正）。
+            if g_partial.active and g_partial.offset > 0:
+                x3 = max(0, x3 - g_partial.offset)
             FCMP_SPAN = 10
             FCMP_MAXN = 8192
 
