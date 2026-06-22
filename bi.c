@@ -3207,7 +3207,7 @@ static void cmd_hexdump(BiEditor *editor,
     }
 }
 
-int editor_commandline(BiEditor *editor, const char *line) {
+static int editor_commandline_single(BiEditor *editor, const char *line) {
     editor->cp = display_fpos(&editor->display);
     /* '@'コマンド(Python exec)行はコメント除去をしない。
      * 文字列リテラル内の '#' がコメントと誤認識されるのを防ぐため。 */
@@ -3779,6 +3779,43 @@ int editor_commandline(BiEditor *editor, const char *line) {
     }
     
     return execute_command(editor, parsed_line, idx, x, x2, xf, xf2);
+}
+
+int editor_commandline(BiEditor *editor, const char *line) {
+    /* '::'区切りマルチステートメント対応。'\::'はリテラルの'::'。 */
+    int len = (int)strlen(line);
+    char *buf = malloc(len + 1);
+    if (!buf) return -1;
+
+    int ret = -1;
+    int bi = 0;
+    int i = 0;
+    while (i <= len) {
+        if (line[i] == '\\' && line[i+1] == ':' && line[i+2] == ':') {
+            buf[bi++] = ':';
+            buf[bi++] = ':';
+            i += 3;
+        } else if ((line[i] == ':' && line[i+1] == ':') || line[i] == '\0') {
+            buf[bi] = '\0';
+            /* 先頭・末尾の空白を除去 */
+            char *stmt = buf;
+            while (*stmt == ' ' || *stmt == '\t') stmt++;
+            int slen = (int)strlen(stmt);
+            while (slen > 0 && (stmt[slen-1] == ' ' || stmt[slen-1] == '\t')) stmt[--slen] = '\0';
+            if (*stmt) {
+                ret = editor_commandline_single(editor, stmt);
+                if (ret == 0) { free(buf); return 0; }
+            }
+            bi = 0;
+            if (line[i] == '\0') break;
+            i += 2;
+        } else {
+            buf[bi++] = line[i];
+            i++;
+        }
+    }
+    free(buf);
+    return ret;
 }
 
 int execute_command(BiEditor *editor, const char *line, size_t idx, 

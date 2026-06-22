@@ -1893,10 +1893,35 @@ class BiEditor:
         line = self.history.getln(':', "command").lstrip()
         return self.commandline(line)
     
+    def _split_statements(self, line):
+        """'::'区切りでステートメントに分割（'\::'はリテラルの'::'）"""
+        parts = []
+        current = []
+        i = 0
+        while i < len(line):
+            if line[i] == '\\' and i + 2 < len(line) and line[i+1] == ':' and line[i+2] == ':':
+                current.append('::')
+                i += 3
+            elif line[i] == ':' and i + 1 < len(line) and line[i+1] == ':':
+                parts.append(''.join(current).strip())
+                current = []
+                i += 2
+            else:
+                current.append(line[i])
+                i += 1
+        parts.append(''.join(current).strip())
+        return parts
+
     def commandline(self, line):
-        """コマンド実行"""
+        """コマンド実行（':'区切りマルチステートメント対応）"""
         try:
-            return self.commandline_(line)
+            stmts = self._split_statements(line)
+            result = -1
+            for stmt in stmts:
+                result = self.commandline_(stmt)
+                if result == 0:
+                    return 0
+            return result
         except MemoryError:
             self.stderr("Memory overflow.")
             return -1

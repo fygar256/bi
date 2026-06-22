@@ -110,7 +110,8 @@ On command line mode
    [start,end]?d            ----- display in float64
    _{big|little}            ----- specify endianness.(default=little)
 
-   <CR> without any command or <ESC>   ----- return to on-screen mode
+   ::                       ----- multi statement command separator
+   <CR> without any command ----- return to on-screen mode
 
 usage: bi.py [-h] [options] <file> [options]
 
@@ -141,7 +142,10 @@ Remarks
     '/' can be escaped with escape character '\' in regular expression.
 
     Comment can be written in command with '#'. You have to write command
-    including semicolon with escape character '\'.
+    including '#' with escape character '\'.
+
+    Multi statement can be written such as '0i11 22 33::100i44 55 66'.
+    If you want to use literal '::', you have to escape with '\::'.
 
     The values enclosed with `[]` can be left out, when these commands
     above take the current position as the value omitted.
@@ -278,6 +282,7 @@ w<file> commands.
 2026-03-11 version 3.5.1.25 typed display functionality added.
 2026-06-21 version 3.5.1.81 added -c option and x command.
 2026-06-22 version 3.5.1.86 rename x command to h and error exit applied.
+2026-06-23 version 3.5.2.6 multi statement applied.
 --------------------
 
       I don't take any responsibility for the result of application of
