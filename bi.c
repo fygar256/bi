@@ -4075,9 +4075,14 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         // * n のパターンをチェック
         idx = parser_skipspc(line, idx);
         if (line[idx] == '*') {
+            int n;
             idx++;
             idx = parser_skipspc(line, idx);
-            uint64_t n = parser_expression(&editor->parser, line, &idx);
+			n=0;
+			while (isdigit((unsigned char)line[idx])) {
+				n = 10 * n + (line[idx] - '0');
+				idx++;
+			}
             if (n != UNKNOWN && n > 0) {
                 is_repeat = true;
                 repeat_count = n;

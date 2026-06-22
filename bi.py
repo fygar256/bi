@@ -2518,7 +2518,11 @@ class BiEditor:
             
             if idx < len(line) and line[idx] == '*':
                 idx += 1
-                length, idx = self.parser.expression(line, idx)
+                v = 0
+                while idx < len(line) and line[idx] in '0123456789':
+                    v = 10 * v + int(line[idx])
+                    idx += 1
+                length = v
             else:
                 length = 1
             
