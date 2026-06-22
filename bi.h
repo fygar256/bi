@@ -138,6 +138,8 @@ typedef struct {
     int       coltab[8];
     int       bcoltab[8];
     BiEditor *editor;
+    bool      force_color;  /* true のときスクリプト中でもカラー系エスケープのみ
+                               出力を許可する（f コマンドの -c 色付き出力用） */
 } Terminal;
 
 void terminal_init(Terminal *term, const char *termcol, BiEditor *editor);

@@ -299,16 +299,23 @@ class MemoryBuffer:
         self.lastchange = True
     
     def insmem(self, start, mem2):
-        if self._diff_log is not None:
-            self._diff_log.append(('ins', start, list(mem2)))
         if start >= len(self.mem):
-            for i in range(start - len(self.mem)):
-                self.mem.append(0)
-            self.mem = self.mem + mem2
+            # 末尾を超える挿入: N..start-1 を 0 で埋めてから mem2 を連結。
+            # 差分ログには「実際に挿入された領域 (0埋め分 + mem2)」を旧末尾
+            # 位置 old_len から記録する。pattern 部分だけを記録すると
+            # _apply_diff_inverse の 'ins'(=del mem[start:start+len(data)])
+            # で 0埋め分が消えず、undo が完全に元へ戻らない。
+            old_len = len(self.mem)
+            inserted = [0] * (start - old_len) + list(mem2)
+            if self._diff_log is not None:
+                self._diff_log.append(('ins', old_len, list(inserted)))
+            self.mem = self.mem + inserted
             self.modified = True
             self.lastchange = True
             return
         
+        if self._diff_log is not None:
+            self._diff_log.append(('ins', start, list(mem2)))
         mem1 = self.mem[:start]
         mem3 = self.mem[start:]
         self.mem = mem1 + mem2 + mem3
@@ -698,7 +705,7 @@ class Display:
     def print_title(self, filename):
         self.term.locate(0, 0)
         self.term.color(6)
-        print(f'bi Py version 3.5.1 by Taisuke Maekawa          utf8mode:{"off" if not self.utf8 else "on "}     {"insert   " if self.insmod else "overwrite"}   ')
+        print(f'bi Py version 3.5.2 by Taisuke Maekawa          utf8mode:{"off" if not self.utf8 else "on "}     {"insert   " if self.insmod else "overwrite"}   ')
         self.term.color(5)
         if len(filename) > 35:
             fn = filename[0:35]

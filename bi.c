@@ -565,12 +565,22 @@ void memory_insert(MemoryBuffer *mem, size_t start, const uint8_t *data, size_t 
         DiffEntry e;
         memset(&e, 0, sizeof(e));
         e.op           = DIFF_INS;
-        e.pos          = start;
         e.orig_mem_len = mem->mem.size;
         bytearray_init(&e.old_data);
         bytearray_init(&e.new_data);
-        for (size_t i = 0; i < len; i++)
-            bytearray_push(&e.new_data, data[i]);
+        if (start > mem->mem.size) {
+            /* 末尾を超える挿入: bytearray_insert が N..start-1 を 0 埋めする。
+             * 差分には「0埋め分 + data」を旧末尾 (mem.size) から記録しないと、
+             * apply_diff_inverse の DIFF_INS(=区間削除) で 0埋め分が残り、
+             * undo が完全に元へ戻らない。bi.py insmem と同一の対応。 */
+            size_t gap = start - mem->mem.size;
+            e.pos = mem->mem.size;
+            for (size_t i = 0; i < gap; i++) bytearray_push(&e.new_data, 0);
+            for (size_t i = 0; i < len; i++) bytearray_push(&e.new_data, data[i]);
+        } else {
+            e.pos = start;
+            for (size_t i = 0; i < len; i++) bytearray_push(&e.new_data, data[i]);
+        }
         difflog_push(mem->current_diff, &e);
     }
     bytearray_insert(&mem->mem, start, data, len);
@@ -1008,7 +1018,7 @@ void display_repaint(Display *disp, const char *filename) {
     // Print title
     terminal_locate(disp->term, 0, 0);
     terminal_color(disp->term, 6, 0);
-    printf("bi C version 3.5.1 by Taisuke Maekawa           utf8mode:%s     %s   ",
+    printf("bi C version 3.5.2 by Taisuke Maekawa           utf8mode:%s     %s   ",
            disp->utf8 ? "on " : "off",
            disp->insmod ? "insert   " : "overwrite");
     
