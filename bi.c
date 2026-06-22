@@ -3741,16 +3741,10 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                 bytearray_free(&pattern);
                 return -1;
             }
-            if (x >= editor->memory.mem.size) {
-                display_stderr(&editor->display, "Invalid range.", 
-                               editor->scriptingflag, editor->verbose);
-                bytearray_free(&pattern);
-                return -1;
-            }
-            // endがファイルサイズを超えていたら縮める（要件3対応）
-            if (x2 >= editor->memory.mem.size) {
-                x2 = editor->memory.mem.size - 1;
-            }
+            /* end>=N でもクランプせず、start..end をパターンで埋め尽くす。
+             * memory_overwrite / memory_insert (bytearray_insert) が末尾を
+             * 自動拡張し、start>=N の場合は N..start-1 を 00 でゼロ埋めする。
+             * Python 版 bi.py の i/I 範囲指定と同一の挙動。 */
         } else {
             // 範囲指定なし → カーソル位置から
             x = display_fpos(&editor->display);
