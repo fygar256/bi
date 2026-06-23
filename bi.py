@@ -2286,11 +2286,11 @@ class BiEditor:
         # スクリプト(-s)モードで非verbose時は無出力。-c コマンド実行時は出力する。
         if self.scriptingflag and not self.verbose and not self.cmdmode:
             return
-        start = int(x)
-        end = int(x2) if xf2 else start
+        mem_len = len(self.memory.mem)
+        start = int(x) if xf else 0
+        end = int(x2) if xf2 else (mem_len - 1 if mem_len > 0 else 0)
         if end < start:
             start, end = end, start
-        mem_len = len(self.memory.mem)
 
         lines_out = []
         row = start - (start % 16)          # 16バイト境界へ丸める

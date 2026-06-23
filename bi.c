@@ -3144,14 +3144,13 @@ static void cmd_typed_display(BiEditor *editor,
 static void cmd_hexdump(BiEditor *editor,
                         uint64_t x, uint64_t x2, bool xf, bool xf2)
 {
-    (void)xf;
     /* スクリプト(-s)モードで非verbose時は無出力。-c コマンド実行時は出力する。 */
     if (editor->scriptingflag && !editor->verbose && !g_cmdmode) return;
 
-    uint64_t start = x;
-    uint64_t end   = xf2 ? x2 : x;
+    size_t   mem_len = editor->memory.mem.size;
+    uint64_t start   = xf ? x : 0;
+    uint64_t end     = xf2 ? x2 : (mem_len > 0 ? (uint64_t)(mem_len - 1) : 0);
     if (end < start) { uint64_t t = start; start = end; end = t; }
-    size_t mem_len = editor->memory.mem.size;
 
     if (!editor->scriptingflag) {
         /* 画面はクリアせず、最下行からシアンで表示する */
