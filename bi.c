@@ -3167,27 +3167,53 @@ static void cmd_hexdump(BiEditor *editor,
     uint64_t row = start - (start % 16);   /* 16バイト境界へ丸める */
     while (row <= end) {
         uint64_t file_addr = (row + (uint64_t)g_partial.offset) & 0xffffffffffffULL;
-        char hexpart[64];   /* "XX " * 16 + 8バイト目区切り + 終端 */
-        char ascpart[20];
+        char hexpart[64];    /* "XX " * 16 + 終端 */
+        char ascpart[128];   /* UTF-8対応: 最大16×4バイト + 終端 */
         size_t hp = 0, ap = 0;
+        /* ヘックスペイン: 常にバイト単位 */
         for (int i = 0; i < 16; i++) {
             uint64_t cur = row + (uint64_t)i;
-            // if (i == 8) { hexpart[hp++] = ' '; }   /* 前半/後半の区切り */
             if (cur < start || cur > end) {
                 hexpart[hp++] = ' '; hexpart[hp++] = ' '; hexpart[hp++] = ' ';
-                ascpart[ap++] = ' ';
             } else if (cur >= mem_len) {
                 hexpart[hp++] = '~'; hexpart[hp++] = '~'; hexpart[hp++] = ' ';
-                ascpart[ap++] = '~';
             } else {
                 uint8_t b = editor->memory.mem.data[cur];
                 char tmp[4];
                 snprintf(tmp, sizeof(tmp), "%02X ", b);
                 hexpart[hp++] = tmp[0]; hexpart[hp++] = tmp[1]; hexpart[hp++] = tmp[2];
-                ascpart[ap++] = (b >= 0x20 && b <= 0x7e) ? (char)b : '.';
             }
         }
         hexpart[hp] = '\0';
+        /* ASCIIペイン: UTF-8対応 */
+        for (int i = 0; i < 16; ) {
+            uint64_t cur = row + (uint64_t)i;
+            if (cur < start || cur > end) { ascpart[ap++] = ' '; i++; continue; }
+            if (cur >= mem_len)           { ascpart[ap++] = '~'; i++; continue; }
+            uint8_t b = editor->memory.mem.data[cur];
+            if (b >= 0xC0 && b <= 0xF7) {
+                int nbytes = (b <= 0xDF) ? 2 : (b <= 0xEF) ? 3 : 4;
+                uint64_t end_cur = cur + (uint64_t)nbytes - 1;
+                if (end_cur <= end && cur + (size_t)nbytes <= mem_len) {
+                    bool valid = true;
+                    for (int k = 1; k < nbytes; k++) {
+                        if ((editor->memory.mem.data[cur + k] & 0xC0) != 0x80) {
+                            valid = false; break;
+                        }
+                    }
+                    if (valid) {
+                        for (int k = 0; k < nbytes; k++)
+                            ascpart[ap++] = (char)editor->memory.mem.data[cur + k];
+                        int pads = (nbytes == 4) ? 2 : 1;
+                        for (int k = 0; k < pads; k++) ascpart[ap++] = ' ';
+                        i += nbytes;
+                        continue;
+                    }
+                }
+            }
+            ascpart[ap++] = (b >= 0x20 && b <= 0x7E) ? (char)b : '.';
+            i++;
+        }
         ascpart[ap] = '\0';
         printf("%012llX %s%s\n",
                (unsigned long long)file_addr, hexpart, ascpart);

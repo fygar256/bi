@@ -2302,15 +2302,39 @@ class BiEditor:
                 cur = row + i
                 if cur < start or cur > end:
                     hexs.append("  ")       # 指定範囲外の余白
-                    ascs.append(" ")
                 elif cur >= mem_len:
                     hexs.append("~~")       # バッファ外
-                    ascs.append("~")
                 else:
                     b = self.memory.mem[cur] & 0xff
                     hexs.append(f"{b:02X}")
-                    ascs.append(chr(b) if 0x20 <= b <= 0x7e else '.')
-            # 8バイト目で区切りスペースを1つ入れて読みやすくする
+            i = 0
+            while i < 16:
+                cur = row + i
+                if cur < start or cur > end:
+                    ascs.append(' ')
+                    i += 1
+                    continue
+                if cur >= mem_len:
+                    ascs.append('~')
+                    i += 1
+                    continue
+                b = self.memory.mem[cur] & 0xff
+                if 0xc0 <= b <= 0xf7:
+                    if   b <= 0xdf: nbytes = 2
+                    elif b <= 0xef: nbytes = 3
+                    else:           nbytes = 4
+                    if cur + nbytes - 1 <= end and cur + nbytes <= mem_len:
+                        raw = bytes([self.memory.mem[cur + k] & 0xff for k in range(nbytes)])
+                        try:
+                            ch = raw.decode('utf-8')
+                            pad = '  ' if nbytes == 4 else ' '
+                            ascs.append(ch + pad)
+                            i += nbytes
+                            continue
+                        except Exception:
+                            pass
+                ascs.append(chr(b) if 0x20 <= b <= 0x7e else '.')
+                i += 1
             hexstr = ' '.join(hexs) 
             lines_out.append(f"{file_addr:012X} {hexstr} {''.join(ascs)}")
             row += 16
