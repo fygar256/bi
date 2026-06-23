@@ -2845,13 +2845,14 @@ class BiEditor:
                         if not diff:
                             self.term.rev()
                         if align_a[k] < 0:
-                            print("~~ ", end='')
+                            print("~~", end='')
                         elif oob_a[ki]:
-                            print("~~ ", end='')
+                            print("~~", end='')
                         else:
-                            print(f"{align_a[k]:02X} ", end='')
+                            print(f"{align_a[k]:02X}", end='')
                         if not diff:
                             self.term.revreset()
+                        print(" ", end='')
                     else:
                         print("   ", end='')
 
@@ -2867,13 +2868,14 @@ class BiEditor:
                         if not diff:
                             self.term.rev()
                         if align_b[k] < 0:
-                            print("~~ ", end='')
+                            print("~~", end='')
                         elif oob_b[ki]:
-                            print("~~ ", end='')
+                            print("~~", end='')
                         else:
-                            print(f"{align_b[k]:02X} ", end='')
+                            print(f"{align_b[k]:02X}", end='')
                         if not diff:
                             self.term.revreset()
+                        print(" ", end='')
                     else:
                         print("   ", end='')
 
