@@ -42,6 +42,8 @@ cc bi.c -o bi
 sudo cp bi /usr/local/bin
 ```
 
+The Go version of bi has been discontinued due to the maintenance burden.
+
 ##### execution
 ```
 bi file
