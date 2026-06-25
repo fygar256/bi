@@ -4877,66 +4877,62 @@ void editor_shift_rotate(BiEditor *editor, uint64_t x, uint64_t x2, int times,
                 }
             }
         } else {
-            /* [Bug1修正] マルチバイトshift/rotate
-             * 旧実装は uint64_t (8バイト) で値を保持していたため、
-             * 9バイト以上の範囲を指定すると上位バイトが脱落し、
-             * len*8-1 >= 64 のとき 1ULL<<(len*8-1) が C 規格上の UB になっていた。
-             * 修正: __uint128_t (16バイト) を使い最大16バイトまで対応する。
-             * 16バイト超は有限ビット幅の問題なので先頭16バイトにクランプする。 */
-            uint64_t len = x2 - x + 1;
-            if (len == 0 || x >= editor->memory.mem.size) continue;
-            /* 16バイト超は先頭16バイトにクランプ（__uint128_t の上限） */
-            if (len > 16) len = 16;
-            uint64_t x2c = x + len - 1;   /* クランプ後の実際の終端 */
+            /* マルチバイトshift/rotate: 1ビットのキャリーをバイト間で伝播させる。
+             * __uint128_t を使う旧実装は 16 バイト超の範囲をクランプしていた。
+             * 新実装はバイト単位ループで任意長の範囲を扱える。
+             *
+             * エンディアンと方向で処理順を使い分ける:
+             *   big-endian  << : 右から左 (x2→x)  carry = bit7 → bit0 of 左隣
+             *   big-endian  >> : 左から右 (x→x2)  carry = bit0 → bit7 of 右隣
+             *   little-endian <<: 左から右 (x→x2)  carry = bit7 → bit0 of 右隣
+             *   little-endian >>: 右から左 (x2→x)  carry = bit0 → bit7 of 左隣 */
+            if (x >= editor->memory.mem.size) continue;
+            uint64_t x2c = (x2 < editor->memory.mem.size - 1)
+                           ? x2 : editor->memory.mem.size - 1;
 
-            /* 値を読み出し (エンディアンに従う) */
-            __uint128_t v = 0;
-            if (g_big_endian) {
-                for (uint64_t i = x; i <= x2c && i < editor->memory.mem.size; i++)
-                    v = (v << 8) | memory_read(&editor->memory, i);
-            } else {
-                for (uint64_t i = x2c; i >= x && i < editor->memory.mem.size; i--) {
-                    v = (v << 8) | memory_read(&editor->memory, i);
-                    if (i == 0) break;
-                }
-            }
+            bool rot = (bit < 0);
+            uint8_t carry_bit = rot ? 0 : (uint8_t)(bit & 1);
+            uint8_t b, nc, c;
 
-            /* len*8 ビット幅マスク（len<=16 なので len*8<=128、UBなし） */
-            __uint128_t mask = (len * 8 < 128)
-                               ? (((__uint128_t)1 << (len * 8)) - 1)
-                               : ~(__uint128_t)0;
-            __uint128_t msb_mask = (__uint128_t)1 << (len * 8 - 1);
-
-            if (bit < 0) {
-                /* ローテート */
-                if (direction == '<') {
-                    __uint128_t c = (v & msb_mask) ? 1 : 0;
-                    v = ((v << 1) | c) & mask;
+            if (direction == '<') {
+                if (g_big_endian) {
+                    /* big-endian 左: 右から左へ処理。MSBビット(byte[x] bit7)がLSBへ巻く */
+                    c = rot ? ((memory_read(&editor->memory, x) >> 7) & 1) : carry_bit;
+                    for (int64_t i = (int64_t)x2c; i >= (int64_t)x; i--) {
+                        b  = memory_read(&editor->memory, (uint64_t)i);
+                        nc = (b >> 7) & 1;
+                        memory_set(&editor->memory, (uint64_t)i, ((b << 1) & 0xFF) | c);
+                        c  = nc;
+                    }
                 } else {
-                    __uint128_t c = (v & 1) ? msb_mask : 0;
-                    v = ((v >> 1) | c) & mask;
+                    /* little-endian 左: 左から右へ処理。MSBビット(byte[x2c] bit7)がLSBへ巻く */
+                    c = rot ? ((memory_read(&editor->memory, x2c) >> 7) & 1) : carry_bit;
+                    for (uint64_t i = x; i <= x2c; i++) {
+                        b  = memory_read(&editor->memory, i);
+                        nc = (b >> 7) & 1;
+                        memory_set(&editor->memory, i, ((b << 1) & 0xFF) | c);
+                        c  = nc;
+                    }
                 }
             } else {
-                /* シフト */
-                __uint128_t carry = bit & 1;
-                if (direction == '<') {
-                    v = ((v << 1) | carry) & mask;
+                if (g_big_endian) {
+                    /* big-endian 右: 左から右へ処理。LSBビット(byte[x2c] bit0)がMSBへ巻く */
+                    c = rot ? (memory_read(&editor->memory, x2c) & 1) : carry_bit;
+                    for (uint64_t i = x; i <= x2c; i++) {
+                        b  = memory_read(&editor->memory, i);
+                        nc = b & 1;
+                        memory_set(&editor->memory, i, (b >> 1) | (c << 7));
+                        c  = nc;
+                    }
                 } else {
-                    v = ((v >> 1) | (carry << (len * 8 - 1))) & mask;
-                }
-            }
-
-            /* 値を書き戻し (エンディアンに従う) */
-            if (g_big_endian) {
-                for (uint64_t i = x2c; i >= x && i < editor->memory.mem.size; i--) {
-                    memory_set(&editor->memory, i, (uint8_t)(v & 0xFF));
-                    v >>= 8;
-                    if (i == 0) break;
-                }
-            } else {
-                for (uint64_t i = x; i <= x2c && i < editor->memory.mem.size; i++) {
-                    memory_set(&editor->memory, i, (uint8_t)(v & 0xFF));
-                    v >>= 8;
+                    /* little-endian 右: 右から左へ処理。LSBビット(byte[x] bit0)がMSBへ巻く */
+                    c = rot ? (memory_read(&editor->memory, x) & 1) : carry_bit;
+                    for (int64_t i = (int64_t)x2c; i >= (int64_t)x; i--) {
+                        b  = memory_read(&editor->memory, (uint64_t)i);
+                        nc = b & 1;
+                        memory_set(&editor->memory, (uint64_t)i, (b >> 1) | (c << 7));
+                        c  = nc;
+                    }
                 }
             }
         }
