@@ -347,40 +347,6 @@ int      editor_scommand(BiEditor *editor, uint64_t start, uint64_t end,
 #endif /* BI_H */
 
 /* ========================================================================
- * 画面サイズの動的計算
- *   BOTTOMLN  = データ行の直後にあるメッセージ行の行番号 (0-origin)
- *   LENONSCR  = 画面に表示できるバイト数
- *   レイアウト:
- *     0,1   : タイトル2行
- *     2     : ヘッダー行
- *     3..BOTTOMLN-1 : データ行
- *     BOTTOMLN      : メッセージ行
- *     BOTTOMLN+1    : カーソル情報行
- * ======================================================================== */
-#define _HEADER_ROWS  3   /* タイトル2行 + ヘッダー1行 */
-#define _FOOTER_ROWS  2   /* メッセージ行 + カーソル情報行 */
-#define _MIN_DATA_ROWS 3  /* データ行の最小数 */
-
-static int g_bottomln = 22;
-static int g_lenonscr = (22 - 3) * 16;
-
-static void update_screen_size(void) {
-    struct winsize ws;
-    int rows = 24;   /* フォールバック */
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
-        rows = (int)ws.ws_row;
-    }
-    int data_rows = rows - _HEADER_ROWS - _FOOTER_ROWS;
-    if (data_rows < _MIN_DATA_ROWS) data_rows = _MIN_DATA_ROWS;
-    g_bottomln = _HEADER_ROWS + data_rows;
-    g_lenonscr = data_rows * 16;
-}
-
-/* マクロ互換エイリアス (コード中で BOTTOMLN / LENONSCR のまま参照できるようにする) */
-#define BOTTOMLN  g_bottomln
-#define LENONSCR  g_lenonscr
-
-/* ========================================================================
  * パーシャル編集の状態管理
  * ======================================================================== */
 
@@ -393,6 +359,47 @@ typedef struct {
 } PartialState;
 
 static PartialState g_partial = {false, 0, 0, 0, 0};
+
+/* ========================================================================
+ * 画面サイズの動的計算
+ *   BOTTOMLN  = データ行の直後にあるメッセージ行の行番号 (0-origin)
+ *   LENONSCR  = 画面に表示できるバイト数
+ *   レイアウト:
+ *     0,1   : タイトル2行
+ *     2     : ヘッダー行
+ *     3..BOTTOMLN-1 : データ行
+ *     BOTTOMLN      : メッセージ行
+ *     BOTTOMLN+1    : カーソル情報行
+ *     BOTTOMLN+2    : PARTIAL ステータス行 (パーシャルモードかつ25行以上の場合のみ)
+ * ======================================================================== */
+#define _HEADER_ROWS  3   /* タイトル2行 + ヘッダー1行 */
+#define _FOOTER_ROWS  2   /* メッセージ行 + カーソル情報行 */
+#define _MIN_DATA_ROWS 3  /* データ行の最小数 */
+
+static int g_bottomln = 22;
+static int g_lenonscr = (22 - 3) * 16;
+/* パーシャルモード中かつ25行以上のときにカーソル詳細行とPARTIAL行を独立させるフラグ */
+static int g_has_partial_row = 0;
+
+static void update_screen_size(void) {
+    struct winsize ws;
+    int rows = 24;   /* フォールバック */
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
+        rows = (int)ws.ws_row;
+    }
+    /* パーシャルモード中かつ25行以上のときだけPARTIAL行を独立させる
+     * それ以外はフッター2行のみ使い、BOTTOMLN+1が画面最下部になる */
+    g_has_partial_row = (rows >= 25) && g_partial.active;
+    int footer = _FOOTER_ROWS + (g_has_partial_row ? 1 : 0);
+    int data_rows = rows - _HEADER_ROWS - footer;
+    if (data_rows < _MIN_DATA_ROWS) data_rows = _MIN_DATA_ROWS;
+    g_bottomln = _HEADER_ROWS + data_rows;
+    g_lenonscr = data_rows * 16;
+}
+
+/* マクロ互換エイリアス (コード中で BOTTOMLN / LENONSCR のまま参照できるようにする) */
+#define BOTTOMLN  g_bottomln
+#define LENONSCR  g_lenonscr
 
 /* エンディアン設定: false=リトルエンディアン(デフォルト), true=ビッグエンディアン */
 static bool g_big_endian = false;
@@ -1486,17 +1493,20 @@ void display_printdata(Display *disp) {
         printf("%012zX : ~~                                                   ", file_addr);
     }
 
-    /* 行: PARTIALステータス（アクティブの場合常時表示・オーバーライト） */
-    terminal_locate(disp->term, 0, BOTTOMLN+1);
+    /* PARTIALステータス: 25行以上のとき BOTTOMLN+2 に独立表示、それ以外は BOTTOMLN+1 に上書き */
+    int partial_row = g_has_partial_row ? BOTTOMLN + 2 : BOTTOMLN + 1;
+    terminal_locate(disp->term, 0, partial_row);
     if (g_partial.active) {
         terminal_color(disp->term, 6, 0);
-        /* [#6修正] g_partial.length は元の読込長(writefile_partial のtail算出に使う)なので
+        /* g_partial.length は元の読込長(writefile_partial のtail算出に使う)なので
          * 変更せず、表示は編集後の現在のバッファ長を見せる。 */
         size_t cur_len = disp->memory->mem.size;
         printf(" PARTIAL  file_offset:0x%012zX  length:0x%zX(%zu) bytes   ",
                g_partial.offset, cur_len, cur_len);
-    } 
-    
+    } else if (g_has_partial_row) {
+        terminal_clrline(disp->term);
+    }
+
     fflush(stdout);
 }
 
@@ -3740,13 +3750,13 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
     size_t idx = parser_skipspc(parsed_line, 0);
     uint64_t x = parser_expression(&editor->parser, parsed_line, &idx);
     bool xf = false, xf2 = false;
-    uint64_t x2 = x;
-    
+
     if (x == UNKNOWN) {
         x = display_fpos(&editor->display);
     } else {
         xf = true;
     }
+    uint64_t x2 = x;
     
     idx = parser_skipspc(parsed_line, idx);
     if (parsed_line[idx] == ',') {
@@ -4838,7 +4848,7 @@ void editor_shift_rotate(BiEditor *editor, uint64_t x, uint64_t x2, int times,
     for (int t = 0; t < times; t++) {
         if (!multibyte) {
             // バイト単位
-            if (bit != 0 && bit != 1) {
+            if (bit < 0) {
                 // ローテート
                 if (direction == '<') {
                     for (uint64_t i = x; i <= x2 && i < editor->memory.mem.size; i++) {
@@ -4897,7 +4907,7 @@ void editor_shift_rotate(BiEditor *editor, uint64_t x, uint64_t x2, int times,
                                : ~(__uint128_t)0;
             __uint128_t msb_mask = (__uint128_t)1 << (len * 8 - 1);
 
-            if (bit != 0 && bit != 1) {
+            if (bit < 0) {
                 /* ローテート */
                 if (direction == '<') {
                     __uint128_t c = (v & msb_mask) ? 1 : 0;

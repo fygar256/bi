@@ -446,7 +446,7 @@ class SearchEngine:
         byte_data = bytes(m)
         
         # 複数のエンコーディングを試行（バイナリセーフ対応）
-        encodings = ['utf-8', 'latin-1', 'cp1252', 'shift-jis', 'euc-jp']
+        encodings = ['utf-8', 'latin-1']
         
         for encoding in encodings:
             try:
@@ -620,9 +620,14 @@ class Display:
             rows = os.get_terminal_size().lines
         except OSError:
             rows = 24          # フォールバック
+        # パーシャルモード中かつ25行以上のときだけPARTIAL行を独立させる
+        # それ以外はフッター2行のみ使い、BOTTOMLN+1が画面最下部になる
+        self.has_partial_row = (rows >= 25) and g_partial.active
+        footer = self._FOOTER_ROWS + (1 if self.has_partial_row else 0)
         # BOTTOMLN = 最終データ行の次 (メッセージ行)
-        # レイアウト: 0,1=タイトル  2=ヘッダー  3..BOTTOMLN-1=データ  BOTTOMLN=メッセージ  BOTTOMLN+1=情報
-        data_rows = max(self._MIN_DATA_ROWS, rows - self._HEADER_ROWS - self._FOOTER_ROWS)
+        # レイアウト: 0,1=タイトル  2=ヘッダー  3..BOTTOMLN-1=データ  BOTTOMLN=メッセージ
+        #             BOTTOMLN+1=カーソル詳細  [BOTTOMLN+2=PARTIAL(パーシャルかつ25行以上時)]
+        data_rows = max(self._MIN_DATA_ROWS, rows - self._HEADER_ROWS - footer)
         self.BOTTOMLN  = self._HEADER_ROWS + data_rows   # == data_rows + 3
         self.LENONSCR  = data_rows * 16
     
@@ -780,8 +785,9 @@ class Display:
         else:
             print(f"{file_addr:012X} : ~~                                                   ", end='', flush=True)
 
-        # 行23(BOTTOMLN): PARTIAL ステータス常時表示
-        self.term.locate(0, self.BOTTOMLN+1)
+        # PARTIAL ステータス: 25行以上のとき BOTTOMLN+2 に独立表示、それ以外は BOTTOMLN+1 に上書き
+        partial_row = self.BOTTOMLN + 2 if self.has_partial_row else self.BOTTOMLN + 1
+        self.term.locate(0, partial_row)
         if g_partial.active:
             self.term.color(6)
             # g_partial.length は元の読込長(writefile_partial のtail算出に使う)なので変更せず、
@@ -792,6 +798,8 @@ class Display:
                 f"  length:0x{cur_len:X}({cur_len}) bytes   ",
                 end='', flush=True
             )
+        elif self.has_partial_row:
+            self.term.clrline()
     
     def disp_curpos(self):
         self.term.color(4)
@@ -1476,9 +1484,9 @@ class BiEditor:
         # そこで exec 実行前のバッファ全体をスナップショットしておき、
         # 実行後に旧バッファと比較して差分を undo_stack に積む。
         # (対話モードのみ。scripting 中は既存仕様どおり undo を取らない)
+        buf_before = list(self.memory.mem)
         undo_enabled = not self.scriptingflag
         if undo_enabled:
-            buf_before = list(self.memory.mem)
             mark_before = list(self.memory.mark)
             meta_before = (self.memory.modified, self.memory.lastchange)
             cursor_before = self.display.fpos()
@@ -1503,8 +1511,10 @@ class BiEditor:
 
         # exec() がグローバルの mem を差し替えた場合も含めて書き戻す
         self.memory.mem = mem
-        self.memory.modified   = True
-        self.memory.lastchange = True
+        # バッファが実際に変化した場合のみ modified/lastchange を更新する
+        if list(self.memory.mem) != buf_before:
+            self.memory.modified   = True
+            self.memory.lastchange = True
 
         # exec 前後でバッファが変化していれば差分を undo_stack に記録する。
         if undo_enabled:
@@ -2981,7 +2991,7 @@ class BiEditor:
         """シフト・ローテート操作"""
         for i in range(times):
             if not multibyte:
-                if bit != 0 and bit != 1:
+                if bit == Parser.UNKNOWN:
                     if direction == '<':
                         self.left_rotate_byte(x, x2)
                     else:
@@ -2992,7 +3002,7 @@ class BiEditor:
                     else:
                         self.right_shift_byte(x, x2, bit & 1)
             else:
-                if bit != 0 and bit != 1:
+                if bit == Parser.UNKNOWN:
                     if direction == '<':
                         self.left_rotate_multibyte(x, x2)
                     else:
