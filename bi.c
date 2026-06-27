@@ -4823,8 +4823,9 @@ uint64_t editor_movmem(BiEditor *editor, uint64_t start, uint64_t end, uint64_t 
     
     uint64_t xp;
     if (dest > len) {
-        memory_overwrite(&editor->memory, dest, m.data, m.size);
-        xp = dest + m.size;
+        uint64_t adjusted = dest - (end - start + 1);
+        memory_overwrite(&editor->memory, adjusted, m.data, m.size);
+        xp = adjusted + m.size;
     } else {
         if (dest > start) {
             memory_insert(&editor->memory, dest - (end - start + 1), m.data, m.size);

@@ -2975,8 +2975,9 @@ class BiEditor:
         m = self.memory.redmem(start, end)
         self.memory.delmem(start, end, True, self.memory.yankmem)
         if dest > l:
-            self.memory.ovwmem(dest, m)
-            xp = dest + len(m)
+            adjusted = dest - (end - start + 1)
+            self.memory.ovwmem(adjusted, m)
+            xp = adjusted + len(m)
         else:
             if dest > start:
                 self.memory.insmem(dest - (end - start + 1), m)
