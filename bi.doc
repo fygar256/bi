@@ -167,11 +167,6 @@ Remarks
     Also, you can give the value of file as mem[x] in {}, x can be specified
     to current position 'cp'.
 
-    The v command has a bit of a quirk. It deletes data from <start> to <end>
-    and moves it to <dest>, but if dest==filesize, the deleted data is moved
-    to the end of the data + 1, and if dest>filesize, it fills from the end of
-    the file + 1 to dest with 0s, and writes the deleted data from dest.
-
     ^L switches multi-byte boundary from 0 to 3. if utf-8 multi-byte characters
     are not seen, press ^L several times.
 
