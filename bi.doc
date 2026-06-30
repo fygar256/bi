@@ -149,8 +149,8 @@ Remarks
 
     The values enclosed with `[]` can be left out, when these commands
     above take the current position as the value omitted.
-    But when the values such as start and end are omitted in 's' command,
-    's' command will affect entire file.
+    But when the values such as start and end are omitted in 's' and 'h' 
+    command, 's' and 'h' command will affect entire file.
 
     The value <end> can be passed with '*<length>' as <end>=<start>+<length>-1.
 
