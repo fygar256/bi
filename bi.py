@@ -103,7 +103,7 @@ g_partial = _PartialState()
 
 class Terminal:
     """ターミナル制御を担当するクラス"""
-    ESC = '['
+    ESC = '\x1b['
     
     def __init__(self, termcol='', get_scripting=None):
         self.termcol = termcol
