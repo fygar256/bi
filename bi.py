@@ -1644,6 +1644,13 @@ class BiEditor:
             self.display.printdata()
             self.term.locate(self.display.curx // 2 * 3 + 13 + (self.display.curx & 1), self.display.cury + 3)
             ch = Terminal.getch()
+            if ch == '':
+                # 標準入力がEOFに達した(端末切断等)。sys.stdin.read(1)は以後
+                # 常に''を返し続けるため、無限ビジーループ(CPU100%)や
+                # ''がstring.hexdigitsへの部分文字列一致でTrueになり
+                # int("0x"+"",16)がValueErrorを起こす問題を避けるため、
+                # ここで明示的に異常終了として扱う(main()側で緊急保存される)。
+                raise EOFError("stdin reached EOF (terminal disconnected?)")
             self.display.clrmm()
             self.search.nff = True
             
@@ -1837,7 +1844,7 @@ class BiEditor:
             if ch == 'i':
                 self.display.insmod = not self.display.insmod
                 stroke = False
-            elif ch in string.hexdigits:
+            elif len(ch) == 1 and ch in string.hexdigits:
                 addr = self.display.fpos()
                 c = int("0x" + ch, 16)
                 sh = 4 if not self.display.curx & 1 else 0
