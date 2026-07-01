@@ -22,7 +22,6 @@
 
 #define MAX_UNDO_LEVELS 100
 #define UNKNOWN         UINT64_MAX
-#define RELEN           128
 
 /* ========================================================================
  * readline
@@ -197,9 +196,16 @@ typedef struct {
     char          remem[128];
     size_t        span;
     bool          nff;
+    /* 正規表現の全マッチ位置キャッシュ。search_begin_scan() で無効化し、
+     * search_hitre() が最初に呼ばれたときバッファ全体を一度だけ走査して
+     * 構築する（詳細は search_hitre() のコメント参照）。 */
+    MatchArray    regex_cache;
+    bool          regex_cache_valid;
+    bool          regex_cache_error;
 } SearchEngine;
 
 void   search_init(SearchEngine *search, MemoryBuffer *mem, Display *disp, BiEditor *editor);
+void   search_begin_scan(SearchEngine *search);
 int    search_hit(SearchEngine *search, size_t addr);
 int    search_hitre(SearchEngine *search, size_t addr);
 size_t search_next(SearchEngine *search, size_t fp, size_t mem_len);
@@ -1027,6 +1033,19 @@ void search_init(SearchEngine *search, MemoryBuffer *mem, Display *disp, BiEdito
     search->remem[0] = '\0';
     search->span = 0;
     search->nff = true;
+    matcharray_init(&search->regex_cache);
+    search->regex_cache_valid = false;
+    search->regex_cache_error = false;
+}
+
+/* 新しい検索操作の開始時に呼ぶ: search_hitre() の全マッチキャッシュを無効化する。
+ * search_next/search_last/search_all はどれもバッファ内の各位置に対して
+ * search_hitre(addr) を1バイトずつ呼び出す構造になっているため、これを呼ばずに
+ * 放置するとバッファ編集後も古いキャッシュを参照してしまう。 */
+void search_begin_scan(SearchEngine *search) {
+    search->regex_cache_valid = false;
+    search->regex_cache_error = false;
+    matcharray_clear(&search->regex_cache);
 }
 
 int search_hit(SearchEngine *search, size_t addr) {
@@ -1041,66 +1060,92 @@ int search_hit(SearchEngine *search, size_t addr) {
     return 1;
 }
 
-int search_hitre(SearchEngine *search, size_t addr) {
-    if (search->remem[0] == '\0') return -1;
-    
-    int reti;
-    
-    // 検索範囲のデータを取得
-    /* Fix: addr >= mem.size のとき mem.size - addr が size_t アンダーフローする。
-     * また mem.size < RELEN の場合も同様。両方まとめて事前にガードする。 */
-    if (addr >= search->memory->mem.size) return -1;
-    size_t len = (addr + RELEN <= search->memory->mem.size) ?
-                 RELEN : search->memory->mem.size - addr;
-    if (len == 0) return -1;
-    
-    /* [Bug8修正] regcomp/regfree を呼び出しごとに実行すると
-     * search_next/search_all から1バイトずつ呼ばれる構造上、
-     * 大ファイルで O(N) 回のコンパイルが走り実質ハングする。
-     * static キャッシュを使い、パターンが変化したときのみ再コンパイルする。 */
+/* バッファ全体を対象に一度だけマッチ位置を走査してキャッシュする。
+ *
+ * [破綻点修正] 旧実装は search_hitre(addr) が呼ばれるたびに addr から
+ * RELEN(=128)バイトだけを切り出して regexec() を試みていた。
+ * search_next/search_last/search_all はこれをバッファの全アドレスに対して
+ * 1バイトずつ呼び出すため、パターンの後半に必要な文字が128バイトより先に
+ * ある場合（例: "A+END" で A が129個以上続く場合）は絶対にマッチできず、
+ * 128バイトを超えて検索することが構造的に不可能だった。
+ *
+ * 修正: GNU拡張の REG_STARTEND を使い、バッファ全体（NUL終端を必要としない
+ * ため埋め込みNULバイトも安全に扱える）に対して regexec() を1回だけ走査し、
+ * 見つかった全マッチの開始位置と長さを regex_cache に記録する。
+ * search_hitre() はこのキャッシュを二分探索で参照するだけになるため、
+ * 長さの制限なく正しくマッチでき、かつ旧実装より高速になる。 */
+static void search_build_regex_cache(SearchEngine *search) {
+    matcharray_clear(&search->regex_cache);
+    search->regex_cache_error = false;
+
+    if (search->remem[0] == '\0') return;
+
+    /* [Bug8修正] 継承: regcomp/regfree の呼び出しごとの再コンパイルを避ける
+     * static キャッシュ。パターンが変化したときのみ再コンパイルする。 */
     static char    s_cached_pattern[512] = "";
     static regex_t s_cached_regex;
     static bool    s_regex_valid = false;
 
     if (!s_regex_valid || strcmp(s_cached_pattern, search->remem) != 0) {
-        /* パターンが変わった（または初回）: 再コンパイル */
         if (s_regex_valid) {
             regfree(&s_cached_regex);
             s_regex_valid = false;
         }
         if (regcomp(&s_cached_regex, search->remem, REG_EXTENDED) != 0) {
-            return -1;   /* str はまだ未確保なので free 不要 */
+            search->regex_cache_error = true;
+            return;
         }
         strncpy(s_cached_pattern, search->remem, sizeof(s_cached_pattern) - 1);
         s_cached_pattern[sizeof(s_cached_pattern) - 1] = '\0';
         s_regex_valid = true;
     }
 
-    char *str = malloc(len + 1);
-    if (!str) return -1;
-    
-    /* [Bug5修正] 旧実装はNULバイト(0x00)をスペース(0x20)に置換していたため
-     * ・NULバイトの検索が不可能
-     * ・スペース(0x20)がNUL位置に誤マッチする
-     * という二重の破綻があった。
-     * NULを含むバイナリに対して POSIX regex を直接適用するには制限があるが、
-     * 少なくともデータをそのままコピーし str[len]='\0' で終端することで
-     * NULより前の範囲については正確にマッチできる。 */
-    for (size_t i = 0; i < len; i++) {
-        str[i] = (char)search->memory->mem.data[addr + i];
+    size_t mem_len = search->memory->mem.size;
+    if (mem_len == 0) return;
+
+    const char *base = (const char *)search->memory->mem.data;
+    size_t pos = 0;
+    while (pos <= mem_len) {
+        regmatch_t m;
+        m.rm_so = (regoff_t)pos;
+        m.rm_eo = (regoff_t)mem_len;
+        if (regexec(&s_cached_regex, base, 1, &m, REG_STARTEND) != 0) {
+            break;  /* これ以上マッチなし */
+        }
+        size_t match_start = (size_t)m.rm_so;
+        size_t match_len   = (size_t)(m.rm_eo - m.rm_so);
+        Match rec;
+        rec.pos = match_start;
+        rec.len = match_len;
+        matcharray_push(&search->regex_cache, rec);
+        /* 次の探索開始位置。ゼロ幅マッチ(例: "a*")で無限ループしないよう
+         * 最低でも1バイトは進める。 */
+        pos = match_start + (match_len > 0 ? match_len : 1);
     }
-    str[len] = '\0';
-    
-    regmatch_t match[1];
-    reti = regexec(&s_cached_regex, str, 1, match, 0);
-    
-    if (reti == 0 && match[0].rm_so == 0) {
-        search->span = match[0].rm_eo - match[0].rm_so;
-        free(str);
+}
+
+int search_hitre(SearchEngine *search, size_t addr) {
+    if (search->remem[0] == '\0') return -1;
+
+    if (!search->regex_cache_valid) {
+        search_build_regex_cache(search);
+        search->regex_cache_valid = true;
+    }
+    if (search->regex_cache_error) return -1;
+    if (addr >= search->memory->mem.size) return -1;
+
+    /* regex_cache は pos 昇順で構築されるため二分探索できる */
+    MatchArray *cache = &search->regex_cache;
+    size_t lo = 0, hi = cache->size;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (cache->data[mid].pos < addr) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo < cache->size && cache->data[lo].pos == addr) {
+        search->span = cache->data[lo].len;
         return 1;
     }
-    
-    free(str);
     return 0;
 }
 
@@ -1113,14 +1158,15 @@ size_t search_next(SearchEngine *search, size_t fp, size_t mem_len) {
         display_clrmm(search->display);
         return (size_t)-1;
     }
+    search_begin_scan(search);
     size_t curpos = fp;
     size_t start = fp;
     bool wrapped = false;
-    
+
     if (!search->regexp && search->smem.size == 0) {
         return (size_t)-1;
     }
-    
+
     // Wait.メッセージを表示
     display_stdmm_wait(search->display, "Wait.", search->editor->scriptingflag, search->editor->verbose);
     
@@ -1170,6 +1216,7 @@ size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
      * 起きても正しく末尾折り返し検索になる。 */
     if (mem_len == 0) return (size_t)-1;
     if (!search->regexp && search->smem.size == 0) return (size_t)-1;
+    search_begin_scan(search);
     if (fp >= mem_len) {
         fp = mem_len - 1;
         wrapped=true;
@@ -1216,11 +1263,12 @@ size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
 
 void search_all(SearchEngine *search, size_t mem_len, MatchArray *matches) {
     matcharray_clear(matches);
-    
+
     if (!search->regexp && search->smem.size == 0) {
         return;
     }
-    
+    search_begin_scan(search);
+
     // Wait.メッセージを表示
     display_stdmm_wait(search->display, "Wait.", search->editor->scriptingflag, search->editor->verbose);
     
@@ -1248,6 +1296,7 @@ void search_all(SearchEngine *search, size_t mem_len, MatchArray *matches) {
 
 void search_free(SearchEngine *search) {
     bytearray_free(&search->smem);
+    matcharray_free(&search->regex_cache);
 }
 
 /* ========================================================================
@@ -4944,7 +4993,11 @@ size_t editor_searchnextnoloop(BiEditor *editor, size_t fp) {
     if (!editor->search.regexp && editor->search.smem.size == 0) {
         return (size_t)-1;
     }
-    
+    /* 呼び出し元(editor_scommand)は置換のたびにバッファを書き換えて再度
+     * 呼ぶため、毎回キャッシュを作り直して新しいバッファ内容に対して
+     * 探索する必要がある。 */
+    search_begin_scan(&editor->search);
+
     size_t curpos = fp;
     while (curpos < editor->memory.mem.size) {
         int f = editor->search.regexp ? 
@@ -5240,7 +5293,8 @@ int main(int argc, char *argv[]) {
     editor_init(&editor, termcol);
     editor.verbose = verbose;
     strncpy(editor.filemgr.filename, filename, sizeof(editor.filemgr.filename) - 1);
-    
+    editor.filemgr.filename[sizeof(editor.filemgr.filename) - 1] = '\0';
+
     // 画面クリア（非対話モード以外）。-s スクリプト または -c コマンドは非対話。
     bool noninteractive = (scriptfile != NULL) || (command != NULL);
     if (noninteractive) {
