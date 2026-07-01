@@ -6,6 +6,7 @@ import string
 import re
 import os
 import io
+import time
 import argparse
 
 # ========================================================================
@@ -69,21 +70,25 @@ except ImportError:
 
 # ========================================================================
 # グローバル変数: @コマンド(exec)や{}式(eval)からアクセス可能
-#   mem  -- 編集中ファイルのバイト列 (list[int])
-#   cp   -- 現在のカーソル位置 (int, current position)
+#   mem  -- 編集中ファイルのバイト列 (bytearray)。MemoryBuffer.mem は
+#           このグローバルを直接参照するプロパティで、二重管理はしない。
+#   cp   -- 現在のカーソル位置 (int, current position)。BiEditor.cp も同様。
 #   setmem(addr, data) -- memへの書き込みヘルパー
+#
+#   bytearray を使うのは、旧実装の「1バイトごとに Python の int オブジェクトを
+#   保持する list[int]」だと大きいファイル(バイナリエディタ本来の用途である
+#   ディスクイメージや実行ファイルなど)でメモリ使用量・編集速度が破綻するため。
 # ========================================================================
-mem: list = []
+mem: bytearray = bytearray()
 cp: int = 0
 
 def setmem(addr: int, data: int) -> None:
     """グローバルな mem[] にバイト値を書き込む。
-    addr がリスト末尾を超える場合は自動的に拡張する。
-    BiEditor.call_exec() が実行後に self.memory.mem へ同期する。
+    addr がバッファ末尾を超える場合は自動的に0埋め拡張する。
     """
     global mem
-    while len(mem) <= addr:
-        mem.append(0)
+    if addr >= len(mem):
+        mem += bytearray(addr - len(mem) + 1)
     mem[addr] = int(data) & 0xff
 
 
@@ -212,10 +217,11 @@ class Terminal:
     def getch():
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
-        tty.setraw(sys.stdin.fileno())
-        ch = sys.stdin.read(1)
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        return ch
+        try:
+            tty.setraw(fd)
+            return sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 class HistoryManager:
@@ -240,7 +246,8 @@ class HistoryManager:
         self.set_history_list(mode)
         try:
             user_input = input(s)
-        except:
+        except (EOFError, KeyboardInterrupt):
+            # Ctrl+D/Ctrl+C でのコマンドライン入力中断はキャンセル扱いにする
             user_input = ""
         
         self.histories[mode] = self.get_history_list()
@@ -248,16 +255,43 @@ class HistoryManager:
 
 
 class MemoryBuffer:
-    """メモリバッファ管理クラス"""
+    """メモリバッファ管理クラス。
+
+    バッファ実体はモジュールグローバルの mem (bytearray) そのもの。
+    self.mem はそのグローバルを直接読み書きするプロパティであり、
+    インスタンスごとにコピーを持たない（@exec / {}eval からの mem[] 参照
+    と同一の実体を指すことを保証し、手動同期を不要にするため）。
+    """
     UNKNOWN = 0xffffffffffffffffffffffffffffffff
-    
+
     def __init__(self):
-        self.mem = []
+        self.mem = bytearray()
         self.yank = []
         self.mark = [self.UNKNOWN] * 26
         self.modified = False
         self.lastchange = False
         self._diff_log = None   # None=非記録中, list=記録中
+        # save_undo_state()/commit_undo() の呼び出し漏れ検出用フック。
+        # BiEditor が設定する（scripting中は undo を意図的に無効化しているため
+        # 呼ばれない）。将来コマンドを追加する際に undo 記録を忘れると、
+        # 変更が undo_stack に載らず「静かに」undo 不能になるのを防ぐ。
+        self._untracked_mutation_hook = None
+
+    @property
+    def mem(self):
+        return globals()['mem']
+
+    @mem.setter
+    def mem(self, value):
+        global mem
+        mem = value if isinstance(value, bytearray) else bytearray(value)
+
+    def set_untracked_mutation_hook(self, fn):
+        self._untracked_mutation_hook = fn
+
+    def _check_untracked(self):
+        if self._diff_log is None and self._untracked_mutation_hook is not None:
+            self._untracked_mutation_hook()
 
     # ------------------------------------------------------------------
     # 差分記録 API
@@ -275,20 +309,20 @@ class MemoryBuffer:
     def cancel_diff(self):
         """差分記録を破棄して終了する"""
         self._diff_log = None
-    
+
     def __len__(self):
         return len(self.mem)
-    
+
     def readmem(self, addr):
         if addr >= len(self.mem):
             return 0
         return self.mem[addr] & 0xff
-    
+
     def setmem(self, addr, data):
+        self._check_untracked()
         orig_len = len(self.mem)
         if addr >= len(self.mem):
-            for i in range(addr - len(self.mem) + 1):
-                self.mem.append(0)
+            self.mem += bytearray(addr - len(self.mem) + 1)
         old_val = self.mem[addr]
         new_val = int(data) & 0xff
         if self._diff_log is not None:
@@ -297,8 +331,10 @@ class MemoryBuffer:
         self.mem[addr] = new_val
         self.modified = True
         self.lastchange = True
-    
+
     def insmem(self, start, mem2):
+        self._check_untracked()
+        mem2 = bytearray(b & 0xff for b in mem2)
         if start >= len(self.mem):
             # 末尾を超える挿入: N..start-1 を 0 で埋めてから mem2 を連結。
             # 差分ログには「実際に挿入された領域 (0埋め分 + mem2)」を旧末尾
@@ -306,43 +342,42 @@ class MemoryBuffer:
             # _apply_diff_inverse の 'ins'(=del mem[start:start+len(data)])
             # で 0埋め分が消えず、undo が完全に元へ戻らない。
             old_len = len(self.mem)
-            inserted = [0] * (start - old_len) + list(mem2)
+            inserted = bytearray(start - old_len) + mem2
             if self._diff_log is not None:
                 self._diff_log.append(('ins', old_len, list(inserted)))
-            self.mem = self.mem + inserted
+            self.mem += inserted
             self.modified = True
             self.lastchange = True
             return
-        
+
         if self._diff_log is not None:
             self._diff_log.append(('ins', start, list(mem2)))
-        mem1 = self.mem[:start]
-        mem3 = self.mem[start:]
-        self.mem = mem1 + mem2 + mem3
+        self.mem[start:start] = mem2
         self.modified = True
         self.lastchange = True
-    
+
     def delmem(self, start, end, yf, yankmem_func):
         length = end - start + 1
         if length <= 0 or start >= len(self.mem) or end>len(self.mem)-1:
             return False
-        
+        self._check_untracked()
+
         if self._diff_log is not None:
             self._diff_log.append(('del', start, list(self.mem[start:end+1])))
-        
+
         if yf:
             yankmem_func(start, end)
-        
-        self.mem = self.mem[:start] + self.mem[end+1:]
+
+        del self.mem[start:end+1]
         self.lastchange = True
         self.modified = True
         return True
-    
+
     def yankmem(self, start, end):
         length = end - start + 1
         if length <= 0 or start >= len(self.mem):
             return 0
-        
+
         self.yank = []
         cnt = 0
         for j in range(start, end + 1):
@@ -350,11 +385,14 @@ class MemoryBuffer:
                 cnt += 1
                 self.yank.append(self.mem[j] & 0xff)
         return cnt
-    
+
     def ovwmem(self, start, mem0):
         if not mem0:
             return
-        
+        self._check_untracked()
+
+        mem0 = bytearray(b & 0xff for b in mem0)
+
         if self._diff_log is not None:
             orig_len = len(self.mem)
             # 変更前の該当領域を保存（拡張予定分は 0 で補完）
@@ -362,20 +400,17 @@ class MemoryBuffer:
             while len(old_region) < len(mem0):
                 old_region.append(0)
             self._diff_log.append(('ovw_region', start, old_region, list(mem0), orig_len))
-        
-        if start + len(mem0) >= len(self.mem):
-            for j in range(start + len(mem0) - len(self.mem)):
-                self.mem.append(0)
-        
-        for j in range(len(mem0)):
-            if start + j >= len(self.mem):
-                self.mem.append(mem0[j] & 0xff)
-            else:
-                self.mem[start + j] = mem0[j] & 0xff
-        
+
+        # start が末尾より先にある(ギャップができる)場合も含め、必要な長さまで
+        # まとめて0埋めしてから一括で置き換える。
+        final_len = max(len(self.mem), start + len(mem0))
+        if final_len > len(self.mem):
+            self.mem += bytearray(final_len - len(self.mem))
+        self.mem[start:start+len(mem0)] = mem0
+
         self.lastchange = True
         self.modified = True
-    
+
     def redmem(self, start, end):
         m = []
         for i in range(start, end + 1):
@@ -384,19 +419,17 @@ class MemoryBuffer:
             else:
                 m.append(0)
         return m
-    
+
     def regulate_mem(self):
-        for i in range(len(self.mem)):
-            try:
-                self.mem[i] = self.mem[i] & 0xff
-            except:
-                self.mem[i] = 0
+        """bytearray は要素が常に 0-255 の int であることを型として保証する
+        ため、現在は前方互換のための no-op(大きいバッファでの無駄な
+        O(n) ループを避ける)。"""
+        pass
 
 
 class SearchEngine:
     """検索エンジンクラス"""
-    RELEN = 128
-    
+
     def __init__(self, memory_buffer, display, get_flags=None):
         self.memory = memory_buffer
         self.display = display
@@ -406,6 +439,8 @@ class SearchEngine:
         self.remem = ''
         self.span = 0
         self.nff = True
+        self._regex_matches = None  # begin_scan() までは None (未走査)
+        self._regex_error = False
 
     def stdmm(self, s):
         if self.get_flags is not None:
@@ -431,70 +466,77 @@ class SearchEngine:
                 return 0
         return 1
     
+    def begin_scan(self):
+        """新しい検索操作の開始時に呼ぶ: hitre() の全マッチキャッシュを破棄する。
+
+        旧実装は hitre(addr) 呼び出しのたびにアドレスから固定128バイトだけを
+        切り出して re.match を試みていたため、128バイトを超える位置に
+        マッチの後半がある正規表現（例: 'A+END' で A が129個以上続く場合）
+        を検出できなかった。バッファ全体を対象に re.finditer を一度だけ
+        走査してマッチ開始位置を全て求めておき、hitre() はその結果を
+        参照するだけにすることで、長さの制限なく正しくマッチできるように
+        している（走査自体も1バイトずつ Python で re.match するより高速）。
+        """
+        self._regex_matches = None
+        self._regex_error = False
+
+    def _ensure_regex_scan(self):
+        if self._regex_matches is not None or self._regex_error:
+            return
+        self._regex_matches = {}
+        if not self.remem:
+            return
+        try:
+            pattern = re.compile(self.remem)
+        except re.error:
+            self._regex_error = True
+            return
+
+        raw = bytes(self.memory.mem)
+        try:
+            text = raw.decode('utf-8')
+            encoding = 'utf-8'
+        except UnicodeDecodeError:
+            text = raw.decode('latin-1')
+            encoding = 'latin-1'
+
+        if encoding == 'latin-1':
+            # latin-1 は1バイト=1文字なので文字位置がそのままバイト位置になる
+            for m in pattern.finditer(text):
+                self._regex_matches.setdefault(m.start(), m.end() - m.start())
+        else:
+            # utf-8 は文字位置とバイト位置がずれるため対応表を作る
+            char_to_byte = []
+            b = 0
+            for ch in text:
+                char_to_byte.append(b)
+                b += len(ch.encode('utf-8'))
+            char_to_byte.append(b)  # 番兵(文字列末尾のバイト位置)
+            for m in pattern.finditer(text):
+                start_b = char_to_byte[m.start()]
+                end_b = char_to_byte[m.end()]
+                self._regex_matches.setdefault(start_b, end_b - start_b)
+
     def hitre(self, addr):
         if not self.remem:
             return -1
-        
+
         self.span = 0
-        m = []
-        
-        if addr < len(self.memory.mem) - self.RELEN:
-            m = self.memory.mem[addr:addr + self.RELEN]
-        else:
-            m = self.memory.mem[addr:]
-        
-        byte_data = bytes(m)
-        
-        # 複数のエンコーディングを試行（バイナリセーフ対応）
-        encodings = ['utf-8', 'latin-1']
-        
-        for encoding in encodings:
-            try:
-                # まず文字列としてマッチを試みる
-                ms = byte_data.decode(encoding, errors='strict')
-                
-                try:
-                    f = re.match(self.remem, ms)
-                except re.error:
-                    # 正規表現パターンエラー
-                    return -1
-                
-                if f:
-                    start, end = f.span()
-                    matched_str = ms[start:end]
-                    
-                    # マッチした文字列を同じエンコーディングでバイト列に戻す
-                    try:
-                        matched_bytes = matched_str.encode(encoding)
-                        self.span = len(matched_bytes)
-                        return 1
-                    except (UnicodeEncodeError, UnicodeDecodeError):
-                        # このエンコーディングでは正確に変換できない
-                        continue
-                
-            except (UnicodeDecodeError, LookupError):
-                # このエンコーディングでデコードできない場合は次を試す
-                continue
-        
-        # すべてのエンコーディングで失敗した場合、バイト列として直接マッチを試みる
-        try:
-            # パターンをバイト列として扱う（latin-1は1バイト=1文字なので安全）
-            pattern_bytes = self.remem.encode('latin-1')
-            f = re.match(pattern_bytes, byte_data)
-            
-            if f:
-                start, end = f.span()
-                self.span = end - start
-                return 1
-        except (re.error, UnicodeEncodeError, UnicodeDecodeError):
-            pass
-        
-        return 0
+        self._ensure_regex_scan()
+        if self._regex_error:
+            return -1
+
+        span = self._regex_matches.get(addr)
+        if span is None:
+            return 0
+        self.span = span
+        return 1
     
     def searchnext(self, fp, mem_len):
         if mem_len == 0:
             self.clrmm()
             return None
+        self.begin_scan()
         curpos = fp
         start = fp
         wrapped = False
@@ -533,6 +575,7 @@ class SearchEngine:
         if mem_len == 0:
             self.clrmm()
             return None
+        self.begin_scan()
         wrapped = False
         if fp < 0:
             fp = mem_len - 1
@@ -571,7 +614,8 @@ class SearchEngine:
             return matches
         if not self.regexp and not self.smem:
             return matches
-        
+        self.begin_scan()
+
         self.stdmm_wait("Searching all matches...")
         curpos = 0
         
@@ -681,7 +725,7 @@ class Display:
                     # 2バイト=2桁ぶんに揃えるため末尾空白1つ(3/4バイト分岐と同様の整列)
                     print(f"{ch} ", end='', flush=True)
                     return 2
-                except:
+                except UnicodeDecodeError:
                     print(".", end='')
                     return 1
             elif 0xe0 <= self.memory.mem[a] <= 0xef:
@@ -690,7 +734,7 @@ class Display:
                     ch = bytes(m).decode('utf-8')
                     print(f"{ch} ", end='', flush=True)
                     return 3
-                except:
+                except UnicodeDecodeError:
                     print(".", end='')
                     return 1
             elif 0xf0 <= self.memory.mem[a] <= 0xf7:
@@ -700,7 +744,7 @@ class Display:
                     ch = bytes(m).decode('utf-8')
                     print(f"{ch}  ", end='', flush=True)
                     return 4
-                except:
+                except UnicodeDecodeError:
                     print(".", end='')
                     return 1
         else:
@@ -881,8 +925,12 @@ class Parser:
                 return self.UNKNOWN, idx
             
             try:
-                v = int(eval(u))
-            except:
+                # {} は mem[]/cp を参照できる電卓式評価 (bi.doc 記載の仕様)。
+                # __builtins__ だけ封じて open()/__import__() 等の任意コード実行を防ぐ。
+                safe_globals = dict(globals())
+                safe_globals["__builtins__"] = {}
+                v = int(eval(u, safe_globals, {}))
+            except Exception:
                 return self.UNKNOWN, idx
         elif ch == '.':
             idx += 1
@@ -972,7 +1020,7 @@ class Parser:
                 s, idx = self.get_restr(line, idx)
                 try:
                     bseq = s.encode('utf-8')
-                except:
+                except UnicodeEncodeError:
                     return [], idx
                 m = list(bseq)
         else:
@@ -983,7 +1031,7 @@ class Parser:
         s, idx = self.get_restr(line, idx)
         try:
             bseq = s.encode('utf-8')
-        except:
+        except UnicodeEncodeError:
             return [], idx
         m = list(bseq)
         return m, idx
@@ -1037,7 +1085,7 @@ class FileManager:
         else:
             self.newfile = False
             try:
-                self.memory.mem = list(f.read())
+                self.memory.mem = bytearray(f.read())
                 f.close()
                 return True, None
             except MemoryError:
@@ -1056,9 +1104,9 @@ class FileManager:
             f.write(bytes(self.memory.mem))
             f.close()
             return True, "File written."
-        except:
-            return False, "Permission denied."
-    
+        except OSError as e:
+            return False, f"Cannot write '{fn}': {e.strerror or e}."
+
     def wrtfile(self, start, end, fn):
         self.memory.regulate_mem()
         try:
@@ -1070,8 +1118,8 @@ class FileManager:
                     f.write(bytes([0]))
             f.close()
             return True, None
-        except:
-            return False, "Permission denied."
+        except OSError as e:
+            return False, f"Cannot write '{fn}': {e.strerror or e}."
     def readfile_partial(self, fn, offset, max_len=0):
         """パーシャルリード: fn の offset から max_len バイト(0=EOF まで)を読む"""
         global g_partial
@@ -1107,10 +1155,10 @@ class FileManager:
             f.close()
         except OSError:
             try: f.close()
-            except: pass
+            except OSError: pass
             return False, f"Partial read error: I/O error reading '{fn}'."
         actually_read = len(data)
-        self.memory.mem = list(data)
+        self.memory.mem = bytearray(data)
         g_partial.active = True
         g_partial.offset = offset
         g_partial.length = actually_read
@@ -1180,7 +1228,7 @@ class FileManager:
             f.close()
         except OSError:
             try: f.close()
-            except: pass
+            except OSError: pass
             return False, f"Partial write error: I/O error while writing '{fn}'."
         if written != len(self.memory.mem):
             return False, f"Partial write error: wrote {written}/{len(self.memory.mem)} bytes to '{fn}'."
@@ -1197,6 +1245,7 @@ class BiEditor:
         self.cmdmode = False
         self.term = Terminal(termcol, get_scripting=lambda: self.scriptingflag)
         self.memory = MemoryBuffer()
+        self.memory.set_untracked_mutation_hook(self._warn_untracked_mutation)
         self.display = Display(self.term, self.memory)
         self.parser = Parser(self.memory, self.display)
         self.history = HistoryManager()
@@ -1207,6 +1256,8 @@ class BiEditor:
         self.stack = []
         self.cp = 0
         self.endian = 'little'  # エンディアン ('little' or 'big')
+        # ↑ self.cp はモジュールグローバル cp を直接読み書きするプロパティ
+        # (下記参照)。@exec / {}eval が参照する cp と同一の実体を保証する。
         
         # Undo/Redo機能用（差分方式）
         self.undo_stack = []  # 各エントリ: {'diff': [...], 'mark_before': [...], ...}
@@ -1218,7 +1269,23 @@ class BiEditor:
         # stderr() を経由したエラーが一度でも発生したかを記録する。
         # 非対話(-s/-c)実行時の終了コード判定に使う（対話編集中は無視）。
         self.error_occurred = False
-    
+
+    @property
+    def cp(self):
+        return globals()['cp']
+
+    @cp.setter
+    def cp(self, value):
+        global cp
+        cp = value
+
+    def _warn_untracked_mutation(self):
+        """save_undo_state()/commit_undo() の対で囲まれていないバッファ変更を
+        検出したときの通知。scripting中は undo を意図的に無効化しているため
+        対象外（save_undo_state が begin_diff を呼ばないのは仕様通り）。"""
+        if not self.scriptingflag:
+            self.stderr("warning: buffer modified without undo tracking (missing save_undo_state?).")
+
     def stdmm(self, s):
         self.display.stdmm(s, self.scriptingflag, self.verbose)
 
@@ -1474,10 +1541,8 @@ class BiEditor:
             return
         line = line[1:]
 
-        # exec() 実行前にグローバルを最新状態に合わせる
-        global mem, cp
-        mem = self.memory.mem
-        cp  = self.cp
+        # self.memory.mem / self.cp はグローバル mem/cp を直接指すプロパティ
+        # なので、exec() 実行前に別途同期する必要はない。
 
         # @exec はバッファ(mem)を任意に書き換えられるが、通常コマンドと違い
         # MemoryBuffer.setmem() を経由しないため差分ログに乗らない。
@@ -1505,12 +1570,13 @@ class BiEditor:
                 Terminal.getch()
                 self.term.clear()
                 self.display.repaint(self.filemgr.filename)
-        except:
-            self.stderr("python exec() error.")
+        except Exception as e:
+            self.stderr(f"python exec() error: {e}")
             return
 
-        # exec() がグローバルの mem を差し替えた場合も含めて書き戻す
-        self.memory.mem = mem
+        # exec() が mem をリスト等の非bytearrayに差し替えた場合に備え型を正規化する
+        # (self.mem のセッターが bytearray へ変換する)。
+        self.memory.mem = self.memory.mem
         # バッファが実際に変化した場合のみ modified/lastchange を更新する
         if list(self.memory.mem) != buf_before:
             self.memory.modified   = True
@@ -1572,11 +1638,8 @@ class BiEditor:
         ch = ''
         
         while True:
+            # self.cp はグローバル cp を直接指すプロパティなので同期不要
             self.cp = self.display.fpos()
-            # グローバル変数を最新状態に同期 (@exec / {}eval から参照可能)
-            global mem, cp
-            mem = self.memory.mem
-            cp  = self.cp
             self.display.repaint(self.filemgr.filename)
             self.display.printdata()
             self.term.locate(self.display.curx // 2 * 3 + 13 + (self.display.curx & 1), self.display.cury + 3)
@@ -1938,11 +2001,8 @@ class BiEditor:
     
     def commandline_(self, line):
         """コマンド処理メイン"""
+        # self.cp はグローバル cp を直接指すプロパティなので同期不要
         self.cp = self.display.fpos()
-        # グローバル変数を最新状態に同期 (@exec / {}eval から参照可能)
-        global mem, cp
-        mem = self.memory.mem
-        cp  = self.cp
         if line.startswith('@'):
             # '@'コマンド(Python exec)行はコメント除去をしない。
             # 文字列リテラル内の '#' がコメントと誤認識されるのを防ぐため。
@@ -2482,10 +2542,10 @@ class BiEditor:
             read_error = False
             try:
                 f = open(fn, "rb")
-                data = list(f.read())
+                data = bytearray(f.read())
                 f.close()
-            except:
-                self.stderr("File read error.")
+            except OSError as e:
+                self.stderr(f"File read error: {e.strerror or e}.")
                 read_error = True
             if data:
                 self.save_undo_state()
@@ -3162,9 +3222,12 @@ class BiEditor:
     def searchnextnoloop(self, fp):
         """ループしない検索"""
         cur_pos = fp
-        
+
         if not self.search.regexp and not self.search.smem:
             return 0
+        # 呼び出し元(scommand)は置換のたびにバッファを書き換えて再度呼ぶため、
+        # 毎回キャッシュを作り直して新しいバッファ内容に対して探索する。
+        self.search.begin_scan()
         self.stdmm_wait("Wait.")
         while True:
             if self.search.regexp:
@@ -3192,8 +3255,8 @@ class BiEditor:
         """スクリプト実行"""
         try:
             f = open(scriptfile, "rt")
-        except:
-            self.stderr("Script file open error.")
+        except OSError as e:
+            self.stderr(f"Script file open error: {e.strerror or e}.")
             return False
         
         line = f.readline()
@@ -3213,6 +3276,30 @@ class BiEditor:
         
         f.close()
         return 0
+
+
+def _emergency_save_path(original_file):
+    """緊急保存用のパスを決定する。既存ファイルを絶対に上書きしない。"""
+    base = f"{original_file}.save" if original_file else "bi.save"
+    if not os.path.exists(base):
+        return base
+    candidate = f"{base}.{time.strftime('%Y%m%d-%H%M%S')}"
+    path = candidate
+    n = 0
+    while os.path.exists(path):
+        n += 1
+        path = f"{candidate}.{n}"
+    return path
+
+
+def _emergency_save(editor, original_file):
+    """予期しない例外/中断発生時にバッファを退避保存する。戻り値: 保存先パス or None"""
+    path = _emergency_save_path(original_file)
+    try:
+        ok, _msg = editor.filemgr.writefile(path)
+        return path if ok else None
+    except Exception:
+        return None
 
 
 def main():
@@ -3290,8 +3377,8 @@ def main():
 
     # スクリプト/コマンド実行、またはインタラクティブモード
     exit_code = 0
-    if noninteractive:
-        try:
+    try:
+        if noninteractive:
             if args.script:
                 editor.scripting(args.script)
                 if not editor.memory.lastchange:
@@ -3314,27 +3401,32 @@ def main():
                 else:
                     print(wmsg, file=sys.stderr)
                     exit_code = 1
-        except Exception as exc:
-            editor.filemgr.writefile("file.save")
-            editor.stderr(f"Some error occured ({exc}). memory saved to file.save.")
-            exit_code = 1
-        # 非対話実行中に stderr() を経由したエラーが出ていれば失敗扱い。
-        if editor.error_occurred:
-            exit_code = 1
-    else:
-        try:
+            # 非対話実行中に stderr() を経由したエラーが出ていれば失敗扱い。
+            if editor.error_occurred:
+                exit_code = 1
+        else:
             editor.fedit()
-        except Exception as exc:
-            editor.filemgr.writefile("file.save")
-            editor.stderr(f"Some error occured ({exc}). memory saved to file.save.")
-            exit_code = 1
+    except KeyboardInterrupt:
+        # Ctrl+C: 端末復帰は finally に任せ、変更があれば退避保存する。
+        if editor.memory.lastchange:
+            saved = _emergency_save(editor, args.file)
+            if saved:
+                print(f"\nInterrupted. memory saved to {saved}.", file=sys.stderr)
+        exit_code = 130
+    except Exception as exc:
+        saved = _emergency_save(editor, args.file)
+        if saved:
+            editor.stderr(f"Some error occured ({exc}). memory saved to {saved}.")
+        else:
+            editor.stderr(f"Some error occured ({exc}). emergency save also failed.")
+        exit_code = 1
         # 対話モードでは通常の操作エラー（タイプミス等）は終了コードに
-        # 影響させない。想定外の例外で file.save へ退避した場合のみ exit(1)。
-
-    # 終了処理
-    editor.term.color(7)
-    editor.term.dispcursor()
-    editor.term.locate(0, editor.display.BOTTOMLN+1)
+        # 影響させない。想定外の例外で退避保存した場合のみ exit(1)。
+    finally:
+        # 終了処理（Ctrl+C や例外で中断した場合も必ず端末を復帰させる）
+        editor.term.color(7)
+        editor.term.dispcursor()
+        editor.term.locate(0, editor.display.BOTTOMLN+1)
 
     if exit_code:
         sys.exit(exit_code)
