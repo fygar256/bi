@@ -1085,24 +1085,20 @@ class FileManager:
         else:
             self.newfile = False
             try:
-                self.memory.mem = bytearray(f.read())
-                f.close()
+                with f:
+                    self.memory.mem = bytearray(f.read())
                 return True, None
             except MemoryError:
-                f.close()
                 return False, "Memory overflow."
             except OSError as e:
                 # 読み込み中の I/O エラーも握り潰さず報告する。
-                try: f.close()
-                except OSError: pass
                 return False, f"Read error on '{fn}': {e.strerror or e}."
     
     def writefile(self, fn):
         self.memory.regulate_mem()
         try:
-            f = open(fn, "wb")
-            f.write(bytes(self.memory.mem))
-            f.close()
+            with open(fn, "wb") as f:
+                f.write(bytes(self.memory.mem))
             return True, "File written."
         except OSError as e:
             return False, f"Cannot write '{fn}': {e.strerror or e}."
@@ -1110,13 +1106,12 @@ class FileManager:
     def wrtfile(self, start, end, fn):
         self.memory.regulate_mem()
         try:
-            f = open(fn, "wb")
-            for i in range(start, end + 1):
-                if i < len(self.memory.mem):
-                    f.write(bytes([self.memory.mem[i]]))
-                else:
-                    f.write(bytes([0]))
-            f.close()
+            with open(fn, "wb") as f:
+                for i in range(start, end + 1):
+                    if i < len(self.memory.mem):
+                        f.write(bytes([self.memory.mem[i]]))
+                    else:
+                        f.write(bytes([0]))
             return True, None
         except OSError as e:
             return False, f"Cannot write '{fn}': {e.strerror or e}."
@@ -1139,24 +1134,20 @@ class FileManager:
             return False, f"Cannot open '{fn}': permission denied."
         except OSError as e:
             return False, f"Cannot open '{fn}': {e.strerror or e}."
-        try:
-            fsize = f.seek(0, 2)
-        except OSError:
-            f.close()
-            return False, f"Partial read error: cannot seek '{fn}'."
-        if fsize <= offset:
-            f.close()
-            return False, f"Partial read error: offset 0x{offset:X} exceeds file size (0x{fsize:X})."
-        available = fsize - offset
-        read_len = available if (max_len == 0 or max_len > available) else max_len
-        try:
-            f.seek(offset)
-            data = f.read(read_len)
-            f.close()
-        except OSError:
-            try: f.close()
-            except OSError: pass
-            return False, f"Partial read error: I/O error reading '{fn}'."
+        with f:
+            try:
+                fsize = f.seek(0, 2)
+            except OSError:
+                return False, f"Partial read error: cannot seek '{fn}'."
+            if fsize <= offset:
+                return False, f"Partial read error: offset 0x{offset:X} exceeds file size (0x{fsize:X})."
+            available = fsize - offset
+            read_len = available if (max_len == 0 or max_len > available) else max_len
+            try:
+                f.seek(offset)
+                data = f.read(read_len)
+            except OSError:
+                return False, f"Partial read error: I/O error reading '{fn}'."
         actually_read = len(data)
         self.memory.mem = bytearray(data)
         g_partial.active = True
@@ -1197,38 +1188,35 @@ class FileManager:
         except OSError:
             # ファイルが存在しない場合は新規作成
             try:
-                f = open(fn, "wb")
-                if g_partial.offset > 0:
-                    f.write(b'\x00' * g_partial.offset)
-                f.write(bytes(self.memory.mem))
-                f.close()
+                with open(fn, "wb") as f:
+                    if g_partial.offset > 0:
+                        f.write(b'\x00' * g_partial.offset)
+                    f.write(bytes(self.memory.mem))
                 return True, f"Partial write: offset=0x{g_partial.offset:X}, {len(self.memory.mem)} bytes written (new file)."
             except OSError:
                 return False, f"Partial write error: cannot create '{fn}'."
         try:
-            # ① テールを読み退ける
-            tail_start = g_partial.offset + g_partial.length
-            f.seek(0, 2)                  # ファイル末尾
-            file_size = f.tell()
-            tail = b''
-            if tail_start < file_size:
-                f.seek(tail_start)
-                tail = f.read()
+            with f:
+                # ① テールを読み退ける
+                tail_start = g_partial.offset + g_partial.length
+                f.seek(0, 2)                  # ファイル末尾
+                file_size = f.tell()
+                tail = b''
+                if tail_start < file_size:
+                    f.seek(tail_start)
+                    tail = f.read()
 
-            # ② 新データを書く
-            f.seek(g_partial.offset)
-            written = f.write(bytes(self.memory.mem))
+                # ② 新データを書く
+                f.seek(g_partial.offset)
+                written = f.write(bytes(self.memory.mem))
 
-            # ③ テールを書き戻す
-            if tail:
-                f.write(tail)
+                # ③ テールを書き戻す
+                if tail:
+                    f.write(tail)
 
-            # ④ 余剰バイトを除去
-            f.truncate()
-            f.close()
+                # ④ 余剰バイトを除去
+                f.truncate()
         except OSError:
-            try: f.close()
-            except OSError: pass
             return False, f"Partial write error: I/O error while writing '{fn}'."
         if written != len(self.memory.mem):
             return False, f"Partial write error: wrote {written}/{len(self.memory.mem)} bytes to '{fn}'."
@@ -2548,9 +2536,8 @@ class BiEditor:
             data = []
             read_error = False
             try:
-                f = open(fn, "rb")
-                data = bytearray(f.read())
-                f.close()
+                with open(fn, "rb") as f:
+                    data = bytearray(f.read())
             except OSError as e:
                 self.stderr(f"File read error: {e.strerror or e}.")
                 read_error = True
@@ -3265,23 +3252,19 @@ class BiEditor:
         except OSError as e:
             self.stderr(f"Script file open error: {e.strerror or e}.")
             return False
-        
-        line = f.readline()
-        
-        while line:
-            if self.verbose:
-                print(line,end='')
-            line=line.strip()
-            flag = self.commandline(line)
-            if flag == 0:
-                f.close()
-                return 0
-            elif flag == 1:
-                f.close()
-                return 1
+
+        with f:
             line = f.readline()
-        
-        f.close()
+            while line:
+                if self.verbose:
+                    print(line,end='')
+                line=line.strip()
+                flag = self.commandline(line)
+                if flag == 0:
+                    return 0
+                elif flag == 1:
+                    return 1
+                line = f.readline()
         return 0
 
 

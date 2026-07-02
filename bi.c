@@ -2109,12 +2109,24 @@ bool filemgr_writefile(FileManager *fmgr, const char *filename, char *msg, size_
         if (msg) snprintf(msg, msg_size, "Permission denied.");
         return false;
     }
-    
+
+    /* [破綻点修正] fwrite() の戻り値(実際に書けたバイト数)を確認していなかった
+     * ため、ディスクフル等で書き込みが失敗・途中で止まっても "File written."
+     * と成功報告してしまい、データ消失に気づけなかった(/dev/full で実証)。
+     * fwrite() の戻り値と ferror() を確認し、失敗時は false を返す。 */
+    bool write_ok = true;
     if (fmgr->memory->mem.size > 0) {
-        fwrite(fmgr->memory->mem.data, 1, fmgr->memory->mem.size, f);
+        size_t written = fwrite(fmgr->memory->mem.data, 1, fmgr->memory->mem.size, f);
+        if (written != fmgr->memory->mem.size || ferror(f)) {
+            write_ok = false;
+        }
     }
-    
-    fclose(f);
+
+    int close_rc = fclose(f);
+    if (!write_ok || close_rc != 0) {
+        if (msg) snprintf(msg, msg_size, "Write error: '%s' (disk full or I/O error).", filename);
+        return false;
+    }
     if (msg) snprintf(msg, msg_size, "File written.");
     return true;
 }
@@ -2200,16 +2212,26 @@ bool filemgr_writefile_partial(FileManager *fmgr, const char *filename,
             return false;
         }
         /* 新規の場合は offset バイト分ゼロ埋め */
+        /* [破綻点修正] fwrite() の戻り値を確認していなかったため、
+         * ディスクフル等で失敗しても成功報告していた(filemgr_writefile と同種)。 */
+        bool write_ok = true;
         if (g_partial.offset > 0) {
             uint8_t zero = 0;
             for (size_t i = 0; i < g_partial.offset; i++) {
-                fwrite(&zero, 1, 1, f);
+                if (fwrite(&zero, 1, 1, f) != 1) { write_ok = false; break; }
             }
         }
-        if (fmgr->memory->mem.size > 0) {
-            fwrite(fmgr->memory->mem.data, 1, fmgr->memory->mem.size, f);
+        if (write_ok && fmgr->memory->mem.size > 0) {
+            size_t written = fwrite(fmgr->memory->mem.data, 1, fmgr->memory->mem.size, f);
+            if (written != fmgr->memory->mem.size) write_ok = false;
         }
-        fclose(f);
+        if (write_ok && ferror(f)) write_ok = false;
+        int close_rc = fclose(f);
+        if (!write_ok || close_rc != 0) {
+            if (msg) snprintf(msg, msg_size,
+                              "Partial write error: disk full or I/O error writing '%s'.", filename);
+            return false;
+        }
         if (msg) snprintf(msg, msg_size,
                           "Partial write: offset=0x%zX, %zu bytes written (new file).",
                           g_partial.offset, fmgr->memory->mem.size);
@@ -2559,6 +2581,29 @@ static bool editor_regex_valid(const char *pattern, char *errbuf, size_t errsz) 
     return true;
 }
 
+/* [破綻点] 標準入力がEOFに達した場合の緊急保存先パスを決める。
+ * 既存ファイルは絶対に上書きしない（衝突時は連番を付ける）。 */
+static void fedit_emergency_save_path(const char *orig, char *out, size_t outsz) {
+    char base[4096+8];
+    if (orig && orig[0])
+        snprintf(base, sizeof(base), "%s.save", orig);
+    else
+        snprintf(base, sizeof(base), "bi.save");
+    if (access(base, F_OK) != 0) {
+        snprintf(out, outsz, "%s", base);
+        return;
+    }
+    for (int n = 1; n < 10000; n++) {
+        char cand[4096+24];
+        snprintf(cand, sizeof(cand), "%s.%d", base, n);
+        if (access(cand, F_OK) != 0) {
+            snprintf(out, outsz, "%s", cand);
+            return;
+        }
+    }
+    snprintf(out, outsz, "%s.fallback", base);
+}
+
 /* ========================================================================
  * Editor fedit - フルスクリーンエディタモード
  * ======================================================================== */
@@ -2567,20 +2612,46 @@ void editor_fedit(BiEditor *editor) {
     bool stroke = false;
     int ch = 0;
     editor->display.repsw = 0;
-    
+
     while (true) {
         editor->cp = display_fpos(&editor->display);
         display_repaint(&editor->display, editor->filemgr.filename);
         display_printdata(&editor->display);
-        
+
         // カーソル位置
         terminal_locate(&editor->term,
                        editor->display.curx / 2 * 3 + 13 + (editor->display.curx & 1),
                        editor->display.cury + 3);
         terminal_dispcursor(&editor->term);
         fflush(stdout);
-        
+
         ch = terminal_getch();
+
+        /* [破綻点修正] 標準入力がEOFに達すると(端末/SSH切断等)、
+         * terminal_getch()はgetchar()経由で以後ずっとEOF(-1)を返し続ける。
+         * どの分岐にも一致しないため、このままではループが画面再描画だけを
+         * 猛烈な速度で繰り返すCPU100%のビジーループになる
+         * (実測: 1.5秒で12MB超の端末出力)。
+         * ここでEOFを検出し、未保存の変更があれば退避保存してから
+         * 終了する。 */
+        if (ch == EOF) {
+            terminal_color(&editor->term, 7, 0);
+            terminal_locate(&editor->term, 0, BOTTOMLN);
+            if (editor->memory.lastchange) {
+                char savepath[4096+32];
+                char msg[256];
+                fedit_emergency_save_path(editor->filemgr.filename, savepath, sizeof(savepath));
+                if (filemgr_writefile(&editor->filemgr, savepath, msg, sizeof(msg))) {
+                    fprintf(stderr, "\nstdin reached EOF. memory saved to %s.\n", savepath);
+                } else {
+                    fprintf(stderr, "\nstdin reached EOF. emergency save failed: %s\n", msg);
+                }
+            } else {
+                fprintf(stderr, "\nstdin reached EOF.\n");
+            }
+            return;
+        }
+
         display_clrmm(&editor->display);
         editor->search.nff = true;
         
@@ -3835,23 +3906,19 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
         const char *nc = &parsed_line[idx];
         bool is_rp = (nc[0] == 'r' && nc[1] == 'p');
         if (g_partial.active && g_partial.offset > 0 && !is_rp) {
+            /* [破綻点修正] bi.py の同じ変換 (parse_range_command) は
+             * max(0, x - g_partial.offset) で「オフセットより小さい絶対
+             * アドレス」を0にクランプするだけで、エラーにはしない。
+             * この C 版は同じ状況を "Invalid range." として拒否しており、
+             * 例えば -o 4 -l 4 でロードした状態で "0i.." (絶対アドレス0
+             * < offset=4) はPython版では正常に処理される(バッファ先頭
+             * として0に丸められる)のに、こちらでは失敗していた。
+             * bi.py と同じ「0にクランプ」に合わせる。 */
             if (xf) {
-                if (x  >= g_partial.offset)
-                    x = x  - g_partial.offset;
-                else {
-                    display_stderr(&editor->display, "Invalid range.", 
-                                   editor->scriptingflag, editor->verbose);
-                    return -1;
-                    }
+                x = (x >= g_partial.offset) ? (x - g_partial.offset) : 0;
             }
             if (xf2) {
-                if (x2  >= g_partial.offset)
-                    x2 = x2  - g_partial.offset;
-                else {
-                    display_stderr(&editor->display, "Invalid range.", 
-                                   editor->scriptingflag, editor->verbose);
-                    return -1;
-                    }
+                x2 = (x2 >= g_partial.offset) ? (x2 - g_partial.offset) : 0;
             }
             else if (xf) x2 = x;  /* x2 = x と連動していたケース */
         }
@@ -3997,11 +4064,23 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             return -1;
         }
         size_t written = fwrite(data.data, 1, data.size, f);
-        fclose(f);
+        bool write_ok = (written == data.size) && !ferror(f);
+        /* fclose() 自体もバッファのフラッシュ失敗(ENOSPC等)を戻り値で報告する。
+         * 小さい書き込みは fwrite() 時点では成功して見えても、実際のディスクへの
+         * 反映は fclose() 時のフラッシュで初めて失敗することがある(/dev/full で実証)。 */
+        if (fclose(f) != 0) write_ok = false;
 
         char msg[256];
-        snprintf(msg, sizeof(msg), "%zu bytes written to '%s'", written, fname);
-        display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+        if (!write_ok) {
+            /* [破綻点修正] 短い書き込みを成功扱いのまま件数だけ表示していた。
+             * 失敗を明確なエラーとして報告する(filemgr_writefile と同種の修正)。 */
+            snprintf(msg, sizeof(msg), "error - write failed: only %zu/%zu bytes written to '%s'.",
+                     written, data.size, fname);
+            display_stderr(&editor->display, msg, editor->scriptingflag, editor->verbose);
+        } else {
+            snprintf(msg, sizeof(msg), "%zu bytes written to '%s'", written, fname);
+            display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
+        }
 
         bytearray_free(&data);
         return -1;
@@ -4416,14 +4495,10 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     }
     if (cmd=='c' || cmd=='C' || cmd=='v' || cmd=='f') {
         /* パーシャル編集中: x3 もバッファ相対に変換 */
+        /* [破綻点修正] bi.py (x3 = max(0, x3 - g_partial.offset)) と同じく
+         * 0にクランプする。エラーにはしない。 */
         if (g_partial.active && g_partial.offset > 0) {
-            if (x3 >= g_partial.offset)
-                x3 = x3 - g_partial.offset;
-            else {
-                display_stderr(&editor->display, "Invalid range.", 
-                              editor->scriptingflag, editor->verbose);
-                return -1;
-                }
+            x3 = (x3 >= g_partial.offset) ? (x3 - g_partial.offset) : 0;
         }
     }
     // copy/Copy (c/C commands)
