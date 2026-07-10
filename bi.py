@@ -1673,7 +1673,7 @@ class BiEditor:
                             self.display.highlight_ranges = matches
                     self.display.jump(pos)
                 elif pos is None:
-                    self.stdmm("Not found.")
+                    self.stderr("Not found.")
                 continue
             elif ch == 'N':
                 pos = self.search.searchlast(self.display.fpos() - 1, len(self.memory))
@@ -1685,7 +1685,7 @@ class BiEditor:
                             self.display.highlight_ranges = matches
                     self.display.jump(pos)
                 elif pos is None:
-                    self.stdmm("Not found.")
+                    self.stderr("Not found.")
                 continue
             
             # Undo/Redo
@@ -1927,9 +1927,9 @@ class BiEditor:
                 return True
             else:
                 self.display.highlight_ranges = []
-                self.stdmm("Not found")
+                self.stderr("Not found")
         return False
-    
+
     def searchhex(self, sm):
         """16進検索 - 全てのマッチをハイライト"""
         self.search.remem = ''
@@ -1950,9 +1950,9 @@ class BiEditor:
                 return True
             else:
                 self.display.highlight_ranges = []
-                self.stdmm("Not found")
+                self.stderr("Not found")
         return False
-    
+
     def commandln(self):
         """コマンドライン入力"""
         self.term.locate(0, self.display.BOTTOMLN)
@@ -2160,6 +2160,8 @@ class BiEditor:
                     if matches:
                         self.display.highlight_ranges = matches
                 self.display.jump(pos)
+            else:
+                self.stderr("Not found.")
             return -1
         elif line[0] == 'N':
             if not self.search.regexp and not self.search.smem:
@@ -2172,6 +2174,8 @@ class BiEditor:
                     if matches:
                         self.display.highlight_ranges = matches
                 self.display.jump(pos)
+            else:
+                self.stderr("Not found.")
             return -1
         
         # 特殊コマンド

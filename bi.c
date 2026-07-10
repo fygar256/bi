@@ -2694,7 +2694,7 @@ void editor_fedit(BiEditor *editor) {
                 }
                 display_jump(&editor->display, pos);
             } else {
-                display_stdmm(&editor->display, "Not found.", editor->scriptingflag, editor->verbose);
+                display_stderr(&editor->display, "Not found.", editor->scriptingflag, editor->verbose);
             }
             continue;
         } else if (ch == 'N') {
@@ -2709,7 +2709,7 @@ void editor_fedit(BiEditor *editor) {
                 }
                 display_jump(&editor->display, pos);
             } else {
-                display_stdmm(&editor->display, "Not found.", editor->scriptingflag, editor->verbose);
+                display_stderr(&editor->display, "Not found.", editor->scriptingflag, editor->verbose);
             }
             continue;
         }
@@ -2839,7 +2839,7 @@ void editor_fedit(BiEditor *editor) {
                                     editor->display.highlight_ranges.size);
                             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                         } else {
-                            display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
+                            display_stderr(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
                         }
                     }
                 } else if (strlen(line) > 1 && line[0] == '/') {
@@ -2881,7 +2881,7 @@ void editor_fedit(BiEditor *editor) {
                                     editor->display.highlight_ranges.size);
                             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                         } else {
-                            display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
+                            display_stderr(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
                         }
                         }
                     }
@@ -3674,7 +3674,7 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
                             editor->display.highlight_ranges.size);
                     display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                 } else {
-                    display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
+                    display_stderr(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
                 }
             } else {
                 // 構文エラー: 検索パターンが無効
@@ -3688,18 +3688,18 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
             char pattern[LINE_MAX_SIZE];
             strncpy(pattern, parsed_line + 1, LINE_MAX_SIZE - 1);
             pattern[sizeof(pattern) - 1] = '\0';
-            
-            // 末尾の / を探して削除
+
+            /* 末尾の / を探して削除。末尾の / は対話モード(上の 'ch == /'
+             * ハンドラ)や bi.py の get_restr() と同様に省略可能とする
+             * (無ければエラーにせずそのまま扱う)。以前は必須にしていた
+             * ため、コマンドラインモード(-c/-s/':'プロンプト)でだけ
+             * "/pattern"(閉じ'/'なし)が構文エラーになり、対話モードでの
+             * 通常の使い方と食い違っていた。 */
             size_t len = strlen(pattern);
             if (len > 0 && pattern[len - 1] == '/') {
                 pattern[len - 1] = '\0';
-            } else {
-                // 構文エラー: 正規表現の終了/がない
-                display_stderr(&editor->display, "Syntax error: Missing closing '/' in regex.",
-                              editor->scriptingflag, editor->verbose);
-                return -1;
             }
-            
+
             if (pattern[0]) {
                 char rerr_[128];
                 if (!editor_regex_valid(pattern, rerr_, sizeof(rerr_))) {
@@ -3726,7 +3726,7 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
                             editor->display.highlight_ranges.size);
                     display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                 } else {
-                    display_stdmm(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
+                    display_stderr(&editor->display, "Not found", editor->scriptingflag, editor->verbose);
                 }
                 }
             } else {
@@ -3844,6 +3844,9 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
                           &editor->display.highlight_ranges);
             }
             display_jump(&editor->display, pos);
+        } else {
+            display_stderr(&editor->display, "Not found.",
+                           editor->scriptingflag, editor->verbose);
         }
         return -1;
     } else if (parsed_line[0] == 'N') {
@@ -3862,6 +3865,9 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
                           &editor->display.highlight_ranges);
             }
             display_jump(&editor->display, pos);
+        } else {
+            display_stderr(&editor->display, "Not found.",
+                           editor->scriptingflag, editor->verbose);
         }
         return -1;
     }
