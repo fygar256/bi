@@ -3933,7 +3933,14 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
 }
 
 int editor_commandline(BiEditor *editor, const char *line) {
-    /* '::'区切りマルチステートメント対応。'\::'はリテラルの'::'。 */
+    /* '::'区切りマルチステートメント対応。'\::'はリテラルの'::'。
+     * シェルの'&&'と同様に、あるステートメントがdisplay_stderr()経由の
+     * エラーを起こした場合、以降のステートメントの実行を打ち切る
+     * (axx.py版のcommandline()と同じ考え方)。error_occurredはセッション
+     * 全体を通した「一度でもエラーが発生したか」を示すsticky flag
+     * (非対話実行の終了コード判定用、行5442参照)なので、直接は使わず
+     * ステートメントごとに退避/リセット/合成することで「このステート
+     * メントがエラーを起こしたか」だけを取り出す。 */
     int len = (int)strlen(line);
     char *buf = malloc(len + 1);
     if (!buf) return -1;
@@ -3954,8 +3961,13 @@ int editor_commandline(BiEditor *editor, const char *line) {
             int slen = (int)strlen(stmt);
             while (slen > 0 && (stmt[slen-1] == ' ' || stmt[slen-1] == '\t')) stmt[--slen] = '\0';
             if (*stmt) {
+                bool err_before = editor->display.error_occurred;
+                editor->display.error_occurred = false;
                 ret = editor_commandline_single(editor, stmt);
+                bool stmt_failed = editor->display.error_occurred;
+                editor->display.error_occurred = err_before || stmt_failed;
                 if (ret == 0) { free(buf); return 0; }
+                if (stmt_failed) break;
             }
             bi = 0;
             if (line[i] == '\0') break;

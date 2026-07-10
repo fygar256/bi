@@ -1981,14 +1981,29 @@ class BiEditor:
         return parts
 
     def commandline(self, line):
-        """コマンド実行（':'区切りマルチステートメント対応）"""
+        """コマンド実行（'::'区切りマルチステートメント対応）。
+
+        シェルの'&&'と同様に、あるステートメントがstderr()経由の
+        エラーを起こした場合、以降のステートメントの実行を打ち切る。
+        error_occurredはセッション全体を通した「一度でもエラーが
+        発生したか」を示すsticky flag(非対話実行の終了コード判定用)
+        なので、直接は使わずステートメントごとに退避/リセット/合成
+        することで「このステートメントがエラーを起こしたか」だけを
+        取り出す。
+        """
         try:
             stmts = self._split_statements(line)
             result = -1
             for stmt in stmts:
+                _err_before = self.error_occurred
+                self.error_occurred = False
                 result = self.commandline_(stmt)
+                _stmt_failed = self.error_occurred
+                self.error_occurred = _err_before or _stmt_failed
                 if result == 0:
                     return 0
+                if _stmt_failed:
+                    break
             return result
         except MemoryError:
             self.stderr("Memory overflow.")
