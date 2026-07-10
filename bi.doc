@@ -138,6 +138,8 @@ options:
 
 Remarks
 
+    Multi statement will truncates processing on error occurred.
+
     Regular expression can be used for string search.
     '/' can be escaped with escape character '\' in regular expression.
 
