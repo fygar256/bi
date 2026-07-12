@@ -379,12 +379,15 @@ class MemoryBuffer:
             return 0
 
         self.yank = []
-        cnt = 0
-        for j in range(start, end + 1):
-            if j < len(self.mem):
-                cnt += 1
-                self.yank.append(self.mem[j] & 0xff)
-        return cnt
+        # 破綻点修正: 従来はrange(start, end+1)でend(バッファ末尾を超える
+        # 巨大な値もありうる)まで丸ごとループし、ループ内でj<len(mem)を
+        # 判定してスキップしていたため、範囲外を指定しただけで無意味な
+        # 反復が大量に発生しハングアップしていた(例: 2バイトのファイルに
+        # "0,99999999999 y" で8秒以上応答なし)。ループの範囲自体を
+        # バッファ末尾でクランプする(bi.c の memory_yank は元々この形)。
+        end = min(end, len(self.mem) - 1)
+        self.yank = [self.mem[j] & 0xff for j in range(start, end + 1)]
+        return len(self.yank)
 
     def ovwmem(self, start, mem0):
         if not mem0:
@@ -2674,6 +2677,9 @@ class BiEditor:
             # fill mode for 'i' with range
             if ch == 'i' and xf2:
                 if len(m):
+                    if (x2 - x + 1) > self.MAX_FILL_SIZE:
+                        self.stderr(f"Fill size too large (max {self.MAX_FILL_SIZE} bytes).")
+                        return -1
                     self.save_undo_state()
                     data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
                     self.memory.ovwmem(x, data)
@@ -2683,9 +2689,12 @@ class BiEditor:
                 else:
                     self.stderr("No data specified.")
                 return -1
-            
+
             if ch == 'I' and xf2:
                 if len(m):
+                    if (x2 - x + 1) > self.MAX_FILL_SIZE:
+                        self.stderr(f"Fill size too large (max {self.MAX_FILL_SIZE} bytes).")
+                        return -1
                     self.save_undo_state()
                     data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
                     self.memory.insmem(x, data)
@@ -2695,9 +2704,12 @@ class BiEditor:
                 else:
                     self.stderr("No data specified.")
                 return -1
-            
+
             if length == Parser.UNKNOWN:
                 self.stderr("Invalid repeat count after '*'.")
+                return -1
+            if length * max(1, len(m)) > self.MAX_FILL_SIZE:
+                self.stderr(f"Repeat count too large (max {self.MAX_FILL_SIZE} bytes total).")
                 return -1
             data = m * length
             if data:
@@ -2723,6 +2735,13 @@ class BiEditor:
         
         # copy/Copy
         if ch == 'c':
+            # 破綻点修正: redmem()は範囲をそのままrange(x,x2+1)でループするため、
+            # x2がバッファ末尾を大きく超える値だとハングし、しかも範囲外は
+            # 0埋めして要求範囲と同じ長さを返す仕様のため、抜けたとしても
+            # コピー先に巨大な0埋めデータを書き込みバッファが肥大化する。
+            # d(削除)と同様、範囲がバッファ内に収まらない場合は拒否する。
+            if not self._check_op_range(x, x2):
+                return -1
             # パーシャル編集中: x3 もバッファ相対に変換
             if g_partial.active and g_partial.offset > 0:
                 x3 = max(0, x3 - g_partial.offset)
@@ -2735,6 +2754,9 @@ class BiEditor:
             self.display.jump(x3 + (x2 - x + 1))
             return -1
         elif ch == 'C':
+            # 破綻点修正: 'c' と同じ理由(redmem()の範囲チェック)。
+            if not self._check_op_range(x, x2):
+                return -1
             # パーシャル編集中: x3 もバッファ相対に変換
             if g_partial.active and g_partial.offset > 0:
                 x3 = max(0, x3 - g_partial.offset)
@@ -3039,6 +3061,12 @@ class BiEditor:
     
     # 各種操作メソッド
     MAX_SHIFT_TIMES = 8192  # シフト/ローテートの繰り返し回数上限(compare の FCMP_MAXN に倣う)
+    # 破綻点修正: i/I コマンドの "*N" 明示的繰り返しや範囲指定fillモードは、
+    # data = m * length のようにNをそのまま乗じるため上限が無く、桁を1つ
+    # 打ち間違えるだけで(例: "0i 41*99999999999")数百GB相当のメモリ確保を
+    # 試みてハングアップ/スワップ枯渇/MemoryErrorになっていた。妥当な
+    # 上限(1GiB)を設けて明確なエラーにする。
+    MAX_FILL_SIZE = 0x40000000  # 1 GiB
 
     def _check_op_range(self, x, x2):
         """ビット演算・シフト/ローテートの対象範囲がバッファ内に収まっているか検査する。

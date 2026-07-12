@@ -3990,6 +3990,13 @@ int editor_commandline(BiEditor *editor, const char *line) {
 /* シフト/ローテートの繰り返し回数上限(compareコマンドのFCMP_MAXNに倣う) */
 #define MAX_SHIFT_TIMES 8192
 
+/* 破綻点修正: i/I コマンドの "*N" 明示的繰り返しや範囲指定fillモードは、
+ * repeat_count/range_len をそのまま bytearray_push() のループ回数に使うため
+ * 上限が無く、桁を1つ打ち間違えるだけで(例: "0i 41*99999999999")数百GB
+ * 相当のメモリ確保・ループを試みてハングアップしていた。妥当な上限(1GiB)
+ * を設けて明確なエラーにする。 */
+#define MAX_FILL_SIZE 0x40000000ULL /* 1 GiB */
+
 /* 破綻点修正: ビット演算・シフト/ローテートの対象範囲がバッファ内に収まって
  * いるか検査する。これらのコマンドはd(削除)/y(ヤンク)と違って範囲チェックを
  * 行わず、memory_set()のバッファ自動拡張(0埋め)にそのまま乗っていたため、
@@ -4352,6 +4359,25 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             x2 = x;  // とりあえず1バイト扱い（後で調整）
         }
 
+        if (is_repeat) {
+            if ((uint64_t)pattern.size > 0 &&
+                repeat_count > MAX_FILL_SIZE / (uint64_t)pattern.size) {
+                char emsg[80];
+                snprintf(emsg, sizeof(emsg), "Repeat count too large (max %llu bytes total).",
+                         (unsigned long long)MAX_FILL_SIZE);
+                display_stderr(&editor->display, emsg, editor->scriptingflag, editor->verbose);
+                bytearray_free(&pattern);
+                return -1;
+            }
+        } else if (xf && xf2 && (x2 - x + 1) > MAX_FILL_SIZE) {
+            char emsg[80];
+            snprintf(emsg, sizeof(emsg), "Fill size too large (max %llu bytes).",
+                     (unsigned long long)MAX_FILL_SIZE);
+            display_stderr(&editor->display, emsg, editor->scriptingflag, editor->verbose);
+            bytearray_free(&pattern);
+            return -1;
+        }
+
         editor_save_undo_state(editor);
 
         if (ch == 'I') {  // insert (挿入)
@@ -4553,6 +4579,13 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     }
     // copy/Copy (c/C commands)
     if (cmd == 'c' || cmd == 'C') {
+        /* 破綻点修正 (axx.py port): 範囲がバッファ末尾を大きく超えると、
+         * このあと使う"%llu bytes copied."等のメッセージが実際にコピー
+         * された m.size ではなく要求範囲 (x2-x+1) をそのまま使っており、
+         * 実際には数バイトしかコピーされていないのに巨大な成功件数を
+         * 報告する不整合になっていた。d(削除)と同様、範囲がバッファ内に
+         * 収まらない場合は拒否する。 */
+        if (!editor_check_op_range(editor, x, x2)) return -1;
         editor_save_undo_state(editor);
         
         ByteArray m;
