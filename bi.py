@@ -2596,6 +2596,8 @@ class BiEditor:
         
         # not
         if idx < len(line) and line[idx] == '~':
+            if not self._check_op_range(x, x2):
+                return -1
             self.save_undo_state()
             self.openot(x, x2)
             self.commit_undo()
@@ -2629,7 +2631,18 @@ class BiEditor:
                 bit, idx = self.parser.expression(line, idx + 1)
             else:
                 bit = Parser.UNKNOWN
-            
+
+            if not self._check_op_range(x, x2):
+                return -1
+            # 破綻点修正: times(繰り返し回数)に上限が無く、Pythonレベルの
+            # ループで1回ごとにsetmem()/readmem()を呼ぶ実装のため、現実的な
+            # 大きさの値でも極端に遅くなっていた(例: 2バイト範囲でも
+            # times=100000で3秒以上)。compareコマンドのFCMP_MAXNと同様の
+            # 上限を設ける。
+            if times > self.MAX_SHIFT_TIMES:
+                self.stderr(f"Repeat count too large (max {self.MAX_SHIFT_TIMES}).")
+                return -1
+
             self.save_undo_state()
             self.shift_rotate(x, x2, times, bit, multibyte, ch)
             self.commit_undo()
@@ -2747,18 +2760,24 @@ class BiEditor:
         
         # ビット演算
         elif ch == '&':
+            if not self._check_op_range(x, x2):
+                return -1
             self.save_undo_state()
             self.opeand(x, x2, x3)
             self.commit_undo()
             self.display.jump(x2 + 1)
             return -1
         elif ch == '|':
+            if not self._check_op_range(x, x2):
+                return -1
             self.save_undo_state()
             self.opeor(x, x2, x3)
             self.commit_undo()
             self.display.jump(x2 + 1)
             return -1
         elif ch == '^':
+            if not self._check_op_range(x, x2):
+                return -1
             self.save_undo_state()
             self.opexor(x, x2, x3)
             self.commit_undo()
@@ -3019,6 +3038,24 @@ class BiEditor:
         return -1
     
     # 各種操作メソッド
+    MAX_SHIFT_TIMES = 8192  # シフト/ローテートの繰り返し回数上限(compare の FCMP_MAXN に倣う)
+
+    def _check_op_range(self, x, x2):
+        """ビット演算・シフト/ローテートの対象範囲がバッファ内に収まっているか検査する。
+
+        破綻点修正: これらのコマンドはd(削除)/y(ヤンク)と違って範囲チェックを
+        行わず、setmem()のバッファ自動拡張(0埋め)にそのまま乗っていたため、
+        終了アドレスの入力ミスだけでファイルサイズが際限なく膨れ上がる事故に
+        なっていた(例: 2バイトのファイルに対し "0,200000|ff" を実行すると
+        200万バイト超に肥大化する)。d と同じく、範囲がバッファ末尾を超える
+        場合は明確なエラーとして拒否する。
+        """
+        mem_len = len(self.memory.mem)
+        if mem_len == 0 or x >= mem_len or x2 >= mem_len:
+            self.stderr("Invalid range.")
+            return False
+        return True
+
     def opeand(self, x, x2, x3):
         for i in range(x, x2 + 1):
             self.memory.setmem(i, self.memory.readmem(i) & (x3 & 0xff))

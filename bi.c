@@ -3987,7 +3987,27 @@ int editor_commandline(BiEditor *editor, const char *line) {
     return ret;
 }
 
-int execute_command(BiEditor *editor, const char *line, size_t idx, 
+/* シフト/ローテートの繰り返し回数上限(compareコマンドのFCMP_MAXNに倣う) */
+#define MAX_SHIFT_TIMES 8192
+
+/* 破綻点修正: ビット演算・シフト/ローテートの対象範囲がバッファ内に収まって
+ * いるか検査する。これらのコマンドはd(削除)/y(ヤンク)と違って範囲チェックを
+ * 行わず、memory_set()のバッファ自動拡張(0埋め)にそのまま乗っていたため、
+ * 終了アドレスの入力ミスだけでファイルサイズが際限なく膨れ上がる事故に
+ * なっていた(例: 2バイトのファイルに対し "0,200000|ff" を実行すると
+ * 200万バイト超に肥大化する)。d と同じく、範囲がバッファ末尾を超える場合は
+ * 明確なエラーとして拒否する。 */
+static bool editor_check_op_range(BiEditor *editor, uint64_t x, uint64_t x2) {
+    size_t mem_len = editor->memory.mem.size;
+    if (mem_len == 0 || x >= mem_len || x2 >= mem_len) {
+        display_stderr(&editor->display, "Invalid range.",
+                       editor->scriptingflag, editor->verbose);
+        return false;
+    }
+    return true;
+}
+
+int execute_command(BiEditor *editor, const char *line, size_t idx,
                     uint64_t x, uint64_t x2, bool xf, bool xf2) {
     /* 型付き数値表示 (?s/?i/?l/?q/?f/?d/?Q/?us/?ui/?ul) — 範囲付き版 */
     if (line[idx] == '?') {
@@ -4439,6 +4459,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     
     // NOT (~command)
     if (line[idx] == '~') {
+        if (!editor_check_op_range(editor, x, x2)) return -1;
         editor_save_undo_state(editor);
         editor_openot(editor, x, x2);
         editor_commit_undo(editor);
@@ -4473,7 +4494,18 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
                 bit = (int)b;
             }
         }
-        
+
+        if (!editor_check_op_range(editor, x, x2)) return -1;
+        /* 破綻点修正: times(繰り返し回数)に上限が無かったため、Python版と
+         * 同様の対策としてcompareコマンドのFCMP_MAXNに倣った上限を設ける
+         * (C版自体は高速だが、bi.py側との仕様の一貫性のため揃える)。 */
+        if (times > MAX_SHIFT_TIMES) {
+            char emsg[64];
+            snprintf(emsg, sizeof(emsg), "Repeat count too large (max %d).", MAX_SHIFT_TIMES);
+            display_stderr(&editor->display, emsg, editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+
         editor_save_undo_state(editor);
         editor_shift_rotate(editor, x, x2, times, bit, multibyte, direction);
         editor_commit_undo(editor);
@@ -4568,6 +4600,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     
     // ビット演算
     if (cmd == '&') {
+        if (!editor_check_op_range(editor, x, x2)) return -1;
         editor_save_undo_state(editor);
         editor_opeand(editor, x, x2, x3);
         editor_commit_undo(editor);
@@ -4575,6 +4608,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         return -1;
     }
     if (cmd == '|') {
+        if (!editor_check_op_range(editor, x, x2)) return -1;
         editor_save_undo_state(editor);
         editor_opeor(editor, x, x2, x3);
         editor_commit_undo(editor);
@@ -4582,6 +4616,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         return -1;
     }
     if (cmd == '^') {
+        if (!editor_check_op_range(editor, x, x2)) return -1;
         editor_save_undo_state(editor);
         editor_opexor(editor, x, x2, x3);
         editor_commit_undo(editor);
