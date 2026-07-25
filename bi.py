@@ -894,7 +894,22 @@ class Parser:
     def __init__(self, memory_buffer, display):
         self.memory = memory_buffer
         self.display = display
-    
+
+    @staticmethod
+    def to_abs(v):
+        """内部のバッファ相対アドレスをファイル絶対アドレスへ変換する。
+
+        コマンドラインのアドレスはファイル絶対値で与える仕様であり、
+        parse_range_command が一律に g_partial.offset を引いて
+        バッファ相対へ戻す。ところが '$' / '.' / マークはもともと
+        バッファ相対の内部値を返していたため、パーシャル編集中に
+        offset が二重に引かれて範囲が先頭 1 バイトへ潰れていた。
+        ここで絶対値へ揃えることで、引き算が 1 回だけ効くようにする。
+        """
+        if g_partial.active and g_partial.offset > 0:
+            return v + g_partial.offset
+        return v
+
     @staticmethod
     def skipspc(s, idx):
         while idx < len(s):
@@ -915,6 +930,7 @@ class Parser:
         if ch == '$':
             idx += 1
             v = len(self.memory.mem) - 1 if len(self.memory.mem) != 0 else 0
+            v = self.to_abs(v)
         elif ch == '{':
             idx += 1
             u = ''
@@ -937,13 +953,14 @@ class Parser:
                 return self.UNKNOWN, idx
         elif ch == '.':
             idx += 1
-            v = self.display.fpos()
+            v = self.to_abs(self.display.fpos())
         elif ch == "'" and len(s) > idx + 1 and 'a' <= s[idx + 1] <= 'z':
             idx += 1
             v = self.memory.mark[ord(s[idx]) - ord('a')]
             if v == self.UNKNOWN:
                 return self.UNKNOWN, idx - 1
             else:
+                v = self.to_abs(v)
                 idx += 1
         elif idx < len(s) and s[idx] in '0123456789abcdefABCDEF':
             x = 0

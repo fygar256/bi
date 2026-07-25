@@ -1627,6 +1627,21 @@ size_t parser_skipspc(const char *s, size_t idx) {
     return idx;
 }
 
+/* 内部のバッファ相対アドレスをファイル絶対アドレスへ変換する。
+ *
+ * コマンドラインのアドレスはファイル絶対値で与える仕様であり、
+ * parse_range_command が一律に g_partial.offset を引いてバッファ相対へ
+ * 戻す。ところが '$' / '.' / マークはもともとバッファ相対の内部値を
+ * 返していたため、パーシャル編集中に offset が二重に引かれて範囲が
+ * 先頭 1 バイトへ潰れていた。ここで絶対値へ揃え、引き算を 1 回だけに
+ * する。(bi.py の Parser.to_abs と同一仕様) */
+static uint64_t parser_to_abs(uint64_t v) {
+    if (g_partial.active && g_partial.offset > 0) {
+        return v + g_partial.offset;
+    }
+    return v;
+}
+
 uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
     if (!s[*idx]) return UNKNOWN;
     
@@ -1637,6 +1652,7 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
     if (ch == '$') {
         (*idx)++;
         v = parser->memory->mem.size > 0 ? parser->memory->mem.size - 1 : 0;
+        v = parser_to_abs(v);
     } else if (ch == '{') {
         // {} 構文 - Pythonのeval()を使用
         (*idx)++;
@@ -1707,7 +1723,7 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
         unlink(tmp_path);
     } else if (ch == '.') {
         (*idx)++;
-        v = display_fpos(parser->display);
+        v = parser_to_abs(display_fpos(parser->display));
     } else if (ch == '\'' && s[*idx + 1] >= 'a' && s[*idx + 1] <= 'z') {
         (*idx)++;
         v = parser->memory->mark[s[*idx] - 'a'];
@@ -1715,6 +1731,7 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
             (*idx)--;
             return UNKNOWN;
         }
+        v = parser_to_abs(v);
         (*idx)++;
     } else if (ch == '\'' && s[*idx + 1]) {
         // 構文エラー: 無効なマーク文字
