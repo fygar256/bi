@@ -1103,7 +1103,23 @@ static void search_build_regex_cache(SearchEngine *search) {
     size_t mem_len = search->memory->mem.size;
     if (mem_len == 0) return;
 
-    const char *base = (const char *)search->memory->mem.data;
+    /* [修正] REG_STARTEND はNUL終端を要求しないが、glibcのregexec実装は
+     * rm_eo ちょうどより何バイトか先まで読みに行くことがある（AddressSanitizer
+     * でheap-buffer-overflowとして実証済み。ファイルサイズや実行経路によらず
+     * 常に再現した）。一方 search->memory->mem.data はbytearray_pushで確保
+     * されており、末尾に安全な余白が保証されていない。そこで regexec には
+     * 常に十分な余白を持つ一時バッファのコピーを渡し、元のライブバッファには
+     * 触れさせない。 */
+    #define REGEXEC_SAFETY_PAD 64
+    char *base_buf = malloc(mem_len + REGEXEC_SAFETY_PAD);
+    if (!base_buf) {
+        search->regex_cache_error = true;
+        return;
+    }
+    memcpy(base_buf, search->memory->mem.data, mem_len);
+    memset(base_buf + mem_len, 0, REGEXEC_SAFETY_PAD);
+
+    const char *base = base_buf;
     size_t pos = 0;
     while (pos <= mem_len) {
         regmatch_t m;
@@ -1122,6 +1138,8 @@ static void search_build_regex_cache(SearchEngine *search) {
          * 最低でも1バイトは進める。 */
         pos = match_start + (match_len > 0 ? match_len : 1);
     }
+    free(base_buf);
+    #undef REGEXEC_SAFETY_PAD
 }
 
 int search_hitre(SearchEngine *search, size_t addr) {
@@ -5508,7 +5526,12 @@ int main(int argc, char *argv[]) {
         int exit_code = 0;
         if (scriptfile) {
             editor_scripting(&editor, scriptfile);
-            if (!editor.memory.lastchange) {
+            /* [修正] lastchange は wq 等の書き込み成功でリセットされるため、
+             * 「保存済みで未保存の変更がない」場合まで誤って"Nothing done."と
+             * 表示してしまっていた。modified はファイル読み込み時以外リセット
+             * されないため、こちらでセッション中に一度でも変更があったかを
+             * 正しく判定できる。 */
+            if (!editor.memory.modified) {
                 printf("Nothing done.\n");
             }
         }

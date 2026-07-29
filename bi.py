@@ -3472,7 +3472,12 @@ def main():
         if noninteractive:
             if args.script:
                 editor.scripting(args.script)
-                if not editor.memory.lastchange:
+                # [修正] lastchange は wq 等の書き込み成功でリセットされるため、
+                # 保存済みで未保存の変更がないだけの場合まで誤って
+                # 'Nothing done.' と表示してしまっていた。modified はファイル
+                # 読み込み時以外リセットされないため、セッション中に一度でも
+                # 変更があったかを正しく判定できる。
+                if not editor.memory.modified:
                     print('Nothing done.')
             if args.command is not None:
                 editor.cmdmode = True

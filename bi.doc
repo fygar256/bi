@@ -57,10 +57,15 @@ On command line mode
    w <file>                ----- write data to file
    t <file>                ----- scripting with file in silence mode
    T <file>                ----- scripting with file in verbose mode
-   u                       ----- undo
-   redo                    ----- redo
+   u                       ----- undo (*)
+   U                       ----- redo (*)
    n                       ----- search the next
    N                       ----- search the last
+
+   (*) undo/redo recording is intentionally disabled while running under
+       -s/-c (scripting or single-command mode), for performance reasons.
+       'u' and 'redo' are accepted but have nothing to undo/redo in that
+       context. Undo/redo works normally in interactive on-screen mode.
    [offset]rp              ----- partial read
    [offset],[end] rp       ----- partial read
    [offset],*[length] rp   ----- partial read
