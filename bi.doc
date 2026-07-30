@@ -64,7 +64,7 @@ On command line mode
 
    (*) undo/redo recording is intentionally disabled while running under
        -s/-c (scripting or single-command mode), for performance reasons.
-       'u' and 'redo' are accepted but have nothing to undo/redo in that
+       'u' and 'U' are accepted but have nothing to undo/redo in that
        context. Undo/redo works normally in interactive on-screen mode.
    [offset]rp              ----- partial read
    [offset],[end] rp       ----- partial read
@@ -148,8 +148,52 @@ Remarks
     Regular expression can be used for string search.
     '/' can be escaped with escape character '\' in regular expression.
 
+    NOTE ON REGULAR EXPRESSION DIALECT
+    bi.py and bi.c use different regular expression engines, and they do
+    NOT accept exactly the same syntax:
+
+        bi.py  ... Python 're' module
+        bi.c   ... POSIX Extended Regular Expression (regcomp/regexec)
+
+    Portable between both (use these when a script must run on either):
+
+        [a-z]  [^a-z]  .  *  +  ?  {n}  {n,m}  |  ()  ^  $
+        \w  \W  \s  \S  \b     (GNU extensions, accepted by both)
+
+    Accepted by bi.py only:
+
+        \d  \D   digit / non-digit
+        \xNN     hexadecimal escape      (e.g. \x41)
+        (?:)     non-capturing group
+        (?i)     inline flag
+        (?=)  (?!)   lookaround
+        *?  +?  ??   lazy quantifiers
+
+    bi.c reports 'Invalid regular expression' for the group and lookaround
+    forms, and silently fails to match for the rest. \d and \D are the
+    worst of these: bi.c reads them as the plain letters 'd' and 'D', so a
+    pattern like 'cd\d' quietly matches the text 'cdd' instead of a digit,
+    with no error at all. Use [0-9] instead of \d in portable scripts.
+
+    Accepted by bi.c only. bi.py parses them as an ordinary character
+    set and therefore matches something different:
+
+        [[:alpha:]] [[:digit:]] [[:upper:]] [[:lower:]] [[:space:]]
+        and the other POSIX character classes
+
+    The difference is silent: a pattern may simply match zero times on
+    one implementation and every time on the other, with no error.
+    To match a raw byte value portably, use the binary search form
+    '//xx xx xx ...' instead of a '\xNN' escape.
+
     Comment can be written in command with '#'. You have to write command
     including '#' with escape character '\'.
+
+    Comment removal happens before the command is parsed, so a bare '#'
+    used as a replacement string is stripped and leaves the replacement
+    empty. bi.c reports 'Syntax error: Missing replacement pattern.' there,
+    while bi.py treats the empty replacement as a deletion. Write '\#' when
+    a literal '#' is wanted.
 
     Multi statement can be written such as '0i11 22 33::100i44 55 66'.
     If you want to use literal '::', you have to escape with '\::'.
@@ -193,23 +237,65 @@ Python exec
     For example, in new file situation, production for the file including
     0~255 repeated 4times of 1024 bytes can be written like this:
 
-    :@for i in range(1024):\n    setmem(i,i%256) # 0~255 repeat 4 times
+    :@for i in range(1024): setmem(i,i%256)
+
+    The whole '@' command must fit on one physical line, so a compound
+    statement has to be written as a single-line suite as above, or as a
+    comprehension:
+
+    :@[setmem(i,i%256) for i in range(1024)]
 
     If you import modules, they will be located bi's global space.
+
+    IMPORTANT - THIS SECTION APPLIES TO bi.py ONLY
+    Access to the editor state from '@' is available in bi.py, not in bi.c.
+
+        bi.py  ... runs the code with exec(code, globals()). The editing
+                   buffer and the current position are real globals of the
+                   running program, so setmem(), mem[] and cp all work, and
+                   imported modules stay resident for later '@' commands.
+
+        bi.c   ... writes the code to a temporary file and runs it with a
+                   separate 'python3' process. That process has no
+                   connection to the editing buffer. setmem(), mem[] and cp
+                   raise NameError, the edited file is left untouched, and
+                   nothing persists to the next '@' command.
+
+    So in bi.c the '@' command is usable only as a general purpose Python
+    escape (computing something, printing it, calling an external library).
+    Plain code such as '@import sys; print(sys.version)' behaves the same in
+    both, which can make the difference easy to miss. If a script has to
+    manipulate the buffer from Python, run it with bi.py.
 
 Speed up
     If you need for bi to be higher speed, you can compile bi.py with
     pyinstaller like this: pyinstaller --onefile bi.py
 
 Partial edit
-    -b and -e option set bi partial edit mode like this:
-    bi sample -b 100 -e 1ff
-    this edits offset of sample file from 0x100 to 0x1ff.
+    -o, -l and -e option set bi partial edit mode. All values are given in
+    hexadecimal. (There is no '-b' option.)
+
+        -o <offset>   start offset
+        -e <end>      end offset, inclusive
+        -l <length>   length in bytes, as an alternative to -e
+
+    bi sample -o 100 -e 1ff
+    bi sample -o 100 -l 100
+
+    Both of these edit the sample file from offset 0x100 to 0x1ff. Inside
+    the editor the loaded part is addressed from 0, so offset 0 means 0x100
+    of the original file. 'wp' writes the part back to where it came from.
+
+    A range that runs past the end of the file is clipped to the file size,
+    and an offset at or past the end gives an empty buffer.
 
 Danger
     With '@' command, if you rewrite global variable of bi with 'global <var>'
     and '<var>=<some value>', it might destroy bi system and cause python
     system error. So be careful when you rewrite global variable of bi.
+    This applies to bi.py, where '@' shares the running program's globals.
+    In bi.c the code runs in a separate process and cannot damage the
+    editor this way, but for the same reason it cannot edit the buffer.
 
 ------ HISTORY -----
 1991-12-4 A sector was lost on a floppy disk used to back up a hard disk.
