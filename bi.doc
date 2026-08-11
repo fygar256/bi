@@ -218,6 +218,22 @@ Remarks
     Also, you can give the value of file as mem[x] in {}, x can be specified
     to current position 'cp'.
 
+    IMPORTANT - mem[x] AND cp INSIDE {} WORK IN bi.py ONLY
+    bi.py evaluates {} with eval(expr, globals()), so mem[] and cp are real
+    globals there and work as described above.
+
+    bi.c evaluates {} with a much more restricted, security-hardened
+    parser (digits, hex letters, operators and parentheses only, to close
+    a past command-injection hole). Any use of mem[x] or cp is rejected as
+    an invalid expression there. Because bi.c does not currently
+    distinguish an omitted address from a rejected one, the address
+    silently falls back to the current cursor position instead of the
+    value you intended - no error is shown, and with -w the file is
+    written anyway.
+
+    Keep {} expressions in bi.c to plain arithmetic such as {0xff^0x55}.
+    If a script needs mem[x] or cp inside {}, run it with bi.py.
+
     ^L switches multi-byte boundary from 0 to 3. if utf-8 multi-byte characters
     are not seen, press ^L several times.
 
