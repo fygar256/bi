@@ -2176,12 +2176,26 @@ class BiEditor:
                 self.verbose = True if line[0] == 'T' else False
                 print("")
                 self.scripting(s)
-                if self.verbose:
+                # [破綻点修正] verbose時に無条件で Terminal.getch()(キー
+                # 入力待ち)と画面クリアを行っていたため、-s/-c(非対話)
+                # 実行中にネストした T(verboseなスクリプト呼び出し)が
+                # あると、端末が無い/標準入力がリダイレクトされている
+                # 状況でキー入力を待とうとして ioctl エラーとなり
+                # 異常終了していた(実機確認: `-s outer.bis` から
+                # `T inner.bis` を呼ぶと `[Errno 25] Inappropriate
+                # ioctl for device` で異常終了。C版はこの待機処理自体が
+                # 無いため問題なく完走する)。self.scriptingflag は
+                # scripting() 自体では変更されないため、この時点では
+                # T/t 呼び出し前の(外側の)値のままであり、対話モード
+                # 由来かどうかの判定に使える。対話モード(scriptingflag
+                # が False)のときだけ待機・画面クリアを行うよう修正する。
+                if self.verbose and not self.scriptingflag:
                     self.stdmm("[ Hit any key ]")
                     Terminal.getch()
                 self.verbose = self.stack.pop()
                 self.scriptingflag = self.stack.pop()
-                self.term.clear()
+                if not self.scriptingflag:
+                    self.term.clear()
                 return -1
             else:
                 self.stderr("Specify script file name.")
