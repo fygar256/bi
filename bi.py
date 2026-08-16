@@ -1203,9 +1203,16 @@ class FileManager:
         if not g_partial.active:
             return self.writefile(fn)
         self.memory.regulate_mem()
+        # 破綻点修正: 従来は open(fn, "r+b") の失敗理由を一切区別せず、
+        # 常に「ファイルが存在しない→新規作成」のフォールバックへ進んで
+        # いた。ディレクトリを指定した場合など、FileNotFoundError以外の
+        # 理由でもこのフォールバックに入ってしまい、続く open(fn, "wb")
+        # も同じ理由で失敗して "Partial write error: cannot create" と
+        # いう、原因(ディレクトリ指定等)を示さない曖昧なメッセージに
+        # なっていた。readfile_partial と同じ理由分けに揃える。
         try:
             f = open(fn, "r+b")
-        except OSError:
+        except FileNotFoundError:
             # ファイルが存在しない場合は新規作成
             try:
                 with open(fn, "wb") as f:
@@ -1215,6 +1222,12 @@ class FileManager:
                 return True, f"Partial write: offset=0x{g_partial.offset:X}, {len(self.memory.mem)} bytes written (new file)."
             except OSError:
                 return False, f"Partial write error: cannot create '{fn}'."
+        except IsADirectoryError:
+            return False, f"Cannot open '{fn}': is a directory."
+        except PermissionError:
+            return False, f"Cannot open '{fn}': permission denied."
+        except OSError as e:
+            return False, f"Cannot open '{fn}': {e.strerror or e}."
         try:
             with f:
                 # ① テールを読み退ける

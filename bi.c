@@ -2202,9 +2202,26 @@ bool filemgr_readfile(FileManager *fmgr, const char *filename, char *msg, size_t
 }
 
 bool filemgr_writefile(FileManager *fmgr, const char *filename, char *msg, size_t msg_size) {
+    /* 破綻点修正: 従来はfopen失敗理由を一切区別せず常に "Permission denied."
+     * と報告していたため、ディレクトリを指定した場合など実際の原因と異なる
+     * 誤解を招くメッセージになっていた(filemgr_readfileで見つかったのと
+     * 同種の問題)。bi.py側のwritefile()は既にOSErrorのstrerrorを使って
+     * 正確な理由を報告しており("Cannot write '/tmp': Is a directory.")、
+     * これに合わせてerrnoベースの理由分けを追加する。 */
+    errno = 0;
     FILE *f = fopen(filename, "wb");
     if (!f) {
-        if (msg) snprintf(msg, msg_size, "Permission denied.");
+        if (msg) {
+            if (errno == EISDIR) {
+                snprintf(msg, msg_size, "Cannot write '%s': is a directory.", filename);
+            } else if (errno == EACCES) {
+                snprintf(msg, msg_size, "Cannot write '%s': permission denied.", filename);
+            } else if (errno != 0) {
+                snprintf(msg, msg_size, "Cannot write '%s': %s.", filename, strerror(errno));
+            } else {
+                snprintf(msg, msg_size, "Permission denied.");
+            }
+        }
         return false;
     }
 
@@ -2326,7 +2343,26 @@ bool filemgr_writefile_partial(FileManager *fmgr, const char *filename,
         return filemgr_writefile(fmgr, filename, msg, msg_size);
     }
 
+    /* 破綻点修正: 従来はr+bのfopen失敗理由を一切区別せず、常に
+     * 「ファイルが存在しない→新規作成」のフォールバックへ進んでいた。
+     * ディレクトリを指定した場合など、ENOENT(未存在)以外の理由でも
+     * このフォールバックに入ってしまい、続くwbのfopenも同じ理由で
+     * 失敗して "Permission denied." という実態と異なるメッセージに
+     * なっていた。ENOENT以外はここで理由を確定させて中断する。 */
+    errno = 0;
     FILE *f = fopen(filename, "r+b");
+    if (!f && errno != ENOENT) {
+        if (msg) {
+            if (errno == EISDIR) {
+                snprintf(msg, msg_size, "Cannot open '%s': is a directory.", filename);
+            } else if (errno == EACCES) {
+                snprintf(msg, msg_size, "Cannot open '%s': permission denied.", filename);
+            } else {
+                snprintf(msg, msg_size, "Cannot open '%s': %s.", filename, strerror(errno));
+            }
+        }
+        return false;
+    }
     if (!f) {
         /* ファイルが存在しない場合は新規作成 */
         f = fopen(filename, "wb");
