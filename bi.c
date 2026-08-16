@@ -4573,17 +4573,25 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         return -1;
     }
     
-    // コマンド文字を探す
+    // コマンド文字を判定
+    /* 破綻点修正: 従来は cmd_idx を進めながら行の残り全体を前方スキャンし、
+     * 途中のどこかに 'c'/'C'/'v'/'&'/'|'/'^'/'f' が現れた時点でそれを
+     * コマンドとして採用していた。bi.py 側 (line[idx] in "IivCc&|^<>f")
+     * は現在位置の1文字だけを見る位置判定であり、この関数内の他の全ての
+     * コマンド判定 ('s'/'~'/'<'/'>' 等、直前を参照) とも位置判定で揃って
+     * いる。前方スキャンだと、未対応のコマンド文字を打ったときに後方の
+     * 引数やコメントの中にたまたま 'c'/'v' 等の文字が含まれているだけで
+     * (例: "z C6"、"z v1" のように、無関係な文字列の一部として)それを
+     * 誤ってコマンドとして実行し、エラーも出さずにファイルを書き換えて
+     * しまっていた。現在位置の1文字のみを見るように修正し、bi.py と
+     * 判定方法を一致させる。 */
     char cmd = 0;
-    size_t cmd_idx = idx;
-    while (cmd_idx < strlen(line)) {
-        char ch = line[cmd_idx];
+    if (idx < strlen(line)) {
+        char ch = line[idx];
         if (ch == 'c' || ch == 'C' || ch == 'v' || ch == '&' || ch == '|' || ch == '^' || ch == 'f') {
             cmd = ch;
-            idx = cmd_idx + 1;
-            break;
+            idx = idx + 1;
         }
-        cmd_idx++;
     }
     
     if (cmd == 0) {
