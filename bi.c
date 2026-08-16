@@ -5056,11 +5056,18 @@ uint64_t editor_movmem(BiEditor *editor, uint64_t start, uint64_t end, uint64_t 
         return dest;
     }
     
-    // データを読み出し
+    /* データを読み出し
+     *
+     * bi.py 側は redmem(start,end) を使っており、バッファ末尾を超えた分は
+     * 0 として読み、常に (end-start+1) バイトを返す。ここで
+     * "i < len" で打ち切ると m が短くなり、範囲が EOF を跨いだときだけ
+     * bi.py と結果の長さが食い違っていた
+     * (例: 1 バイトのファイルに "0,3 v 8" で bi.c=5 バイト / bi.py=8 バイト)。
+     * memory_read() は範囲外で 0 を返すので、redmem() と同じ挙動になる。 */
     ByteArray m;
     bytearray_init(&m);
-    for (uint64_t i = start; i <= end && i < len; i++) {
-        bytearray_push(&m, editor->memory.mem.data[i]);
+    for (uint64_t i = start; i <= end; i++) {
+        bytearray_push(&m, memory_read(&editor->memory, i));
     }
     
     // 元の位置から削除（yankにも保存）
