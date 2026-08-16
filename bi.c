@@ -16,6 +16,8 @@
 #include <sys/ioctl.h>
 #include <signal.h>   /* signal, sigaction, SIGINT 等 */
 #include <unistd.h>   /* ftruncate, close 等           */
+#include <errno.h>    /* fopen 失敗理由(ENOENT/EISDIR/EACCES等)の区別用 */
+#include <sys/stat.h> /* fstat, S_ISDIR: ディレクトリ誤指定の検出用 */
 /* ========================================================================
  * 定数
  * ======================================================================== */
@@ -2093,14 +2095,50 @@ void filemgr_init(FileManager *fmgr, MemoryBuffer *mem) {
 }
 
 bool filemgr_readfile(FileManager *fmgr, const char *filename, char *msg, size_t msg_size) {
+    /* 破綻点修正: 従来は fopen の失敗理由を一切区別せず、ENOENT(未存在)も
+     * EISDIR(ディレクトリを指定)もEACCES(権限無し)も等しく「新規ファイル」
+     * として空バッファで開いていた。bi.py 側の readfile() は
+     * FileNotFoundError だけを新規扱いにし、IsADirectoryError/
+     * PermissionError/その他の OSError は "Cannot open '<fn>': ..." と
+     * 明確に拒否する。さらに Linux/glibc では fopen(dir, "rb") 自体は
+     * 成功することがあり、その場合に続く ftell() がディレクトリに対して
+     * 負でない巨大な値(環境依存、LONG_MAX 相当など)を返すことがあるため、
+     * 直後の "fsize < 0" チェックをすり抜けて巨大な malloc を試みてしまう
+     * (ASan環境ではハードabort、通常ビルドでもmalloc失敗により実態とは
+     * 異なる "Memory overflow." という誤解を招くメッセージで終了していた)。
+     * fopen 失敗時は errno で理由を区別し、fopen 成功後も fstat で明示的に
+     * ディレクトリ判定を行うことで、Python 側と同じ理由分けでエラーを
+     * 返すよう修正する。 */
+    errno = 0;
     FILE *f = fopen(filename, "rb");
     if (!f) {
-        fmgr->newfile = true;
-        bytearray_init(&fmgr->memory->mem);
-        if (msg) snprintf(msg, msg_size, "<new file>");
-        return true;
+        if (errno == ENOENT) {
+            fmgr->newfile = true;
+            bytearray_init(&fmgr->memory->mem);
+            if (msg) snprintf(msg, msg_size, "<new file>");
+            return true;
+        }
+        if (msg) {
+            if (errno == EISDIR) {
+                snprintf(msg, msg_size, "Cannot open '%s': is a directory.", filename);
+            } else if (errno == EACCES) {
+                snprintf(msg, msg_size, "Cannot open '%s': permission denied.", filename);
+            } else {
+                snprintf(msg, msg_size, "Cannot open '%s': %s.", filename, strerror(errno));
+            }
+        }
+        return false;
     }
-    
+
+    /* fopen(dir, "rb") は Linux/glibc では成功しうるため、ここでも
+     * 明示的にディレクトリ判定を行う。 */
+    struct stat st;
+    if (fstat(fileno(f), &st) == 0 && S_ISDIR(st.st_mode)) {
+        fclose(f);
+        if (msg) snprintf(msg, msg_size, "Cannot open '%s': is a directory.", filename);
+        return false;
+    }
+
     fmgr->newfile = false;
     
     // ファイルサイズ取得
@@ -2170,15 +2208,40 @@ bool filemgr_writefile(FileManager *fmgr, const char *filename, char *msg, size_
 bool filemgr_readfile_partial(FileManager *fmgr, const char *filename,
                                size_t offset, size_t max_len,
                                char *msg, size_t msg_size) {
+    /* 破綻点修正: filemgr_readfile と同じ理由(fopen失敗理由の未区別、
+     * ディレクトリ指定時のftell巨大値によるmalloc問題)がここにも
+     * 存在するため、同じ形で修正する。 */
+    errno = 0;
     FILE *f = fopen(filename, "rb");
     if (!f) {
-        fmgr->newfile = true;
-        bytearray_init(&fmgr->memory->mem);
-        g_partial.active = true;
-        g_partial.offset = offset;
-        g_partial.length = 0;
-        if (msg) snprintf(msg, msg_size, "<new file>");
-        return true;
+        if (errno == ENOENT) {
+            fmgr->newfile = true;
+            bytearray_init(&fmgr->memory->mem);
+            g_partial.active = true;
+            g_partial.offset = offset;
+            g_partial.length = 0;
+            if (msg) snprintf(msg, msg_size, "<new file>");
+            return true;
+        }
+        if (msg) {
+            if (errno == EISDIR) {
+                snprintf(msg, msg_size, "Cannot open '%s': is a directory.", filename);
+            } else if (errno == EACCES) {
+                snprintf(msg, msg_size, "Cannot open '%s': permission denied.", filename);
+            } else {
+                snprintf(msg, msg_size, "Cannot open '%s': %s.", filename, strerror(errno));
+            }
+        }
+        return false;
+    }
+
+    {
+        struct stat st;
+        if (fstat(fileno(f), &st) == 0 && S_ISDIR(st.st_mode)) {
+            fclose(f);
+            if (msg) snprintf(msg, msg_size, "Cannot open '%s': is a directory.", filename);
+            return false;
+        }
     }
 
     /* ファイルサイズ取得 */
