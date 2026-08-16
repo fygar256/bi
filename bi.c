@@ -1875,10 +1875,35 @@ size_t parser_get_hexs(Parser *parser, const char *s, size_t idx, ByteArray *res
 }
 
 char* parser_comment(const char *s) {
-    static char result[4096];
+    /* 破綻点修正: 従来は static char result[4096] の固定バッファを使って
+     * おり、4095バイトを超える行は末尾が切り捨てられていた。
+     * editor_scripting を getline() 化して1行の長さ上限を撤廃しても、
+     * コメント除去を担うこの関数が同じ4096バイトの壁を持っていたため、
+     * 結局ここで同じ問題(長い行の後半が失われる)が再発していた。
+     * bi.py 側の comment() は Python の str に長さ上限が無いため、
+     * この問題は発生しない。固定バッファをやめ、入力長に応じて
+     * realloc で伸長する static バッファに置き換えて揃える。 */
+    static char *result = NULL;
+    static size_t result_cap = 0;
     size_t idx = 0, j = 0;
-    
-    while (s[idx] && j < sizeof(result) - 1) {
+    size_t need = strlen(s) + 1;  /* エスケープ無し全文字コピーでも足りる上限 */
+
+    if (need > result_cap) {
+        char *newbuf = realloc(result, need);
+        if (newbuf) {
+            result = newbuf;
+            result_cap = need;
+        } else if (!result) {
+            /* 初回確保に失敗: 呼び出し側は文字列ポインタを即使うため、
+             * NULL ではなく安全な空文字列を返す。 */
+            static char empty[1] = "";
+            return empty;
+        }
+        /* 再確保に失敗しても、既存の result_cap の範囲内でそのまま
+         * 継続する(以下の while ループが result_cap で打ち切るため安全)。 */
+    }
+
+    while (s[idx] && j < result_cap - 1) {
         if (s[idx] == '#') {
             break;
         }
@@ -2461,7 +2486,11 @@ void editor_init(BiEditor *editor, const char *termcol) {
  *   前回の記録が確定されていない場合は先に確定する。
  * -------------------------------------------------------------------- */
 void editor_save_undo_state(BiEditor *editor) {
-    if (editor->scriptingflag) return;
+    /* [変更] 従来はここで scriptingflag をチェックして即 return し、
+     * -s/-c(スクリプト・単発コマンド)実行中は undo/redo の差分記録を
+     * 一切行わない仕様だった(パフォーマンス配慮による意図的な設計)。
+     * 依頼により、スクリプト実行中も対話モードと同じ経路で差分記録を
+     * 行うよう変更する(scriptingflag による早期returnを撤去)。 */
 
     /* 前回の記録が未確定なら先に確定 */
     if (editor->diff_active) {
@@ -2782,7 +2811,19 @@ void editor_fedit(BiEditor *editor) {
         }
         
         // 検索コマンド
+        /* [破綻点修正] search_next/search_last は「パターン未設定」も
+         * 「検索したが見つからない」も同じ (size_t)-1 で返すため区別できず、
+         * ここは常に "Not found." を出していた。スクリプトモード側
+         * (parsed_line[0]=='n'/'N' の分岐)は事前に regexp/smem 未設定を
+         * 検知して "No data to search." を出しており、bi.py側もインタラ
+         * クティブモードの同種バグ修正でこのメッセージに揃えたため、
+         * こちらも呼び出し前にガードを追加して揃える。 */
         if (ch == 'n') {
+            if (!editor->search.regexp && editor->search.smem.size == 0) {
+                display_stderr(&editor->display, "No data to search.",
+                               editor->scriptingflag, editor->verbose);
+                continue;
+            }
             size_t pos = search_next(&editor->search, display_fpos(&editor->display) + 1,
                                     editor->memory.mem.size);
             if (pos != (size_t)-1) {
@@ -2796,6 +2837,11 @@ void editor_fedit(BiEditor *editor) {
             }
             continue;
         } else if (ch == 'N') {
+            if (!editor->search.regexp && editor->search.smem.size == 0) {
+                display_stderr(&editor->display, "No data to search.",
+                               editor->scriptingflag, editor->verbose);
+                continue;
+            }
             /* cur==0 のとき cur-1 は size_t アンダーフローするが、
              * search_last 内でクランプされるので呼び出し側はそのまま渡してよい。 */
             size_t pos = search_last(&editor->search, display_fpos(&editor->display) - 1,
@@ -5438,15 +5484,30 @@ int editor_scripting(BiEditor *editor, const char *scriptfile) {
         return -1;
     }
     
-    char line[4096];
+    /* 破綻点修正: 従来は char line[4096] の固定バッファに fgets() で
+     * 読み込んでいたため、4095バイトを超える1行(例: 大量のhexバイトを
+     * 並べる "0 i 41 41 41 ...*3000" のようなiコマンド行)があると、
+     * fgets はバッファを埋めた時点で(改行に達していなくても)一旦
+     * 返ってしまい、ファイル位置は行の途中のまま次の fgets 呼び出しへ
+     * 進む。この結果、1行のはずのスクリプト行が複数の物理行に分断され、
+     * 後半部分が全く無関係な別のコマンド行として誤って解釈・実行されて
+     * しまっていた(実機確認: 3000バイトのhexデータをinsertする1行の
+     * スクリプトで、Python版は3000バイト全て挿入して正常終了するのに
+     * 対し、C版は行の途中で分断された結果1364バイトしか書き込めず、
+     * 後半の断片が構文エラーとなって異常終了していた)。
+     * bi.py 側の f.readline() は行長に上限が無いため、この問題は
+     * 発生しない。POSIX の getline() は必要に応じてバッファを自動的に
+     * 再確保して行全体を読み切るため、これに置き換えて揃える。 */
+    char *line = NULL;
+    size_t linecap = 0;
+    ssize_t linelen;
     int flag = -1;
     editor->scriptingflag = true;
     
-    while (fgets(line, sizeof(line), f)) {
+    while ((linelen = getline(&line, &linecap, f)) != -1) {
         // 改行を削除
-        size_t len = strlen(line);
-        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
-            line[--len] = '\0';
+        while (linelen > 0 && (line[linelen-1] == '\n' || line[linelen-1] == '\r')) {
+            line[--linelen] = '\0';
         }
         
         if (line[0] == '\0') continue;  // 空行をスキップ
@@ -5458,14 +5519,17 @@ int editor_scripting(BiEditor *editor, const char *scriptfile) {
         flag = editor_commandline(editor, line);
         
         if (flag == 0) {
+            free(line);
             fclose(f);
             return 0;
         } else if (flag == 1) {
+            free(line);
             fclose(f);
             return 1;
         }
     }
     
+    free(line);
     fclose(f);
     return 0;
 }

@@ -1362,8 +1362,11 @@ class BiEditor:
 
     def save_undo_state(self):
         """操作前に呼び出す: 差分記録を開始し mark/meta/カーソル位置をスナップショット"""
-        if self.scriptingflag:
-            return
+        # [変更] 従来はここで scriptingflag をチェックして即 return し、
+        # -s/-c(スクリプト・単発コマンド)実行中は undo/redo の差分記録を
+        # 一切行わない仕様だった(パフォーマンス配慮による意図的な設計)。
+        # 依頼により、スクリプト実行中も対話モードと同じ経路で差分記録を
+        # 行うよう変更する(scriptingflag による早期returnを撤去)。
         # 前回の記録が完了していない場合は先に確定させる
         if self.memory._diff_log is not None:
             self.commit_undo()
@@ -1374,7 +1377,8 @@ class BiEditor:
 
     def commit_undo(self):
         """操作後に呼び出す: 記録した差分をスタックに積む"""
-        if self.scriptingflag or self._undo_mark_snapshot is None:
+        # [変更] save_undo_state と同じ理由で scriptingflag ガードを撤去。
+        if self._undo_mark_snapshot is None:
             self.memory.cancel_diff()
             return
         diff_log = self.memory.end_diff()
@@ -1556,9 +1560,11 @@ class BiEditor:
         # MemoryBuffer.setmem() を経由しないため差分ログに乗らない。
         # そこで exec 実行前のバッファ全体をスナップショットしておき、
         # 実行後に旧バッファと比較して差分を undo_stack に積む。
-        # (対話モードのみ。scripting 中は既存仕様どおり undo を取らない)
+        # [変更] 従来は対話モードのみ有効(scripting 中は undo を取らない)
+        # だったが、save_undo_state/commit_undo と同じ理由で撤去し、
+        # スクリプト実行中も同じ経路で記録する。
         buf_before = list(self.memory.mem)
-        undo_enabled = not self.scriptingflag
+        undo_enabled = True
         if undo_enabled:
             mark_before = list(self.memory.mark)
             meta_before = (self.memory.modified, self.memory.lastchange)
@@ -1683,6 +1689,15 @@ class BiEditor:
                     continue
             
             # 検索コマンド
+            # 破綻点修正: searchnext/searchlast は検索パターン未設定のとき
+            # None ではなく False を返す(538/577行)が、この分岐は
+            # 「pos is not None and pos is not False」で真の場合のみ jump し、
+            # 「elif pos is None」で「Not found.」を出す形になっていたため、
+            # pos が False のケースがどちらにも該当せず、キー入力が完全に
+            # 無反応になっていた(ジャンプもせず、エラーメッセージも出ない)。
+            # スクリプトモード側(line[0]=='n'/'N' の分岐)は事前に
+            # regexp/smem 未設定を検知して "No data to search." を出しており、
+            # これと同じメッセージを出すよう揃える。
             if ch == 'n':
                 pos = self.search.searchnext(self.display.fpos() + 1, len(self.memory))
                 if pos is not None and pos is not False:
@@ -1692,6 +1707,8 @@ class BiEditor:
                         if matches:
                             self.display.highlight_ranges = matches
                     self.display.jump(pos)
+                elif pos is False:
+                    self.stderr("No data to search.")
                 elif pos is None:
                     self.stderr("Not found.")
                 continue
@@ -1704,6 +1721,8 @@ class BiEditor:
                         if matches:
                             self.display.highlight_ranges = matches
                     self.display.jump(pos)
+                elif pos is False:
+                    self.stderr("No data to search.")
                 elif pos is None:
                     self.stderr("Not found.")
                 continue

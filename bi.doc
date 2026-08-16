@@ -62,10 +62,9 @@ On command line mode
    n                       ----- search the next
    N                       ----- search the last
 
-   (*) undo/redo recording is intentionally disabled while running under
-       -s/-c (scripting or single-command mode), for performance reasons.
-       'u' and 'U' are accepted but have nothing to undo/redo in that
-       context. Undo/redo works normally in interactive on-screen mode.
+   (*) undo/redo recording works the same way in -s/-c (scripting or
+       single-command mode) as in interactive on-screen mode. 'u' and 'U'
+       undo/redo edits made earlier in the same script/command run.
    [offset]rp              ----- partial read
    [offset],[end] rp       ----- partial read
    [offset],*[length] rp   ----- partial read
