@@ -1120,6 +1120,21 @@ class FileManager:
             with open(fn, "wb") as f:
                 f.write(bytes(self.memory.mem))
             return True, "File written."
+        # 破綻点修正: readfile/readfile_partial/writefile_partial は
+        # IsADirectoryError/PermissionError を明示的に小文字メッセージで
+        # 処理しているが、writefile()だけはこれらを持たず OSError の
+        # 汎用ハンドラに落ちていた。汎用ハンドラは e.strerror(glibcの
+        # strerror、先頭大文字の"Is a directory"/"Permission denied")を
+        # そのまま使うため、同じ原因でも 'w'/'wq' コマンド(=writefile経由、
+        # 最も一般的な書き込み経路)だけメッセージの大文字小文字が
+        # bi.c(常に小文字)およびbi.py自身の他の経路と食い違っていた
+        # (実機確認: `w /tmp` でPython="Cannot write '/tmp': Is a
+        # directory."、C="Cannot write '/tmp': is a directory.")。
+        # 他の3箇所と同じ明示分岐を追加して統一する。
+        except IsADirectoryError:
+            return False, f"Cannot write '{fn}': is a directory."
+        except PermissionError:
+            return False, f"Cannot write '{fn}': permission denied."
         except OSError as e:
             return False, f"Cannot write '{fn}': {e.strerror or e}."
 
@@ -1133,6 +1148,12 @@ class FileManager:
                     else:
                         f.write(bytes([0]))
             return True, None
+        # 破綻点修正: writefile()と同根。range-write("start,end w fn")用の
+        # このメソッドも同じ理由で明示分岐が欠けていたため追加。
+        except IsADirectoryError:
+            return False, f"Cannot write '{fn}': is a directory."
+        except PermissionError:
+            return False, f"Cannot write '{fn}': permission denied."
         except OSError as e:
             return False, f"Cannot write '{fn}': {e.strerror or e}."
     def readfile_partial(self, fn, offset, max_len=0):
