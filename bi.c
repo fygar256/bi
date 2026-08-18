@@ -4409,13 +4409,44 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         const char *filename = (idx >= strlen(line))
                                ? editor->filemgr.filename
                                : line + idx;
+        /* [破綻点修正] r/Rコマンドもfilemgr_readfileとは別に独自にfopen()
+         * を呼んでおり、同じ問題(fopen失敗理由の未区別、及びLinux/glibcで
+         * fopen(dir,"rb")が成功した場合にftell()がディレクトリに対し巨大値
+         * を返し得ることへの対処漏れ)を抱えていた。bi.pyのr/Rは
+         * `File read error: {e.strerror}.`で理由を報告するのに対し、
+         * C版はディレクトリ指定時に的外れな"Memory allocation error."を
+         * 返していた(ftellの巨大値でmallocが失敗するため)。
+         * filemgr_readfileと同じerrno/fstatベースの判定を適用する。 */
+        errno = 0;
         FILE *f = fopen(filename, "rb");
         if (!f) {
-            display_stderr(&editor->display, "File read error.", 
+            char rmsg[300];
+            if (errno == ENOENT) {
+                snprintf(rmsg, sizeof(rmsg), "File read error: No such file or directory.");
+            } else if (errno == EISDIR) {
+                snprintf(rmsg, sizeof(rmsg), "File read error: Is a directory.");
+            } else if (errno == EACCES) {
+                snprintf(rmsg, sizeof(rmsg), "File read error: Permission denied.");
+            } else if (errno != 0) {
+                snprintf(rmsg, sizeof(rmsg), "File read error: %s.", strerror(errno));
+            } else {
+                snprintf(rmsg, sizeof(rmsg), "File read error.");
+            }
+            display_stderr(&editor->display, rmsg,
                           editor->scriptingflag, editor->verbose);
             return -1;
         }
-        
+
+        /* fopen(dir, "rb") はLinux/glibcでは成功し得るため、ここでも
+         * 明示的にディレクトリ判定を行う。 */
+        struct stat rst;
+        if (fstat(fileno(f), &rst) == 0 && S_ISDIR(rst.st_mode)) {
+            fclose(f);
+            display_stderr(&editor->display, "File read error: Is a directory.",
+                          editor->scriptingflag, editor->verbose);
+            return -1;
+        }
+
         // ファイルサイズを取得
         fseek(f, 0, SEEK_END);
         long fsize = ftell(f);
