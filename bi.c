@@ -4281,9 +4281,25 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         }
 
         /* 書き込み */
+        /* [破綻点修正] この範囲書き込み(start,end w fn)コマンドはfilemgr_writefile()
+         * を経由せず独自にfopen()を呼んでいたため、そちらに追加済みのerrnoベースの
+         * 理由分け(is a directory./permission denied.)が適用されず、常に汎用の
+         * "Cannot open output file."になっていた(bi.pyのwrtfile()は正しく理由を
+         * 報告する)。filemgr_writefile()と同じ分岐をここにも適用する。 */
+        errno = 0;
         FILE *f = fopen(fname, "wb");
         if (!f) {
-            display_stderr(&editor->display, "Cannot open output file.", 
+            char wmsg[300];
+            if (errno == EISDIR) {
+                snprintf(wmsg, sizeof(wmsg), "Cannot write '%s': is a directory.", fname);
+            } else if (errno == EACCES) {
+                snprintf(wmsg, sizeof(wmsg), "Cannot write '%s': permission denied.", fname);
+            } else if (errno != 0) {
+                snprintf(wmsg, sizeof(wmsg), "Cannot write '%s': %s.", fname, strerror(errno));
+            } else {
+                snprintf(wmsg, sizeof(wmsg), "Cannot open output file.");
+            }
+            display_stderr(&editor->display, wmsg, 
                            editor->scriptingflag, editor->verbose);
             bytearray_free(&data);
             return -1;
