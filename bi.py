@@ -2463,56 +2463,63 @@ class BiEditor:
         if end < start:
             start, end = end, start
 
-        lines_out = []
-        row = start - (start % 16)          # 16バイト境界へ丸める
-        while row <= end:
-            file_addr = (row + g_partial.offset) & 0xffffffffffff
-            hexs = []
-            ascs = []
-            for i in range(16):
-                cur = row + i
-                if cur < start or cur > end:
-                    hexs.append("  ")       # 指定範囲外の余白
-                elif cur >= mem_len:
-                    hexs.append("~~")       # バッファ外
-                else:
+        # 行はリストに溜めず逐次生成する。
+        # `<addr> h` は end を省略すると end=EOF になり、addr が EOF より
+        # 大きいと直後の start/end スワップで [EOF..addr] という巨大範囲に
+        # 反転する。以前はここで全行を lines_out に溜めていたため
+        # `%10000000000 h` のような指定でメモリを食い潰し、OS に
+        # kill された(bi.c は 1 行ずつ printf するので落ちない)。
+        # ジェネレータにして bi.c と同じ逐次出力に揃える。
+        def _rows():
+            row = start - (start % 16)          # 16バイト境界へ丸める
+            while row <= end:
+                file_addr = (row + g_partial.offset) & 0xffffffffffff
+                hexs = []
+                ascs = []
+                for i in range(16):
+                    cur = row + i
+                    if cur < start or cur > end:
+                        hexs.append("  ")       # 指定範囲外の余白
+                    elif cur >= mem_len:
+                        hexs.append("~~")       # バッファ外
+                    else:
+                        b = self.memory.mem[cur] & 0xff
+                        hexs.append(f"{b:02X}")
+                i = 0
+                while i < 16:
+                    cur = row + i
+                    if cur < start or cur > end:
+                        ascs.append(' ')
+                        i += 1
+                        continue
+                    if cur >= mem_len:
+                        ascs.append('~')
+                        i += 1
+                        continue
                     b = self.memory.mem[cur] & 0xff
-                    hexs.append(f"{b:02X}")
-            i = 0
-            while i < 16:
-                cur = row + i
-                if cur < start or cur > end:
-                    ascs.append(' ')
+                    if 0xc0 <= b <= 0xf7:
+                        if   b <= 0xdf: nbytes = 2
+                        elif b <= 0xef: nbytes = 3
+                        else:           nbytes = 4
+                        if cur + nbytes - 1 <= end and cur + nbytes <= mem_len:
+                            raw = bytes([self.memory.mem[cur + k] & 0xff for k in range(nbytes)])
+                            try:
+                                ch = raw.decode('utf-8')
+                                pad = '  ' if nbytes == 4 else ' '
+                                ascs.append(ch + pad)
+                                i += nbytes
+                                continue
+                            except Exception:
+                                pass
+                    ascs.append(chr(b) if 0x20 <= b <= 0x7e else '.')
                     i += 1
-                    continue
-                if cur >= mem_len:
-                    ascs.append('~')
-                    i += 1
-                    continue
-                b = self.memory.mem[cur] & 0xff
-                if 0xc0 <= b <= 0xf7:
-                    if   b <= 0xdf: nbytes = 2
-                    elif b <= 0xef: nbytes = 3
-                    else:           nbytes = 4
-                    if cur + nbytes - 1 <= end and cur + nbytes <= mem_len:
-                        raw = bytes([self.memory.mem[cur + k] & 0xff for k in range(nbytes)])
-                        try:
-                            ch = raw.decode('utf-8')
-                            pad = '  ' if nbytes == 4 else ' '
-                            ascs.append(ch + pad)
-                            i += nbytes
-                            continue
-                        except Exception:
-                            pass
-                ascs.append(chr(b) if 0x20 <= b <= 0x7e else '.')
-                i += 1
-            hexstr = ' '.join(hexs) 
-            lines_out.append(f"{file_addr:012X} {hexstr} {''.join(ascs)}")
-            row += 16
+                hexstr = ' '.join(hexs) 
+                yield f"{file_addr:012X} {hexstr} {''.join(ascs)}"
+                row += 16
 
         if self.scriptingflag:
             print("             +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF")
-            for ln in lines_out:
+            for ln in _rows():
                 print(ln)
             return
 
@@ -2521,7 +2528,7 @@ class BiEditor:
         self.term.color(4)          # シアン (coltab[5]=96)
         print("             +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF")
         self.term.color(5)          # シアン (coltab[5]=96)
-        for ln in lines_out:
+        for ln in _rows():
             print(ln)
         self.term.color(4)
         print("[ hit a key ]", end='', flush=True)

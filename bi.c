@@ -4547,12 +4547,24 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         // * n のパターンをチェック
         idx = parser_skipspc(line, idx);
         if (line[idx] == '*') {
-            int n;
+            /* 繰り返し回数は uint64_t で受ける。
+             * 以前は int だったため "*4294967301" のような値が符号付き
+             * 整数オーバーフロー(未定義動作)を起こし、小さな正の値
+             * (この例では 5)に回り込んで MAX_FILL_SIZE チェックを
+             * すり抜けていた。bi.py は多倍長整数なので
+             * "Repeat count too large" で拒否しており挙動が食い違う。
+             * オーバーフローは飽和させ、後段の MAX_FILL_SIZE チェックで
+             * bi.py と同じメッセージで拒否されるようにする。 */
+            uint64_t n;
             idx++;
             idx = parser_skipspc(line, idx);
 			n=0;
 			while (isdigit((unsigned char)line[idx])) {
-				n = 10 * n + (line[idx] - '0');
+				unsigned d = (unsigned)(line[idx] - '0');
+				if (n > (UINT64_MAX - 1 - d) / 10)
+					n = UINT64_MAX - 1;   /* 飽和(UNKNOWN と衝突させない) */
+				else
+					n = 10 * n + d;
 				idx++;
 			}
             if (n != UNKNOWN && n > 0) {
