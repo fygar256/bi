@@ -24,6 +24,11 @@
 
 #define MAX_UNDO_LEVELS 100
 #define UNKNOWN         UINT64_MAX
+/* ゼロ埋めでの自動拡張(memory_overwrite/memory_insertの1バイトずつの
+ * growループ)に許す最大ギャップ。範囲指定コマンドの上限と同じ1GiB。
+ * ここより大きい隙間を無条件に許すと、桁の多いアドレスを1つ打つだけで
+ * ループが事実上終わらなくなる(下記 Bug: address-gap-hang 参照)。 */
+#define MAX_FILL_SIZE   0x40000000ULL /* 1 GiB */
 
 /* ========================================================================
  * readline
@@ -894,6 +899,17 @@ uint8_t memory_read(MemoryBuffer *mem, size_t addr) {
 }
 
 void memory_set(MemoryBuffer *mem, size_t addr, uint8_t data) {
+    /* address-gap-hang 対策: addr がバッファ末尾よりはるか先だと、1バイト
+     * ずつ push するこの while ループが事実上終わらない(例: ユーザーが
+     * 桁を打ち間違えて2^62相当のアドレスを指定した場合、ハングする)。
+     * MAX_FILL_SIZE を超える一括拡張は行わず、安全側に倒して何もしない
+     * (bi.py が MemoryError を捕まえて "Memory overflow." で即座に
+     * 拒否するのと同じ意図。呼び出し側にエラー文字列を返す経路が
+     * 無いため、ここでは無警告の安全な no-op とする)。 */
+    if (addr >= mem->mem.size &&
+        addr - mem->mem.size > MAX_FILL_SIZE) {
+        return;
+    }
     size_t orig_len = mem->mem.size;
     while (addr >= mem->mem.size) {
         bytearray_push(&mem->mem, 0);
@@ -916,6 +932,14 @@ void memory_set(MemoryBuffer *mem, size_t addr, uint8_t data) {
 }
 
 void memory_insert(MemoryBuffer *mem, size_t start, const uint8_t *data, size_t len) {
+    /* address-gap-hang 対策(memory_set と同じ理由)。この関数は diff ログの
+     * 0埋め記録と bytearray_insert 内部の0埋めで、ギャップ分だけ1バイト
+     * ずつ push するループを二重に持つため、巨大な start では両方が
+     * ハングし得る。呼び出し前に安全側の no-op へ倒す。 */
+    if (start > mem->mem.size &&
+        start - mem->mem.size > MAX_FILL_SIZE) {
+        return;
+    }
     if (mem->current_diff && len > 0) {
         DiffEntry e;
         memset(&e, 0, sizeof(e));
@@ -989,6 +1013,11 @@ size_t memory_yank(MemoryBuffer *mem, size_t start, size_t end) {
 
 void memory_overwrite(MemoryBuffer *mem, size_t start, const uint8_t *data, size_t len) {
     if (len == 0) return;
+    /* address-gap-hang 対策(memory_set/memory_insert と同じ理由)。 */
+    if (start + len > mem->mem.size &&
+        (start + len) - mem->mem.size > MAX_FILL_SIZE) {
+        return;
+    }
     
     if (mem->current_diff) {
         DiffEntry e;
@@ -1730,6 +1759,18 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
             char result[64];
             if (fgets(result, sizeof(result), pipe)) {
                 v = strtoull(result, NULL, 10);
+                /* {} 式は Python の int(eval(...)) を経由するため、
+                 * "{-5}" のように結果が負になり得る。strtoull はその
+                 * 文字列 "-5" を符号なしの巨大値へラップして返すので
+                 * ここで符号ビットを見て 0 に丸める(bi.py の
+                 * "if v < 0: v = 0" と同じ意図)。
+                 * 以前はこのクランプを関数末尾で全ブランチ共通に
+                 * 掛けていたため、16進/'%'10進で 2^63 以上の"符号ビット
+                 * が立っているだけの正当な巨大アドレス"まで誤って 0
+                 * (オフセット0)に化けてしまっていた
+                 * (例: "%9223372036854775808 i 65" が無警告でオフセット0
+                 * を書き換える)。{} 式だけの局所処理に変更する。 */
+                if ((int64_t)v < 0) v = 0;
                 pclose(pipe);
             } else {
                 pclose(pipe);
@@ -1757,10 +1798,23 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
         // 構文エラー: 無効なマーク文字
         return UNKNOWN;
     } else if (isxdigit((unsigned char)ch)) {
+        /* *n(繰り返し回数)と同じ理由でオーバーフロー対策が必要。
+         * 以前は素の "v = 16*v + digit" だったため、17桁以上の16進
+         * アドレス(例 "FFFFFFFFFFFFFFFF3")を与えると uint64_t が
+         * 黙って折り返り、小さな別アドレスに化けてしまっていた。
+         * bi.py は多倍長整数なので折り返らず、この非対称のせいで
+         * 例えば "FFFFFFFFFFFFFFFF3 i 65" が C 版だけオフセット0を
+         * 無警告で書き換える、というサイレントな誤書き込みが起きて
+         * いた。ここも *n と同じく飽和させ、UNKNOWN(UINT64_MAX)とは
+         * 衝突しない値に留める。 */
         while (isxdigit((unsigned char)s[*idx])) {
-            v = 16 * v + (isdigit((unsigned char)s[*idx]) ? 
-                         s[*idx] - '0' : 
+            unsigned d = (unsigned)(isdigit((unsigned char)s[*idx]) ?
+                         s[*idx] - '0' :
                          tolower((unsigned char)s[*idx]) - 'a' + 10);
+            if (v > (UINT64_MAX - 1 - d) / 16)
+                v = UINT64_MAX - 1;   /* 飽和(UNKNOWN と衝突させない) */
+            else
+                v = 16 * v + d;
             (*idx)++;
         }
     } else if (ch == '%') {
@@ -1769,8 +1823,14 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
             // 構文エラー: %の後に数字がない
             return UNKNOWN;
         }
+        /* 上と同じ理由。"%18446744073709551619"(=2^64+3)のような
+         * 10進アドレスが折り返ってオフセット3に化ける問題への対策。 */
         while (isdigit((unsigned char)s[*idx])) {
-            v = 10 * v + (s[*idx] - '0');
+            unsigned d = (unsigned)(s[*idx] - '0');
+            if (v > (UINT64_MAX - 1 - d) / 10)
+                v = UINT64_MAX - 1;   /* 飽和(UNKNOWN と衝突させない) */
+            else
+                v = 10 * v + d;
             (*idx)++;
         }
     } else {
@@ -1778,7 +1838,6 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
         return UNKNOWN;
     }
     
-    if ((int64_t)v < 0) v = 0;
     return v;
 }
 
@@ -4174,8 +4233,8 @@ int editor_commandline(BiEditor *editor, const char *line) {
  * repeat_count/range_len をそのまま bytearray_push() のループ回数に使うため
  * 上限が無く、桁を1つ打ち間違えるだけで(例: "0i 41*99999999999")数百GB
  * 相当のメモリ確保・ループを試みてハングアップしていた。妥当な上限(1GiB)
- * を設けて明確なエラーにする。 */
-#define MAX_FILL_SIZE 0x40000000ULL /* 1 GiB */
+ * を設けて明確なエラーにする。(MAX_FILL_SIZE 自体はファイル冒頭に移動し、
+ * memory_overwrite/memory_insert のアドレスgapチェックと共有している) */
 
 /* 破綻点修正: ビット演算・シフト/ローテートの対象範囲がバッファ内に収まって
  * いるか検査する。これらのコマンドはd(削除)/y(ヤンク)と違って範囲チェックを
