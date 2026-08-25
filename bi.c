@@ -24,6 +24,11 @@
 
 #define MAX_UNDO_LEVELS 100
 #define UNKNOWN         UINT64_MAX
+/* 文字列/正規表現パターン用の作業バッファサイズ。parser_get_restr() の
+ * 呼び出し元バッファ、Search.remem、正規表現コンパイルキャッシュの
+ * 3箇所で共通して使う（remem/キャッシュがこれより小さいと、ここで
+ * 切り詰めた分だけ正規表現が短くなり誤マッチする — Bug: remem-truncation 参照）。 */
+#define LINE_MAX_SIZE 4096
 /* ゼロ埋めでの自動拡張(memory_overwrite/memory_insertの1バイトずつの
  * growループ)に許す最大ギャップ。範囲指定コマンドの上限と同じ1GiB。
  * ここより大きい隙間を無条件に許すと、桁の多いアドレスを1つ打つだけで
@@ -200,7 +205,11 @@ typedef struct {
     BiEditor     *editor;
     ByteArray     smem;
     bool          regexp;
-    char          remem[128];
+    /* [Bug: remem-truncation 修正] 従来128バイトだったため、127バイトを
+     * 超える検索/正規表現パターンが無警告で切り詰められ、bi.py（無制限長の
+     * Python str）と異なる（誤った）マッチ結果になっていた。
+     * parser_get_restr() 呼び出し元バッファと同じ LINE_MAX_SIZE に統一。 */
+    char          remem[LINE_MAX_SIZE];
     size_t        span;
     bool          nff;
     /* 正規表現の全マッチ位置キャッシュ。search_begin_scan() で無効化し、
@@ -1113,7 +1122,9 @@ static void search_build_regex_cache(SearchEngine *search) {
 
     /* [Bug8修正] 継承: regcomp/regfree の呼び出しごとの再コンパイルを避ける
      * static キャッシュ。パターンが変化したときのみ再コンパイルする。 */
-    static char    s_cached_pattern[512] = "";
+    /* [Bug: remem-truncation 修正] remem と同じ LINE_MAX_SIZE に統一
+     * （旧512バイトのままだと remem 側を直しても本関数側で再度切り詰められる）。 */
+    static char    s_cached_pattern[LINE_MAX_SIZE] = "";
     static regex_t s_cached_regex;
     static bool    s_regex_valid = false;
 
@@ -1878,8 +1889,8 @@ uint64_t parser_expression(Parser *parser, const char *s, size_t *idx) {
 /* [Bug2修正] BOF 対策。
  * bi.h は3引数で宣言しているためシグネチャを変更できない。
  * 代わりに内部で j を LINE_MAX_SIZE-1 でキャップする。
- * 呼び出し元バッファは4096バイトに拡大してあるので実用上オーバーフローしない。 */
-#define LINE_MAX_SIZE 4096
+ * 呼び出し元バッファは4096バイトに拡大してあるので実用上オーバーフローしない。
+ * (LINE_MAX_SIZE の定義はファイル冒頭の定数セクションに移動済み) */
 size_t parser_get_restr(const char *s, size_t idx, char *result) {
     size_t j = 0;
     while (s[idx]) {
