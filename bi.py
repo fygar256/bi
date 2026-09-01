@@ -10,6 +10,61 @@ import time
 import argparse
 
 # ========================================================================
+# 定数
+# ========================================================================
+# 1操作あたりの undo 差分記録に使ってよいメモリ量の上限。
+#
+# setmem() は1バイト書き換えるごとにタプルを1つ積むため、記録量は
+# ファイルサイズの百倍を超えて膨らむ(実測 bi.py で約157倍)。上限が無いと
+# 0,$ ^ ff のようなファイル全体への操作が数十MBのファイルでも数GBを
+# 確保して OOM killer に落とされ、-w 指定時はファイルが無変更のまま
+# 何の表示も出ないまま終了していた。
+#
+# 超過した時点でその操作の差分は破棄し(メモリは即座に返す)、操作自体は
+# 最後まで実行して "This operation can not undo." を出す。
+MAX_UNDO_BYTES = 256 * 1024 * 1024   # 256 MiB
+# 差分1エントリあたりの概算コスト。5要素タプル+リストスロット≒96 バイト。
+# 見積り式  cost = UNDO_ENTRY_COST + data_bytes * 2  を bi.c と共通で使い、
+# 両実装が同じファイル・同じ操作で必ず同じ位置で上限に当たるようにする
+# (bi.c 側 UNDO_ENTRY_COST と必ず一致させること)。
+UNDO_ENTRY_COST = 96
+
+
+def _fmt_float32(v):
+    """float32 を「読み戻すと同じビットパターンに戻る最短の10進表現」にする。
+
+    バイナリエディタでは表示された数値から格納バイト列を復元できることが
+    必要。repr() は float32 でも double として最短化するため
+    3.1415927410125732 のように float32 には存在しない精度の桁まで
+    ノイズとして出てしまう。float として往復判定して桁を詰める。
+    bi.c format_float32_shortest() と同じ %g ベースの同じ手順。
+    """
+    import struct as _s
+    if v != v or v in (float('inf'), float('-inf')):
+        return '%g' % v
+    for prec in range(1, 10):
+        t = '%.*g' % (prec, v)
+        if _s.unpack('f', _s.pack('f', float(t)))[0] == v:
+            return t
+    return '%.9g' % v
+
+
+def _fmt_float64(v):
+    """float64 を最短往復表現にする(bi.c format_double_shortest() と同一)。
+
+    repr() でもほぼ同じ結果になるが、指数表記へ切り替える閾値の規則が
+    Python と C の %g で違うため、両実装の出力を必ず一致させるには
+    同じ %g ベースの手順を使う必要がある。
+    """
+    if v != v or v in (float('inf'), float('-inf')):
+        return '%g' % v
+    for prec in range(1, 18):
+        t = '%.*g' % (prec, v)
+        if float(t) == v:
+            return t
+    return '%.17g' % v
+
+# ========================================================================
 # readline フォールバック実装 (C版の #ifndef HAVE_READLINE から移植)
 # ========================================================================
 try:
@@ -271,6 +326,8 @@ class MemoryBuffer:
         self.modified = False
         self.lastchange = False
         self._diff_log = None   # None=非記録中, list=記録中
+        self._diff_bytes = 0        # 記録済み差分の概算メモリ使用量
+        self._diff_overflow = False # MAX_UNDO_BYTES 超過で記録を放棄した
         # save_undo_state()/commit_undo() の呼び出し漏れ検出用フック。
         # BiEditor が設定する（scripting中は undo を意図的に無効化しているため
         # 呼ばれない）。将来コマンドを追加する際に undo 記録を忘れると、
@@ -299,9 +356,36 @@ class MemoryBuffer:
     def begin_diff(self):
         """差分記録を開始する"""
         self._diff_log = []
+        self._diff_bytes = 0
+        self._diff_overflow = False
+
+    def _diff_reserve(self, data_bytes=0):
+        """これから data_bytes バイト分の差分を積んでよいか調べる。
+
+        記録site が list(...) を組み立てる *前* に呼ぶこと。予算超過なら
+        ここで記録済み差分をすべて捨ててメモリを返し、overflow を立てて
+        False を返す。呼び出し側は差分を作らず本来の書き換えだけを行う。
+
+        見積り式は bi.c の difflog_reserve() と共通。同じファイル・同じ
+        操作なら両実装が必ず同じ位置で上限に当たる。
+        """
+        if self._diff_log is None or self._diff_overflow:
+            return False
+        cost = UNDO_ENTRY_COST + data_bytes * 2
+        if cost > MAX_UNDO_BYTES or self._diff_bytes + cost > MAX_UNDO_BYTES:
+            self._diff_log = []      # 記録済み差分を解放
+            self._diff_bytes = 0
+            self._diff_overflow = True
+            return False
+        self._diff_bytes += cost
+        return True
 
     def end_diff(self):
-        """差分記録を終了し、記録済み差分リストを返す"""
+        """差分記録を終了し、記録済み差分リストを返す
+
+        overflow したかどうかは _diff_overflow で別途参照する
+        (次の begin_diff() まで保持される)。
+        """
         log = self._diff_log
         self._diff_log = None
         return log if log else []
@@ -309,6 +393,8 @@ class MemoryBuffer:
     def cancel_diff(self):
         """差分記録を破棄して終了する"""
         self._diff_log = None
+        self._diff_bytes = 0
+        self._diff_overflow = False
 
     def __len__(self):
         return len(self.mem)
@@ -325,7 +411,7 @@ class MemoryBuffer:
             self.mem += bytearray(addr - len(self.mem) + 1)
         old_val = self.mem[addr]
         new_val = int(data) & 0xff
-        if self._diff_log is not None:
+        if self._diff_reserve(0):
             # ('ovw', addr, old_byte, new_byte, orig_mem_len)
             self._diff_log.append(('ovw', addr, old_val, new_val, orig_len))
         self.mem[addr] = new_val
@@ -343,14 +429,15 @@ class MemoryBuffer:
             # で 0埋め分が消えず、undo が完全に元へ戻らない。
             old_len = len(self.mem)
             inserted = bytearray(start - old_len) + mem2
-            if self._diff_log is not None:
+            # 0埋めギャップも記録対象なので見積りは inserted 全体。
+            if self._diff_reserve(len(inserted)):
                 self._diff_log.append(('ins', old_len, list(inserted)))
             self.mem += inserted
             self.modified = True
             self.lastchange = True
             return
 
-        if self._diff_log is not None:
+        if self._diff_reserve(len(mem2)):
             self._diff_log.append(('ins', start, list(mem2)))
         self.mem[start:start] = mem2
         self.modified = True
@@ -362,7 +449,7 @@ class MemoryBuffer:
             return False
         self._check_untracked()
 
-        if self._diff_log is not None:
+        if self._diff_reserve(length):
             self._diff_log.append(('del', start, list(self.mem[start:end+1])))
 
         if yf:
@@ -396,7 +483,8 @@ class MemoryBuffer:
 
         mem0 = bytearray(b & 0xff for b in mem0)
 
-        if self._diff_log is not None:
+        # old_region と mem0 の両方を持つので見積りは長さの2倍。
+        if self._diff_reserve(len(mem0) * 2):
             orig_len = len(self.mem)
             # 変更前の該当領域を保存（拡張予定分は 0 で補完）
             old_region = list(self.mem[start:start+len(mem0)])
@@ -757,7 +845,7 @@ class Display:
     def print_title(self, filename):
         self.term.locate(0, 0)
         self.term.color(6)
-        print(f'bi Py version 3.5.2 by Taisuke Maekawa          utf8mode:{"off" if not self.utf8 else "on "}     {"insert   " if self.insmod else "overwrite"}   ')
+        print(f'bi Py version 3.5.3 by Taisuke Maekawa          utf8mode:{"off" if not self.utf8 else "on "}     {"insert   " if self.insmod else "overwrite"}   ')
         self.term.color(5)
         if len(filename) > 35:
             fn = filename[0:35]
@@ -877,6 +965,24 @@ class Display:
             self.term.locate(0, self.BOTTOMLN)
             print(" " + s, end='', flush=True)
     
+    def warnmm(self, s, scripting, verbose):
+        """操作は成功しているが必ず伝えるべき事柄を出す。
+
+        stdmm はスクリプト中 -v 無しだと沈黙するので、undo 履歴の破棄の
+        ような「黙って起きると困る」通知には使えない。stderr は
+        error_occurred を立ててスクリプトやマルチステートメントを
+        打ち切ってしまうので、これも使えない。その中間として、常に
+        出すが処理は止めない経路を用意する。(bi.c display_warnmm と対)
+        """
+        del verbose   # -v の有無によらず常に出す
+        if scripting:
+            print(s, file=sys.stderr)
+        else:
+            self.clrmm()
+            self.term.color(3)
+            self.term.locate(0, self.BOTTOMLN)
+            print(" " + s, end='', flush=True)
+
     def stderr(self, s, scripting, verbose):
         if scripting:
             print(s, file=sys.stderr)
@@ -1416,6 +1522,23 @@ class BiEditor:
             self.memory.cancel_diff()
             return
         diff_log = self.memory.end_diff()
+        if self.memory._diff_overflow:
+            # 記録量が MAX_UNDO_BYTES を超えたためこの操作の差分は残っていない。
+            # 操作自体は完了しているので、バッファは「記録の無い変更」を被った
+            # 状態にある。ここで古い undo 履歴を残すと、それを逆適用したときに
+            # 今回の変更の上に別の時点の内容を書き戻してデータを破壊する。
+            # 履歴全体を捨てるのが唯一安全な選択。redo も同じ理由で無効になる。
+            self._undo_mark_snapshot = None
+            self._undo_meta_snapshot = None
+            self._undo_cursor_snapshot = None
+            self.undo_stack = []
+            self.redo_stack = []
+            # 操作は成功しているので stderr は使えない(error_occurred を立てて
+            # スクリプト/マルチステートメントを打ち切ってしまう)。かといって
+            # stdmm では -v 無しのスクリプト実行時に沈黙し、undo 履歴が消えた
+            # ことが伝わらない。常に出して処理は止めない warnmm を使う。
+            self.warnmm("This operation can not undo.")
+            return
         if not diff_log:
             self._undo_mark_snapshot = None
             self._undo_meta_snapshot = None
@@ -1508,6 +1631,10 @@ class BiEditor:
         self.stdmm(f"Redo. ({len(self.redo_stack)} more)")
         return True
     
+    def warnmm(self, s):
+        """常に表示するが error_occurred は立てない通知(bi.c と対)"""
+        self.display.warnmm(s, self.scriptingflag, self.verbose)
+
     def stderr(self, s):
         self.error_occurred = True
         self.display.stderr(s, self.scriptingflag, self.verbose)
@@ -2387,10 +2514,10 @@ class BiEditor:
                         s = str(val)
                     elif type_char == 'f':
                         val = struct.unpack(endian_ch + 'f', raw)[0]
-                        s = repr(val)
+                        s = _fmt_float32(val)
                     elif type_char == 'd':
                         val = struct.unpack(endian_ch + 'd', raw)[0]
-                        s = repr(val)
+                        s = _fmt_float64(val)
                     elif type_char == 'Q':
                         # 128-bit float: ctypes long double (platform dependent)
                         if be:

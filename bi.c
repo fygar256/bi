@@ -18,11 +18,31 @@
 #include <unistd.h>   /* ftruncate, close 等           */
 #include <errno.h>    /* fopen 失敗理由(ENOENT/EISDIR/EACCES等)の区別用 */
 #include <sys/stat.h> /* fstat, S_ISDIR: ディレクトリ誤指定の検出用 */
+#include <math.h>     /* isfinite: 浮動小数点表示の非有限値判定用       */
 /* ========================================================================
  * 定数
  * ======================================================================== */
 
 #define MAX_UNDO_LEVELS 100
+/* 1操作あたりの undo 差分記録に使ってよいメモリ量の上限。
+ *
+ * memory_set() は1バイト書き換えるごとに DiffEntry を1つ積むため、
+ * 記録量はファイルサイズの数十倍に膨らむ(実測 bi.c で約81倍)。
+ * 上限が無いと 0,$ ^ ff のようなファイル全体への操作が、数十MBの
+ * ファイルでも数GBを確保して OOM killer に落とされ、-w 指定時は
+ * ファイルが無変更のまま何の表示も出ないまま終了していた。
+ *
+ * 超過した時点でその操作の差分は破棄し(メモリは即座に返す)、
+ * 操作自体は最後まで実行して "This operation can not undo." を出す。
+ * 目安: 領域単位の差分(DIFF_OVW_REGION/INS/DEL)なら約128MB分、
+ * 1バイト単位の差分(DIFF_OVW)なら約320万バイト分の編集まで記録できる。 */
+#define MAX_UNDO_BYTES  (256ULL * 1024 * 1024) /* 256 MiB */
+/* 差分1エントリあたりの概算コスト。実体は bi.c で sizeof(DiffEntry)=80、
+ * bi.py で5要素タプル+リストスロット≒96 と近い。両実装が同じファイル・
+ * 同じ操作で必ず同じ位置で上限に当たるよう、見積り式
+ *   cost = UNDO_ENTRY_COST + data_bytes * 2
+ * を bi.py と共通で使う(bi.py 側 UNDO_ENTRY_COST と必ず一致させること)。 */
+#define UNDO_ENTRY_COST 96
 #define UNKNOWN         UINT64_MAX
 /* 文字列/正規表現パターン用の作業バッファサイズ。parser_get_restr() の
  * 呼び出し元バッファ、Search.remem、正規表現コンパイルキャッシュの
@@ -116,6 +136,8 @@ typedef struct {
     DiffEntry *entries;
     size_t     size;
     size_t     capacity;
+    size_t     bytes;     /* 記録済み差分の概算メモリ使用量               */
+    bool       overflow;  /* MAX_UNDO_BYTES 超過で記録を放棄した           */
 } DiffLog;
 
 typedef struct {
@@ -136,6 +158,7 @@ typedef struct {
 } DiffStack;
 
 void difflog_init(DiffLog *log);
+bool difflog_reserve(DiffLog *log, size_t data_bytes);
 void difflog_push(DiffLog *log, const DiffEntry *e);
 void difflog_free(DiffLog *log);
 
@@ -605,6 +628,8 @@ void difflog_init(DiffLog *log) {
     log->entries  = NULL;
     log->size     = 0;
     log->capacity = 0;
+    log->bytes    = 0;
+    log->overflow = false;
 }
 
 static void diffentry_free(DiffEntry *e) {
@@ -612,7 +637,44 @@ static void diffentry_free(DiffEntry *e) {
     bytearray_free(&e->new_data);
 }
 
+/* --------------------------------------------------------------------
+ * difflog_reserve — これから data_bytes バイト分の差分を積んでよいか
+ *
+ * 記録site(memory_set/insert/delete/overwrite)が ByteArray を組み立てる
+ * *前* に呼ぶ。予算を超える場合はここで既存の記録をすべて解放して
+ * overflow を立て false を返すので、呼び出し側は差分を組み立てずに
+ * 本来の書き換えだけを行う。
+ *
+ * ByteArray は倍々で伸びるので実使用量は data_bytes の最大2倍になる。
+ * 見積りもその安全側(2倍)で取る。
+ * -------------------------------------------------------------------- */
+bool difflog_reserve(DiffLog *log, size_t data_bytes) {
+    if (!log || log->overflow) return false;
+
+    size_t cost = UNDO_ENTRY_COST + data_bytes * 2;
+    if (cost > MAX_UNDO_BYTES || log->bytes > MAX_UNDO_BYTES - cost) {
+        /* 予算超過: これまでの記録を捨ててメモリを返し、以降このログには
+         * 何も積まない。overflow は difflog_free で false に戻るので
+         * 解放の後に立てる。 */
+        difflog_free(log);
+        log->overflow = true;
+        return false;
+    }
+    return true;
+}
+
 void difflog_push(DiffLog *log, const DiffEntry *e) {
+    if (log->overflow) {
+        /* reserve を通さない経路から来た場合の保険。エントリの ByteArray は
+         * 呼び出し側が確保済みなのでここで解放してから捨てる。 */
+        DiffEntry tmp = *e;
+        diffentry_free(&tmp);
+        return;
+    }
+    /* reserve と同じ見積り式で加算する(capacity ではなく size を使う。
+     * capacity は倍々成長で予約時の見積りとずれるため)。 */
+    log->bytes += UNDO_ENTRY_COST
+                + (e->old_data.size + e->new_data.size) * 2;
     if (log->size >= log->capacity) {
         size_t new_cap = log->capacity == 0 ? 8 : log->capacity * 2;
         DiffEntry *p = realloc(log->entries, new_cap * sizeof(DiffEntry));
@@ -632,6 +694,8 @@ void difflog_free(DiffLog *log) {
     log->entries  = NULL;
     log->size     = 0;
     log->capacity = 0;
+    log->bytes    = 0;
+    log->overflow = false;
 }
 
 /* --- DiffStack --- */
@@ -923,7 +987,7 @@ void memory_set(MemoryBuffer *mem, size_t addr, uint8_t data) {
     while (addr >= mem->mem.size) {
         bytearray_push(&mem->mem, 0);
     }
-    if (mem->current_diff) {
+    if (mem->current_diff && difflog_reserve(mem->current_diff, 0)) {
         DiffEntry e;
         memset(&e, 0, sizeof(e));
         e.op           = DIFF_OVW;
@@ -949,7 +1013,11 @@ void memory_insert(MemoryBuffer *mem, size_t start, const uint8_t *data, size_t 
         start - mem->mem.size > MAX_FILL_SIZE) {
         return;
     }
-    if (mem->current_diff && len > 0) {
+    /* 末尾を超える挿入では 0埋めギャップ分も new_data に積むので、
+     * 予算の見積りにもギャップを含める。 */
+    size_t ins_rec = len + (start > mem->mem.size ? start - mem->mem.size : 0);
+    if (mem->current_diff && len > 0 &&
+        difflog_reserve(mem->current_diff, ins_rec)) {
         DiffEntry e;
         memset(&e, 0, sizeof(e));
         e.op           = DIFF_INS;
@@ -982,7 +1050,7 @@ bool memory_delete(MemoryBuffer *mem, size_t start, size_t end, bool yf,
     /* Fix: mem.size==0 のとき mem.size-1 が size_t アンダーフローする */
     if (length == 0 || mem->mem.size == 0 || start >= mem->mem.size || end >= mem->mem.size) return false;
     
-    if (mem->current_diff) {
+    if (mem->current_diff && difflog_reserve(mem->current_diff, length)) {
         DiffEntry e;
         memset(&e, 0, sizeof(e));
         e.op           = DIFF_DEL;
@@ -1028,7 +1096,8 @@ void memory_overwrite(MemoryBuffer *mem, size_t start, const uint8_t *data, size
         return;
     }
     
-    if (mem->current_diff) {
+    /* OVW_REGION は old_data と new_data の両方を持つので len の2倍。 */
+    if (mem->current_diff && difflog_reserve(mem->current_diff, len * 2)) {
         DiffEntry e;
         memset(&e, 0, sizeof(e));
         e.op           = DIFF_OVW_REGION;
@@ -1474,7 +1543,7 @@ void display_repaint(Display *disp, const char *filename) {
     // Print title
     terminal_locate(disp->term, 0, 0);
     terminal_color(disp->term, 6, 0);
-    printf("bi C version 3.5.2 by Taisuke Maekawa           utf8mode:%s     %s   ",
+    printf("bi C version 3.5.3 by Taisuke Maekawa           utf8mode:%s     %s   ",
            disp->utf8 ? "on " : "off",
            disp->insmod ? "insert   " : "overwrite");
     
@@ -1648,6 +1717,32 @@ void display_stdmm_wait(Display *disp, const char *msg, bool scripting, bool ver
     } else {
         display_clrmm(disp);
         terminal_color(disp->term, 4, 0);
+        terminal_locate(disp->term, 0, BOTTOMLN);
+        printf(" %s", msg);
+        fflush(stdout);
+    }
+}
+
+/* --------------------------------------------------------------------
+ * display_warnmm — 操作は成功しているが必ず伝えるべき事柄を出す
+ *
+ * display_stdmm はスクリプト中 -v 無しだと沈黙するので、undo 履歴の
+ * 破棄のような「黙って起きると困る」通知には使えない。
+ * display_stderr は error_occurred を立ててスクリプトやマルチ
+ * ステートメントを打ち切ってしまうので、これも使えない。
+ * その中間として、常に出すが処理は止めない経路を用意する。
+ * -------------------------------------------------------------------- */
+void display_warnmm(Display *disp, const char *msg, bool scripting, bool verbose) {
+    (void)verbose;   /* -v の有無によらず常に出す */
+    if (scripting) {
+        /* stdout はパイプ時ブロックバッファなので、先に流しておかないと
+         * この警告が直前の通常メッセージより前に現れて順序が狂う
+         * (bi.py 側と出力順を揃えるため)。 */
+        fflush(stdout);
+        fprintf(stderr, "%s\n", msg);
+    } else {
+        display_clrmm(disp);
+        terminal_color(disp->term, 3, 0);
         terminal_locate(disp->term, 0, BOTTOMLN);
         printf(" %s", msg);
         fflush(stdout);
@@ -2632,6 +2727,29 @@ void editor_commit_undo(BiEditor *editor) {
     editor->memory.current_diff = NULL;
     editor->diff_active = false;
 
+    if (log->overflow) {
+        /* 記録量が MAX_UNDO_BYTES を超えたためこの操作の差分は残っていない。
+         * 操作自体は完了しているので、バッファは「記録の無い変更」を
+         * 被った状態にある。ここで古い undo 履歴を残すと、それを逆適用
+         * したときに今回の変更の上に別の時点の内容を書き戻してデータを
+         * 破壊する。履歴全体を捨てるのが唯一安全な選択。
+         * redo も同じ理由で無効になる。 */
+        difflog_free(log);
+        free(log);
+        diffstack_free(&editor->undo_stack);
+        diffstack_init(&editor->undo_stack);
+        diffstack_free(&editor->redo_stack);
+        diffstack_init(&editor->redo_stack);
+        /* 操作は成功しているので display_stderr は使えない(error_occurred を
+         * 立ててスクリプト/マルチステートメントを打ち切ってしまう)。
+         * かといって display_stdmm では -v 無しのスクリプト実行時に沈黙し、
+         * undo 履歴が消えたことが伝わらない。常に出して処理は止めない
+         * display_warnmm を使う。 */
+        display_warnmm(&editor->display, "This operation can not undo.",
+                       editor->scriptingflag, editor->verbose);
+        return;
+    }
+
     if (log->size == 0) {
         /* 変更なし: ログを破棄するだけ */
         difflog_free(log);
@@ -3244,7 +3362,7 @@ void editor_fedit(BiEditor *editor) {
                                editor->memory.yank.data, editor->memory.yank.size);
                 editor_commit_undo(editor);
                 char msg[256];
-                snprintf(msg, sizeof(msg), "%llu bytes Pasted.", (unsigned long long)editor->memory.yank.size);
+                snprintf(msg, sizeof(msg), "%llu bytes pasted.", (unsigned long long)editor->memory.yank.size);
                 display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                 display_jump(&editor->display, display_fpos(&editor->display) + editor->memory.yank.size);
             }
@@ -3257,7 +3375,7 @@ void editor_fedit(BiEditor *editor) {
                             editor->memory.yank.data, editor->memory.yank.size);
                 editor_commit_undo(editor);
                 char msg[256];
-                snprintf(msg, sizeof(msg), "%llu bytes Pasted (insert).", (unsigned long long)editor->memory.yank.size);
+                snprintf(msg, sizeof(msg), "%llu bytes pasted (insert).", (unsigned long long)editor->memory.yank.size);
                 display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                 display_jump(&editor->display, display_fpos(&editor->display) + editor->memory.yank.size);
             }
@@ -3355,6 +3473,44 @@ void editor_free(BiEditor *editor) {
 int execute_command(BiEditor *editor, const char *line, size_t idx, 
                     uint64_t x, uint64_t x2, bool xf, bool xf2);
 
+/* --------------------------------------------------------------------
+ * 浮動小数点の表示書式
+ *
+ * 「読み戻すと元のビットパターンに戻る最短の10進表現」を作る。
+ * バイナリエディタでは表示された数値から格納バイト列を復元できることが
+ * 必要なので、桁数を固定した書式は使えない。
+ *
+ *   従来 bi.c : float32 に "%g"(6桁) を使っていたため 3.14159 のように
+ *               情報が落ち、表示から元の4バイトを復元できなかった。
+ *   従来 bi.py: repr() は float32 でも double として最短化するため
+ *               3.1415927410125732 と、float32 には存在しない精度まで
+ *               ノイズとして出ていた。
+ *
+ * float32 は float として、float64 は double として往復判定する。
+ * bi.py 側も同じ %g ベースの同じ手順を使うので、出力は必ず一致する。
+ * -------------------------------------------------------------------- */
+static void format_float32_shortest(char *buf, size_t bufsz, float v) {
+    /* NaN は glibc の %g が符号ビットを見て "-nan" を出すが、Python の
+     * %g は常に "nan" を出す。往復不能な値なので表記を揃える。 */
+    if (v != v) { snprintf(buf, bufsz, "nan"); return; }
+    if (!isfinite(v)) { snprintf(buf, bufsz, "%g", (double)v); return; }
+    for (int prec = 1; prec <= 9; prec++) {
+        snprintf(buf, bufsz, "%.*g", prec, (double)v);
+        if ((float)strtod(buf, NULL) == v) return;
+    }
+    snprintf(buf, bufsz, "%.9g", (double)v);
+}
+
+static void format_double_shortest(char *buf, size_t bufsz, double v) {
+    if (v != v) { snprintf(buf, bufsz, "nan"); return; }   /* "-nan" を出さない */
+    if (!isfinite(v)) { snprintf(buf, bufsz, "%g", v); return; }
+    for (int prec = 1; prec <= 17; prec++) {
+        snprintf(buf, bufsz, "%.*g", prec, v);
+        if (strtod(buf, NULL) == v) return;
+    }
+    snprintf(buf, bufsz, "%.17g", v);
+}
+
 /* ========================================================================
  * 型付き数値表示ヘルパー
  * ======================================================================== */
@@ -3443,12 +3599,12 @@ static void cmd_typed_display(BiEditor *editor,
             }
             case 'f': {
                 float v; memcpy(&v, raw, 4);
-                snprintf(val_str, sizeof(val_str), "%g", (double)v);
+                format_float32_shortest(val_str, sizeof(val_str), v);
                 break;
             }
             case 'd': {
                 double v; memcpy(&v, raw, 8);
-                snprintf(val_str, sizeof(val_str), "%.17g", v);
+                format_double_shortest(val_str, sizeof(val_str), v);
                 break;
             }
             case 'Q': {
@@ -4404,7 +4560,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             memory_overwrite(&editor->memory, x, editor->memory.yank.data, editor->memory.yank.size);
             editor_commit_undo(editor);
             char msg[256];
-            snprintf(msg, sizeof(msg), "%llu bytes Pasted.", (unsigned long long)editor->memory.yank.size);
+            snprintf(msg, sizeof(msg), "%llu bytes pasted.", (unsigned long long)editor->memory.yank.size);
             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
             display_jump(&editor->display, x + editor->memory.yank.size);
         } else {
@@ -4420,7 +4576,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             memory_insert(&editor->memory, x, editor->memory.yank.data, editor->memory.yank.size);
             editor_commit_undo(editor);
             char msg[256];
-            snprintf(msg, sizeof(msg), "%llu bytes Pasted (insert).", (unsigned long long)editor->memory.yank.size);
+            snprintf(msg, sizeof(msg), "%llu bytes pasted (insert).", (unsigned long long)editor->memory.yank.size);
             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
             display_jump(&editor->display, x + editor->memory.yank.size);
         } else {
@@ -4776,7 +4932,20 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             display_jump(&editor->display, x + data_to_write.size);
 
             char msg[256];
-            snprintf(msg, sizeof(msg), "%zu bytes overwritten.", data_to_write.size);
+            /* bi.py は範囲指定のフィル(<start>,<end> i data)を "filled."、
+             * 単なる上書き([offset]i data [*n])を "overwritten." と呼び分ける。
+             * 両実装で文言を揃える。
+             * ただし is_repeat の場合はここから外す。範囲と *n を同時に
+             * 与えたとき (0,f i 55 *2) の扱いは仕様上未定義で、bi.c は *n を
+             * 繰り返し回数とみなし bi.py は範囲を優先するため、書き込む
+             * バイト数自体が食い違う。挙動が一致していない場面で
+             * "filled." と名乗らせると誤解を招くので "overwritten." のまま
+             * にしてある。挙動の統一は別途の判断が必要。 */
+            if (xf && xf2 && !is_repeat) {
+                snprintf(msg, sizeof(msg), "%zu bytes filled.", data_to_write.size);
+            } else {
+                snprintf(msg, sizeof(msg), "%zu bytes overwritten.", data_to_write.size);
+            }
             display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
 
             bytearray_free(&data_to_write);

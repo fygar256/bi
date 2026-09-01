@@ -65,6 +65,40 @@ On command line mode
    (*) undo/redo recording works the same way in -s/-c (scripting or
        single-command mode) as in interactive on-screen mode. 'u' and 'U'
        undo/redo edits made earlier in the same script/command run.
+
+       There is a limit on how much undo information a single operation
+       may record. Recording costs roughly 96 bytes per changed byte for
+       byte-at-a-time operations, so an unbounded log would use tens of
+       times the file size; before this limit existed, a whole-file
+       operation such as '0,$ ^ ff' on a file of a few tens of megabytes
+       would allocate several gigabytes and be killed by the OOM killer,
+       leaving the file unwritten and printing nothing at all.
+
+       When an operation exceeds the budget (MAX_UNDO_BYTES, 256 MiB),
+       its undo record is discarded as soon as the limit is hit, and
+
+           This operation can not undo.
+
+       is reported. The operation itself still completes normally and the
+       file is written as usual. The message is printed even without -v,
+       and it does not abort a script or a '::' multi statement.
+
+       The entire undo AND redo history is discarded at that point, not
+       just the current operation's record. This is required for safety:
+       the buffer has been changed without a record, so replaying an
+       older diff onto it would write back content from a different point
+       in time and corrupt the data. Editing after that starts building a
+       fresh history, and later operations are undoable again.
+
+       The budget is 256 MiB of recorded diff, estimated as
+       96 + changed_bytes * 2 per entry. In practice that is about
+       2,796,202 bytes for byte-at-a-time operations (bitwise ops, fill,
+       shift, rotate) and about 128 MiB for region operations (insert,
+       delete, region overwrite). bi.py and bi.c use the same estimate,
+       so the same file and the same command reach the limit at exactly
+       the same point in both. Actual memory use differs: bi.c stays
+       near the budget, bi.py uses roughly 1.6 times as much, because a
+       Python tuple entry is larger than the C struct.
    [offset]rp              ----- partial read
    [offset],[end] rp       ----- partial read
    [offset],*[length] rp   ----- partial read
@@ -110,9 +144,17 @@ On command line mode
    [start,end]?us           ----- display in uint16
    [start,end]?ui           ----- display in uint32
    [start,end]?ul           ----- display in uint64
-   [start,end]?f            ----- display in float32
-   [start,end]?d            ----- display in float64
+   [start,end]?f            ----- display in float32 (*f)
+   [start,end]?d            ----- display in float64 (*f)
    _{big|little}            ----- specify endianness.(default=little)
+
+   (*f) Floating point values are shown as the shortest decimal string
+        that reads back as the stored bit pattern: float32 is round-tripped
+        through float, float64 through double. So 3.1415927 is printed for
+        a float32 and 3.14159265358979 for a float64, and the bytes can
+        always be reconstructed from what is displayed. bi.py and bi.c use
+        the same procedure and print exactly the same string. NaN is always
+        printed as 'nan', never '-nan'.
 
    ::                       ----- multi statement command separator
    <CR> without any command ----- return to on-screen mode
@@ -282,6 +324,22 @@ Python exec
     both, which can make the difference easy to miss. If a script has to
     manipulate the buffer from Python, run it with bi.py.
 
+    '?Q' (float128) does not agree between the two, and bi.py is the one
+    that is wrong. bi.c reads the platform's long double directly, but
+    bi.py goes through ctypes.c_longdouble, whose .value is a plain Python
+    float, so every value is rounded to double before it is printed. A
+    stored value outside the double range comes out as -0.0 or -inf instead
+    of its real magnitude. Use bi.c for '?Q'. Note also that 'float128' is
+    a loose name for whatever long double is on the platform: 80-bit
+    extended on x86-64, 128-bit quad on aarch64, plain double on some
+    others, so '?Q' output is not portable across machines either.
+
+    '<start>,<end> i <data> *<n>' (a range and a repeat count at the same
+    time) is outside the documented grammar and the two do different
+    things: bi.c takes '*<n>' as the repeat count and writes n patterns,
+    while bi.py ignores it and fills the whole range. Use one form or the
+    other, not both.
+
 Speed up
     If you need for bi to be higher speed, you can compile bi.py with
     pyinstaller like this: pyinstaller --onefile bi.py
@@ -386,6 +444,9 @@ w<file> commands.
 2026-06-21 version 3.5.1.81 added -c option and x command.
 2026-06-22 version 3.5.1.86 rename x command to h and error exit applied.
 2026-06-23 version 3.5.2.6 multi statement applied.
+2026-09-02 version 3.5.3.0 undo record size limit applied.
+2026-09-02 version 3.5.3.1 shortest round-trip float display, message
+                           wording matched between bi.c and bi.py.
 --------------------
 
       I don't take any responsibility for the result of application of
