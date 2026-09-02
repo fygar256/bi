@@ -1057,6 +1057,21 @@ class Parser:
                 v = int(eval(u, safe_globals, {}))
             except Exception:
                 return self.UNKNOWN, idx
+        elif ch == '^':
+            # '^' はファイル先頭を表す値 (bi.doc 記載の仕様)。
+            #
+            # ただし行頭の '^' は XOR コマンド '[start,end]^<data>' の
+            # 範囲省略形 ('^ff' = カレント位置を 0xff と XOR) と衝突する。
+            # 行頭では、次の非空白が ',' '+' '-' か行末のときだけ値として
+            # 扱う。XOR のデータは16進バイト列なので、これらが続く形は
+            # XOR コマンドとしては元々成立せず、既存の使い方は壊れない。
+            j = self.skipspc(s, idx + 1)
+            at_head = (s[:idx].strip() == '')
+            if at_head and not (j >= len(s) or s[j] in ',+-'):
+                v = self.UNKNOWN          # 行頭の '^ff' 等は XOR コマンド
+            else:
+                idx += 1
+                v = self.to_abs(0)
         elif ch == '.':
             idx += 1
             v = self.to_abs(self.display.fpos())
@@ -2162,7 +2177,7 @@ class BiEditor:
         return self.commandline(line)
     
     def _split_statements(self, line):
-        """'::'区切りでステートメントに分割（'\::'はリテラルの'::'）"""
+        r"""'::'区切りでステートメントに分割（'\::'はリテラルの'::'）"""
         parts = []
         current = []
         i = 0
@@ -2461,12 +2476,24 @@ class BiEditor:
         # パーシャル編集中: ユーザー入力アドレスはファイル絶対値
         # → バッファ相対インデックス (addr - g_partial.offset) に変換
         # ただし rp コマンドは絶対アドレスをそのまま使うので変換しない
+        #
+        # 以前は max(0, addr - g_partial.offset) でクランプしていたため、
+        # 窓の外を指すアドレスが黙って窓の先頭 1 バイトへ潰れていた。
+        # 例: -o 100 -l 10 で読んだ状態の '0,f i aa' が 0x100 の 1 バイト
+        # だけを書き換え、16 バイト埋めたつもりの利用者に何も知らせずに
+        # 済ませてしまう。窓外は "Invalid range." として拒否する。
+        # 末尾への追記を妨げないよう、上限は offset+len(mem) までを許す。
         next_cmd = line[idx:idx+2] if idx + 1 < len(line) else line[idx:idx+1]
         if g_partial.active and g_partial.offset > 0 and next_cmd != 'rp':
+            lo = g_partial.offset
+            hi = g_partial.offset + len(self.memory.mem)
+            if (xf and not (lo <= x <= hi)) or (xf2 and not (lo <= x2 <= hi)):
+                self.stderr("Invalid range.")
+                return -1
             if xf:
-                x  = max(0, x  - g_partial.offset)
+                x  = x  - g_partial.offset
             if xf2:
-                x2 = max(0, x2 - g_partial.offset)
+                x2 = x2 - g_partial.offset
             elif xf:           # x2 = x と連動していたケース
                 x2 = x
 
@@ -2960,9 +2987,10 @@ class BiEditor:
             # d(削除)と同様、範囲がバッファ内に収まらない場合は拒否する。
             if not self._check_op_range(x, x2):
                 return -1
-            # パーシャル編集中: x3 もバッファ相対に変換
-            if g_partial.active and g_partial.offset > 0:
-                x3 = max(0, x3 - g_partial.offset)
+            # パーシャル編集中: x3 もバッファ相対に変換(窓外は拒否)
+            x3 = self._partial_rel(x3)
+            if x3 is None:
+                return -1
             self.save_undo_state()
             self.memory.yankmem(x, x2)
             m = self.memory.redmem(x, x2)
@@ -2975,9 +3003,10 @@ class BiEditor:
             # 破綻点修正: 'c' と同じ理由(redmem()の範囲チェック)。
             if not self._check_op_range(x, x2):
                 return -1
-            # パーシャル編集中: x3 もバッファ相対に変換
-            if g_partial.active and g_partial.offset > 0:
-                x3 = max(0, x3 - g_partial.offset)
+            # パーシャル編集中: x3 もバッファ相対に変換(窓外は拒否)
+            x3 = self._partial_rel(x3)
+            if x3 is None:
+                return -1
             self.save_undo_state()
             m = self.memory.redmem(x, x2)
             self.memory.yankmem(x, x2)
@@ -2989,9 +3018,10 @@ class BiEditor:
         
         # move
         elif ch == 'v':
-            # パーシャル編集中: x3 もバッファ相対に変換
-            if g_partial.active and g_partial.offset > 0:
-                x3 = max(0, x3 - g_partial.offset)
+            # パーシャル編集中: x3 もバッファ相対に変換(窓外は拒否)
+            x3 = self._partial_rel(x3)
+            if x3 is None:
+                return -1
             self.save_undo_state()
             xp = self.movmem(x, x2, x3)
             self.commit_undo()
@@ -3040,8 +3070,9 @@ class BiEditor:
             # x/x2 は parse_range_command で変換済みだが x3 は未変換のため、
             # c/C/v と同じくここで offset を引く（未対応だと region2 が
             # バッファ外を読み、表示アドレスもズレる不具合の修正）。
-            if g_partial.active and g_partial.offset > 0:
-                x3 = max(0, x3 - g_partial.offset)
+            x3 = self._partial_rel(x3)
+            if x3 is None:
+                return -1
             FCMP_SPAN = 10
             FCMP_MAXN = 8192
 
@@ -3301,6 +3332,22 @@ class BiEditor:
             self.stderr("Invalid range.")
             return False
         return True
+
+    def _partial_rel(self, v):
+        """パーシャル編集中の絶対アドレス v をバッファ相対へ変換する。
+
+        parse_range_command と同じ規則で、窓の外を指す値は黙って丸めず
+        "Invalid range." として拒否する(c/C/v/f の転送先アドレス用)。
+        戻り値は変換後のアドレス、範囲外なら None。
+        """
+        if not (g_partial.active and g_partial.offset > 0):
+            return v
+        lo = g_partial.offset
+        hi = g_partial.offset + len(self.memory.mem)
+        if not (lo <= v <= hi):
+            self.stderr("Invalid range.")
+            return None
+        return v - g_partial.offset
 
     def opeand(self, x, x2, x3):
         for i in range(x, x2 + 1):

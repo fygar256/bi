@@ -405,6 +405,18 @@ typedef struct {
 
 static PartialState g_partial = {false, 0, 0, 0, 0};
 
+/* 数字列 src を4桁ごとに空白で区切って dst へ書く。
+ * bi.py printvalue() の ' '.join(x[i:i+4] ...) と同じ結果になる。
+ * dst が足りない場合は切り詰める(呼び出し側で十分な長さを渡すこと)。 */
+static void group4(const char *src, char *dst, size_t dstsz) {
+    size_t n = strlen(src), o = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (i && i % 4 == 0 && o + 1 < dstsz) dst[o++] = ' ';
+        if (o + 1 < dstsz) dst[o++] = src[i];
+    }
+    if (dstsz) dst[o] = '\0';
+}
+
 /* ========================================================================
  * 画面サイズの動的計算
  *   BOTTOMLN  = データ行の直後にあるメッセージ行の行番号 (0-origin)
@@ -1888,6 +1900,25 @@ uint64_t parser_get_value(Parser *parser, const char *s, size_t *idx) {
             return UNKNOWN;
         }
         unlink(tmp_path);
+    } else if (ch == '^') {
+        /* '^' はファイル先頭を表す値 (bi.doc 記載の仕様)。
+         *
+         * ただし行頭の '^' は XOR コマンド '[start,end]^<data>' の範囲
+         * 省略形 ('^ff' = カレント位置を 0xff と XOR) と衝突する。行頭
+         * では、次の非空白が ',' '+' '-' か行末のときだけ値として扱う。
+         * XOR のデータは16進バイト列なので、これらが続く形は XOR コマンド
+         * としては元々成立せず、既存の使い方は壊れない。
+         * bi.py の parser get_value() と同一の規則。 */
+        size_t j = parser_skipspc(s, *idx + 1);
+        bool at_head = true;
+        for (size_t k = 0; k < *idx; k++) {
+            if (s[k] != ' ' && s[k] != '\t') { at_head = false; break; }
+        }
+        if (at_head && !(s[j] == '\0' || s[j] == ',' || s[j] == '+' || s[j] == '-')) {
+            return UNKNOWN;          /* 行頭の '^ff' 等は XOR コマンド */
+        }
+        (*idx)++;
+        v = parser_to_abs(0);
     } else if (ch == '.') {
         (*idx)++;
         v = parser_to_abs(display_fpos(parser->display));
@@ -4011,20 +4042,31 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
                 return -1;
             }
             if (v != UNKNOWN) {
-                char s[4] = ".";
+                /* bi.py の printvalue() と同じく常に3文字幅にする
+                 * ('^@ ' / ' . ' / '\'a\'')。 */
+                char s[4] = " . ";
                 if (v < 0x20) {
-                    snprintf(s, sizeof(s), "^%c", (char)(v + '@'));
+                    snprintf(s, sizeof(s), "^%c ", (char)(v + '@'));
                 } else if (v > 0x7E) {
-                    strcpy(s, ".");
+                    strcpy(s, " . ");
                 } else {
                     snprintf(s, sizeof(s), "'%c'", (char)v);
                 }
                 
+                /* bi.py の printvalue() と同一の書式に揃える。
+                 * 10進は幅10で右詰め、16進(16桁)/8進(24桁)は bi.py と
+                 * 同じく4桁ごとに空白で区切る。b行の4桁区切りとも揃う。 */
+                char hexbuf[17], octbuf[25];
+                char spaced_hex[24], spaced_oct[32];
+                snprintf(hexbuf, sizeof(hexbuf), "%016llX", (unsigned long long)v);
+                snprintf(octbuf, sizeof(octbuf), "%024llo", (unsigned long long)v);
+                group4(hexbuf, spaced_hex, sizeof(spaced_hex));
+                group4(octbuf, spaced_oct, sizeof(spaced_oct));
+
                 char msg[256];
                 snprintf(msg, sizeof(msg),
-                        "d%llu  x%016llX  o%024llo %s",
-                        (unsigned long long)v, (unsigned long long)v,
-                        (unsigned long long)v, s);
+                        "d%10llu  x%s  o%s %s",
+                        (unsigned long long)v, spaced_hex, spaced_oct, s);
                 display_stdmm(&editor->display, msg, editor->scriptingflag, editor->verbose);
                 
                 if (!editor->scriptingflag) {
@@ -4318,19 +4360,26 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
         const char *nc = &parsed_line[idx];
         bool is_rp = (nc[0] == 'r' && nc[1] == 'p');
         if (g_partial.active && g_partial.offset > 0 && !is_rp) {
-            /* [破綻点修正] bi.py の同じ変換 (parse_range_command) は
-             * max(0, x - g_partial.offset) で「オフセットより小さい絶対
-             * アドレス」を0にクランプするだけで、エラーにはしない。
-             * この C 版は同じ状況を "Invalid range." として拒否しており、
-             * 例えば -o 4 -l 4 でロードした状態で "0i.." (絶対アドレス0
-             * < offset=4) はPython版では正常に処理される(バッファ先頭
-             * として0に丸められる)のに、こちらでは失敗していた。
-             * bi.py と同じ「0にクランプ」に合わせる。 */
+            /* 窓の外を指す絶対アドレスは "Invalid range." として拒否する。
+             * 以前は bi.py に合わせて max(0, addr - offset) にクランプして
+             * いたが、これは窓外のアドレスを黙って窓の先頭 1 バイトへ潰す。
+             * 例: -o 100 -l 10 で読んだ状態の '0,f i aa' が 0x100 の 1
+             * バイトだけを書き換え、16 バイト埋めたつもりの利用者に何も
+             * 知らせずに済ませてしまう。bi.py 側も同時に拒否へ揃えた。
+             * 末尾への追記を妨げないよう、上限は offset+mem.size を許す。 */
+            uint64_t lo = (uint64_t)g_partial.offset;
+            uint64_t hi = (uint64_t)g_partial.offset + (uint64_t)editor->memory.mem.size;
+            if ((xf  && (x  < lo || x  > hi)) ||
+                (xf2 && (x2 < lo || x2 > hi))) {
+                display_stderr(&editor->display, "Invalid range.",
+                               editor->scriptingflag, editor->verbose);
+                return -1;
+            }
             if (xf) {
-                x = (x >= g_partial.offset) ? (x - g_partial.offset) : 0;
+                x = x - g_partial.offset;
             }
             if (xf2) {
-                x2 = (x2 >= g_partial.offset) ? (x2 - g_partial.offset) : 0;
+                x2 = x2 - g_partial.offset;
             }
             else if (xf) x2 = x;  /* x2 = x と連動していたケース */
         }
@@ -5056,11 +5105,18 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         return -1;
     }
     if (cmd=='c' || cmd=='C' || cmd=='v' || cmd=='f') {
-        /* パーシャル編集中: x3 もバッファ相対に変換 */
-        /* [破綻点修正] bi.py (x3 = max(0, x3 - g_partial.offset)) と同じく
-         * 0にクランプする。エラーにはしない。 */
+        /* パーシャル編集中: x3 もバッファ相対に変換。
+         * parse_range_command と同じく、窓の外は黙って丸めず
+         * "Invalid range." として拒否する (bi.py の _partial_rel と対)。 */
         if (g_partial.active && g_partial.offset > 0) {
-            x3 = (x3 >= g_partial.offset) ? (x3 - g_partial.offset) : 0;
+            uint64_t lo = (uint64_t)g_partial.offset;
+            uint64_t hi = (uint64_t)g_partial.offset + (uint64_t)editor->memory.mem.size;
+            if (x3 < lo || x3 > hi) {
+                display_stderr(&editor->display, "Invalid range.",
+                               editor->scriptingflag, editor->verbose);
+                return -1;
+            }
+            x3 = x3 - g_partial.offset;
         }
     }
     // copy/Copy (c/C commands)

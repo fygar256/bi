@@ -259,6 +259,26 @@ Remarks
     Also, you can give the value of file as mem[x] in {}, x can be specified
     to current position 'cp'.
 
+    '^' AT THE START OF A COMMAND
+    '^' is also the bitwise-xor command in its range-omitted form, so
+    '^ff' at the start of a command means "xor the byte at the current
+    position with 0xff", not "the top of the file followed by ff".
+    At the start of a command, '^' is read as the top-of-file address only
+    when the next non-blank character is ',', '+', '-', or the end of the
+    command. Everywhere else (after a comma, or after '+' or '-') it is
+    always the address.
+
+        ^,$ h        dump the whole file      ('^' is an address)
+        ^+4,$ h      dump from 4 to the end   ('^' is an address)
+        ^            jump to the top          ('^' is an address)
+        ^ff          xor the current byte     ('^' is the xor command)
+        0,7^ff       xor the range 0..7       ('^' is the xor command)
+
+    Xor data is a list of hexadecimal bytes, so a ',' '+' or '-' can never
+    follow '^' in the xor form; no existing xor command changes meaning.
+    In partial edit mode '^' is the first address of the loaded window, so
+    '^,$' is the way to name the whole window.
+
     IMPORTANT - mem[x] AND cp INSIDE {} WORK IN bi.py ONLY
     bi.py evaluates {} with eval(expr, globals()), so mem[] and cp are real
     globals there and work as described above.
@@ -355,9 +375,36 @@ Partial edit
     bi sample -o 100 -e 1ff
     bi sample -o 100 -l 100
 
-    Both of these edit the sample file from offset 0x100 to 0x1ff. Inside
-    the editor the loaded part is addressed from 0, so offset 0 means 0x100
-    of the original file. 'wp' writes the part back to where it came from.
+    Both of these edit the sample file from offset 0x100 to 0x1ff. 'wp'
+    writes the part back to where it came from.
+
+    ADDRESSES ARE ORIGINAL-FILE ABSOLUTE, NOT WINDOW-RELATIVE
+    On the command line the loaded part keeps the addresses it has in the
+    original file, and the screen shows those addresses too. With
+    '-o 100 -l 10' the window is 0x100..0x10f, so the whole window is
+
+        100,10f h
+
+    and '0,f h' is NOT the same thing: 0 and 0xf are outside the window.
+
+    An address outside the window is reported as
+
+        Invalid range.
+
+    and the command is not executed. Earlier versions clamped such an
+    address to the window start instead, so '0,f i aa' silently wrote one
+    byte at 0x100 rather than filling sixteen, with nothing to indicate
+    that fifteen of the sixteen had been dropped. The check covers the
+    start and end of a range and the destination address of 'c', 'C', 'v'
+    and 'f'. bi.py and bi.c behave identically here.
+
+    The one address allowed past the window end is offset+length itself,
+    so that data can still be appended at the end of the window.
+
+    Note that '$' and '.' resolve to window addresses already, but a
+    literal 0 does not: '0,$ h' is rejected because 0 is outside the
+    window. To act on the whole window, give no range at all ('h'), or
+    write the absolute range ('100,10f h').
 
     A range that runs past the end of the file is clipped to the file size,
     and an offset at or past the end gives an empty buffer.
@@ -447,6 +494,13 @@ w<file> commands.
 2026-09-02 version 3.5.3.0 undo record size limit applied.
 2026-09-02 version 3.5.3.1 shortest round-trip float display, message
                            wording matched between bi.c and bi.py.
+2026-09-02 version 3.5.3.2 partial edit: an address outside the loaded
+                           window is now 'Invalid range.' instead of being
+                           clamped to the window start; '?' value display
+                           format unified between bi.c and bi.py.
+2026-09-02 version 3.5.3.3 '^' (top of file) now works as a command line
+                           address, as documented; it stays the xor command
+                           when written as '^<data>'.
 --------------------
 
       I don't take any responsibility for the result of application of
