@@ -148,6 +148,12 @@ typedef struct {
     bool     lastchange_before;
     size_t   cursor_before;   /* 操作前のカーソル位置 */
     size_t   cursor_after;    /* 操作後のカーソル位置 */
+    /* MAX_UNDO_BYTES 超過で記録を破棄した操作の目印。log は常に空。
+     * editor_undo() はこれが undo_stack の先頭に来た時点でこれより
+     * 古い履歴は逆適用できない(記録の無い変更がその上に乗っているため)
+     * と判断し、pop せずに諦める。以前はこの状況全体を undo_stack ごと
+     * 消去していたが、それより前の(まだ有効な)履歴まで失われていた。 */
+    bool     is_barrier;
 } DiffState;
 
 typedef struct {
@@ -1102,7 +1108,20 @@ size_t memory_yank(MemoryBuffer *mem, size_t start, size_t end) {
 
 void memory_overwrite(MemoryBuffer *mem, size_t start, const uint8_t *data, size_t len) {
     if (len == 0) return;
-    /* address-gap-hang 対策(memory_set/memory_insert と同じ理由)。 */
+    /* address-gap-hang 対策(memory_set/memory_insert と同じ理由)。
+     * start が SIZE_MAX 近傍の巨大値だと "start + len" が size_t で
+     * 回り込み、以下のガードも末尾の memcpy も間違った(小さな)値で
+     * 判定・実行してしまい、生の巨大な start へワイルドポインタ書き込み
+     * が発生する。加算前に start 単体でまずギャップ超過を判定し、
+     * 続けてオーバーフローそのものも検出してから初めて start + len を
+     * 計算する。 */
+    if (start > mem->mem.size &&
+        start - mem->mem.size > MAX_FILL_SIZE) {
+        return;
+    }
+    if (len > SIZE_MAX - start) {
+        return;
+    }
     if (start + len > mem->mem.size &&
         (start + len) - mem->mem.size > MAX_FILL_SIZE) {
         return;
@@ -1230,19 +1249,34 @@ static void search_build_regex_cache(SearchEngine *search) {
      * rm_eo ちょうどより何バイトか先まで読みに行くことがある（AddressSanitizer
      * でheap-buffer-overflowとして実証済み。ファイルサイズや実行経路によらず
      * 常に再現した）。一方 search->memory->mem.data はbytearray_pushで確保
-     * されており、末尾に安全な余白が保証されていない。そこで regexec には
-     * 常に十分な余白を持つ一時バッファのコピーを渡し、元のライブバッファには
-     * 触れさせない。 */
+     * されており、末尾に安全な余白が保証されているとは限らない。そこで
+     * 余白が無いときだけ十分な余白を持つ一時バッファのコピーを作る。 */
     #define REGEXEC_SAFETY_PAD 64
-    char *base_buf = malloc(mem_len + REGEXEC_SAFETY_PAD);
-    if (!base_buf) {
-        search->regex_cache_error = true;
-        return;
+    /* [高速化] bytearray_push/insert は容量を倍々(最低16、以後2倍)で
+     * 確保するため、ちょうど容量境界に当たった直後を除けば capacity は
+     * size よりかなり大きく、末尾に REGEXEC_SAFETY_PAD 分の余白が既に
+     * ある場合がほとんど。この関数は n/N のたびや編集のたびにキャッシュ
+     * ごと呼ばれるため、数百MB級のファイルでは呼び出しごとの全体
+     * malloc+memcpy が無視できないコストになっていた。余白が既にある
+     * ときはライブバッファをそのまま regexec に渡してコピーを省き、
+     * 余白が足りない(size==capacity ぎりぎり)ときだけ従来どおり安全な
+     * 余白付きの一時コピーを作る。どちらの経路でもライブバッファの
+     * size 未満の中身は一切書き換えない。 */
+    char *base_buf = NULL;   /* 一時コピーを使った場合のみ非NULL(解放用) */
+    const char *base;
+    if (search->memory->mem.capacity - mem_len >= REGEXEC_SAFETY_PAD) {
+        base = (const char *)search->memory->mem.data;
+    } else {
+        base_buf = malloc(mem_len + REGEXEC_SAFETY_PAD);
+        if (!base_buf) {
+            search->regex_cache_error = true;
+            return;
+        }
+        memcpy(base_buf, search->memory->mem.data, mem_len);
+        memset(base_buf + mem_len, 0, REGEXEC_SAFETY_PAD);
+        base = base_buf;
     }
-    memcpy(base_buf, search->memory->mem.data, mem_len);
-    memset(base_buf + mem_len, 0, REGEXEC_SAFETY_PAD);
 
-    const char *base = base_buf;
     size_t pos = 0;
     while (pos <= mem_len) {
         regmatch_t m;
@@ -2315,6 +2349,39 @@ void filemgr_init(FileManager *fmgr, MemoryBuffer *mem) {
     fmgr->newfile = false;
 }
 
+/* fopen 失敗理由の分類。ENOENT/EISDIR/EACCES/その他 の判定ロジックそのものは
+ * filemgr_readfile/filemgr_writefile/filemgr_readfile_partial/
+ * filemgr_writefile_partial のr+bフォールバック/'w'範囲書き込みハンドラ/
+ * 'r','R'読み込みハンドラの6箇所で共通に必要になる。メッセージの文言・
+ * 大文字小文字・接頭辞(「Cannot open」「Cannot write」「File read error」)は
+ * 呼び出し文脈ごとに異なるためここでは統一しないが、「このerrnoはどの
+ * カテゴリか」という分類だけを1箇所にまとめることで、将来カテゴリ判定を
+ * 変更(例: errnoの追加)したときに一部の呼び出し箇所だけ直し忘れる事故を防ぐ。 */
+typedef enum {
+    FS_OPEN_ERR_NOENT,   /* ENOENT: 存在しない(新規ファイル扱いにできる) */
+    FS_OPEN_ERR_ISDIR,   /* EISDIR: ディレクトリを指定した */
+    FS_OPEN_ERR_ACCES,   /* EACCES: 権限が無い */
+    FS_OPEN_ERR_OTHER,   /* それ以外の errno (strerror で報告) */
+    FS_OPEN_ERR_UNKNOWN, /* errno が 0 のまま fopen が失敗した(原因不明) */
+} FileOpenErrClass;
+
+static FileOpenErrClass filemgr_classify_open_errno(int err) {
+    if (err == ENOENT) return FS_OPEN_ERR_NOENT;
+    if (err == EISDIR) return FS_OPEN_ERR_ISDIR;
+    if (err == EACCES) return FS_OPEN_ERR_ACCES;
+    if (err != 0)       return FS_OPEN_ERR_OTHER;
+    return FS_OPEN_ERR_UNKNOWN;
+}
+
+/* fopen(dir, "rb") は Linux/glibc では成功し得るため、開いた後にも
+ * fstat+S_ISDIR で明示的にディレクトリ判定を行う必要がある
+ * (filemgr_readfile/filemgr_readfile_partial/'r','R'読み込みハンドラの
+ * 3箇所で共通)。 */
+static bool filemgr_fd_is_directory(FILE *f) {
+    struct stat st;
+    return fstat(fileno(f), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
 bool filemgr_readfile(FileManager *fmgr, const char *filename, char *msg, size_t msg_size) {
     /* 破綻点修正: 従来は fopen の失敗理由を一切区別せず、ENOENT(未存在)も
      * EISDIR(ディレクトリを指定)もEACCES(権限無し)も等しく「新規ファイル」
@@ -2333,16 +2400,17 @@ bool filemgr_readfile(FileManager *fmgr, const char *filename, char *msg, size_t
     errno = 0;
     FILE *f = fopen(filename, "rb");
     if (!f) {
-        if (errno == ENOENT) {
+        FileOpenErrClass ec = filemgr_classify_open_errno(errno);
+        if (ec == FS_OPEN_ERR_NOENT) {
             fmgr->newfile = true;
             bytearray_init(&fmgr->memory->mem);
             if (msg) snprintf(msg, msg_size, "<new file>");
             return true;
         }
         if (msg) {
-            if (errno == EISDIR) {
+            if (ec == FS_OPEN_ERR_ISDIR) {
                 snprintf(msg, msg_size, "Cannot open '%s': is a directory.", filename);
-            } else if (errno == EACCES) {
+            } else if (ec == FS_OPEN_ERR_ACCES) {
                 snprintf(msg, msg_size, "Cannot open '%s': permission denied.", filename);
             } else {
                 snprintf(msg, msg_size, "Cannot open '%s': %s.", filename, strerror(errno));
@@ -2353,20 +2421,19 @@ bool filemgr_readfile(FileManager *fmgr, const char *filename, char *msg, size_t
 
     /* fopen(dir, "rb") は Linux/glibc では成功しうるため、ここでも
      * 明示的にディレクトリ判定を行う。 */
-    struct stat st;
-    if (fstat(fileno(f), &st) == 0 && S_ISDIR(st.st_mode)) {
+    if (filemgr_fd_is_directory(f)) {
         fclose(f);
         if (msg) snprintf(msg, msg_size, "Cannot open '%s': is a directory.", filename);
         return false;
     }
 
     fmgr->newfile = false;
-    
+
     // ファイルサイズ取得
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
-    
+
     if (fsize < 0) {
         fclose(f);
         if (msg) snprintf(msg, msg_size, "File read error.");
@@ -2408,14 +2475,20 @@ bool filemgr_writefile(FileManager *fmgr, const char *filename, char *msg, size_
     FILE *f = fopen(filename, "wb");
     if (!f) {
         if (msg) {
-            if (errno == EISDIR) {
-                snprintf(msg, msg_size, "Cannot write '%s': is a directory.", filename);
-            } else if (errno == EACCES) {
-                snprintf(msg, msg_size, "Cannot write '%s': permission denied.", filename);
-            } else if (errno != 0) {
-                snprintf(msg, msg_size, "Cannot write '%s': %s.", filename, strerror(errno));
-            } else {
-                snprintf(msg, msg_size, "Permission denied.");
+            switch (filemgr_classify_open_errno(errno)) {
+                case FS_OPEN_ERR_ISDIR:
+                    snprintf(msg, msg_size, "Cannot write '%s': is a directory.", filename);
+                    break;
+                case FS_OPEN_ERR_ACCES:
+                    snprintf(msg, msg_size, "Cannot write '%s': permission denied.", filename);
+                    break;
+                case FS_OPEN_ERR_NOENT:
+                case FS_OPEN_ERR_OTHER:
+                    snprintf(msg, msg_size, "Cannot write '%s': %s.", filename, strerror(errno));
+                    break;
+                default:
+                    snprintf(msg, msg_size, "Permission denied.");
+                    break;
             }
         }
         return false;
@@ -2452,7 +2525,8 @@ bool filemgr_readfile_partial(FileManager *fmgr, const char *filename,
     errno = 0;
     FILE *f = fopen(filename, "rb");
     if (!f) {
-        if (errno == ENOENT) {
+        FileOpenErrClass ec = filemgr_classify_open_errno(errno);
+        if (ec == FS_OPEN_ERR_NOENT) {
             fmgr->newfile = true;
             bytearray_init(&fmgr->memory->mem);
             g_partial.active = true;
@@ -2462,9 +2536,9 @@ bool filemgr_readfile_partial(FileManager *fmgr, const char *filename,
             return true;
         }
         if (msg) {
-            if (errno == EISDIR) {
+            if (ec == FS_OPEN_ERR_ISDIR) {
                 snprintf(msg, msg_size, "Cannot open '%s': is a directory.", filename);
-            } else if (errno == EACCES) {
+            } else if (ec == FS_OPEN_ERR_ACCES) {
                 snprintf(msg, msg_size, "Cannot open '%s': permission denied.", filename);
             } else {
                 snprintf(msg, msg_size, "Cannot open '%s': %s.", filename, strerror(errno));
@@ -2473,13 +2547,10 @@ bool filemgr_readfile_partial(FileManager *fmgr, const char *filename,
         return false;
     }
 
-    {
-        struct stat st;
-        if (fstat(fileno(f), &st) == 0 && S_ISDIR(st.st_mode)) {
-            fclose(f);
-            if (msg) snprintf(msg, msg_size, "Cannot open '%s': is a directory.", filename);
-            return false;
-        }
+    if (filemgr_fd_is_directory(f)) {
+        fclose(f);
+        if (msg) snprintf(msg, msg_size, "Cannot open '%s': is a directory.", filename);
+        return false;
     }
 
     /* ファイルサイズ取得 */
@@ -2549,9 +2620,10 @@ bool filemgr_writefile_partial(FileManager *fmgr, const char *filename,
     FILE *f = fopen(filename, "r+b");
     if (!f && errno != ENOENT) {
         if (msg) {
-            if (errno == EISDIR) {
+            FileOpenErrClass ec = filemgr_classify_open_errno(errno);
+            if (ec == FS_OPEN_ERR_ISDIR) {
                 snprintf(msg, msg_size, "Cannot open '%s': is a directory.", filename);
-            } else if (errno == EACCES) {
+            } else if (ec == FS_OPEN_ERR_ACCES) {
                 snprintf(msg, msg_size, "Cannot open '%s': permission denied.", filename);
             } else {
                 snprintf(msg, msg_size, "Cannot open '%s': %s.", filename, strerror(errno));
@@ -2761,16 +2833,36 @@ void editor_commit_undo(BiEditor *editor) {
     if (log->overflow) {
         /* 記録量が MAX_UNDO_BYTES を超えたためこの操作の差分は残っていない。
          * 操作自体は完了しているので、バッファは「記録の無い変更」を
-         * 被った状態にある。ここで古い undo 履歴を残すと、それを逆適用
-         * したときに今回の変更の上に別の時点の内容を書き戻してデータを
-         * 破壊する。履歴全体を捨てるのが唯一安全な選択。
-         * redo も同じ理由で無効になる。 */
+         * 被った状態にある。このまま古い undo エントリを undo_stack の
+         * 先頭に残しておくと、それを pop して逆適用したときに今回の
+         * (記録の無い)変更の上に別の時点の内容を書き戻してデータを破壊
+         * する。
+         *
+         * [修正] 以前はこれを避けるため undo_stack/redo_stack を丸ごと
+         * 消去していたが、それより前の(まだ安全に戻せる)履歴まで一緒に
+         * 失っていた。ここでは記録の無い変更があった位置に「バリア」を
+         * 1つ積むだけにする。editor_undo() はバリアを検出したら pop
+         * せずに諦めるので、バリアより古い履歴が誤って逆適用されることは
+         * なく、かつバリアが積まれるまでの履歴は保持される。
+         * redo_stack はこの操作の直前の状態を前提にしているため、今回の
+         * 記録の無い変更で前提が崩れる。安全に破棄する。 */
         difflog_free(log);
         free(log);
-        diffstack_free(&editor->undo_stack);
-        diffstack_init(&editor->undo_stack);
         diffstack_free(&editor->redo_stack);
         diffstack_init(&editor->redo_stack);
+
+        DiffState barrier;
+        memset(&barrier, 0, sizeof(barrier));
+        difflog_init(&barrier.log);
+        barrier.is_barrier = true;
+        diffstack_push(&editor->undo_stack, &barrier);
+        if (editor->undo_stack.size > MAX_UNDO_LEVELS) {
+            difflog_free(&editor->undo_stack.data[0].log);
+            memmove(editor->undo_stack.data, editor->undo_stack.data + 1,
+                    (editor->undo_stack.size - 1) * sizeof(DiffState));
+            editor->undo_stack.size--;
+        }
+
         /* 操作は成功しているので display_stderr は使えない(error_occurred を
          * 立ててスクリプト/マルチステートメントを打ち切ってしまう)。
          * かといって display_stdmm では -v 無しのスクリプト実行時に沈黙し、
@@ -2791,6 +2883,7 @@ void editor_commit_undo(BiEditor *editor) {
     DiffState state;
     state.log = *log;          /* ログ本体を移譲 */
     free(log);                 /* シェルだけ解放 */
+    state.is_barrier = false;  /* 正常に記録できた操作(バリアではない) */
 
     memcpy(state.mark_before, editor->diff_mark_snapshot,
            sizeof(state.mark_before));
@@ -2840,6 +2933,16 @@ bool editor_undo(BiEditor *editor) {
     if (editor->undo_stack.size == 0) {
         display_stdmm(&editor->display, "No more undo.",
                       editor->scriptingflag, editor->verbose);
+        return false;
+    }
+
+    if (editor->undo_stack.data[editor->undo_stack.size - 1].is_barrier) {
+        /* この先(スタックの下)は記録の無い変更より前の履歴で、今の
+         * バッファに対して逆適用すると壊れるため安全に辿れない。
+         * バリアは pop せずに残す(何度 undo を試みても同じ位置で
+         * 止まる)。 */
+        display_warnmm(&editor->display, "This operation can not undo.",
+                       editor->scriptingflag, editor->verbose);
         return false;
     }
 
@@ -4226,9 +4329,15 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
                 success = filemgr_readfile(&editor->filemgr,
                               editor->filemgr.filename, msg, sizeof(msg));
             }
-            display_jump(&editor->display, 0);
-            matcharray_clear(&editor->display.highlight_ranges);
+            /* 破綻点修正: 以前は success を見る前に display_jump(0) と
+             * matcharray_clear() を無条件実行していたため、読み込みに
+             * 失敗した(ファイルが権限変更/ディレクトリ化されていた等)
+             * 場合でもバッファは無変更のままカーソルだけ0へ飛び、
+             * 検索ハイライトも消えて成否を誤解させていた。bi.py 側は
+             * 元々 if success: の中でだけ行っており、それに揃える。 */
             if (success) {
+                display_jump(&editor->display, 0);
+                matcharray_clear(&editor->display.highlight_ranges);
                 display_stdmm(&editor->display,
                               msg[0] ? msg : "Original file read.",
                               editor->scriptingflag, editor->verbose);
@@ -4565,14 +4674,20 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         FILE *f = fopen(fname, "wb");
         if (!f) {
             char wmsg[300];
-            if (errno == EISDIR) {
-                snprintf(wmsg, sizeof(wmsg), "Cannot write '%s': is a directory.", fname);
-            } else if (errno == EACCES) {
-                snprintf(wmsg, sizeof(wmsg), "Cannot write '%s': permission denied.", fname);
-            } else if (errno != 0) {
-                snprintf(wmsg, sizeof(wmsg), "Cannot write '%s': %s.", fname, strerror(errno));
-            } else {
-                snprintf(wmsg, sizeof(wmsg), "Cannot open output file.");
+            switch (filemgr_classify_open_errno(errno)) {
+                case FS_OPEN_ERR_ISDIR:
+                    snprintf(wmsg, sizeof(wmsg), "Cannot write '%s': is a directory.", fname);
+                    break;
+                case FS_OPEN_ERR_ACCES:
+                    snprintf(wmsg, sizeof(wmsg), "Cannot write '%s': permission denied.", fname);
+                    break;
+                case FS_OPEN_ERR_NOENT:
+                case FS_OPEN_ERR_OTHER:
+                    snprintf(wmsg, sizeof(wmsg), "Cannot write '%s': %s.", fname, strerror(errno));
+                    break;
+                default:
+                    snprintf(wmsg, sizeof(wmsg), "Cannot open output file.");
+                    break;
             }
             display_stderr(&editor->display, wmsg, 
                            editor->scriptingflag, editor->verbose);
@@ -4696,16 +4811,22 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         FILE *f = fopen(filename, "rb");
         if (!f) {
             char rmsg[300];
-            if (errno == ENOENT) {
-                snprintf(rmsg, sizeof(rmsg), "File read error: No such file or directory.");
-            } else if (errno == EISDIR) {
-                snprintf(rmsg, sizeof(rmsg), "File read error: Is a directory.");
-            } else if (errno == EACCES) {
-                snprintf(rmsg, sizeof(rmsg), "File read error: Permission denied.");
-            } else if (errno != 0) {
-                snprintf(rmsg, sizeof(rmsg), "File read error: %s.", strerror(errno));
-            } else {
-                snprintf(rmsg, sizeof(rmsg), "File read error.");
+            switch (filemgr_classify_open_errno(errno)) {
+                case FS_OPEN_ERR_NOENT:
+                    snprintf(rmsg, sizeof(rmsg), "File read error: No such file or directory.");
+                    break;
+                case FS_OPEN_ERR_ISDIR:
+                    snprintf(rmsg, sizeof(rmsg), "File read error: Is a directory.");
+                    break;
+                case FS_OPEN_ERR_ACCES:
+                    snprintf(rmsg, sizeof(rmsg), "File read error: Permission denied.");
+                    break;
+                case FS_OPEN_ERR_OTHER:
+                    snprintf(rmsg, sizeof(rmsg), "File read error: %s.", strerror(errno));
+                    break;
+                default:
+                    snprintf(rmsg, sizeof(rmsg), "File read error.");
+                    break;
             }
             display_stderr(&editor->display, rmsg,
                           editor->scriptingflag, editor->verbose);
@@ -4714,8 +4835,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
 
         /* fopen(dir, "rb") はLinux/glibcでは成功し得るため、ここでも
          * 明示的にディレクトリ判定を行う。 */
-        struct stat rst;
-        if (fstat(fileno(f), &rst) == 0 && S_ISDIR(rst.st_mode)) {
+        if (filemgr_fd_is_directory(f)) {
             fclose(f);
             display_stderr(&editor->display, "File read error: Is a directory.",
                           editor->scriptingflag, editor->verbose);
@@ -4985,11 +5105,9 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
              * 単なる上書き([offset]i data [*n])を "overwritten." と呼び分ける。
              * 両実装で文言を揃える。
              * ただし is_repeat の場合はここから外す。範囲と *n を同時に
-             * 与えたとき (0,f i 55 *2) の扱いは仕様上未定義で、bi.c は *n を
-             * 繰り返し回数とみなし bi.py は範囲を優先するため、書き込む
-             * バイト数自体が食い違う。挙動が一致していない場面で
-             * "filled." と名乗らせると誤解を招くので "overwritten." のまま
-             * にしてある。挙動の統一は別途の判断が必要。 */
+             * 与えたとき (0,f i 55 *2) は *n(繰り返し回数)を優先し、範囲を
+             * 超える分は切り捨てる。bi.py 側もこの規則に揃えてあるので、
+             * 書き込むバイト数は両実装で一致する。 */
             if (xf && xf2 && !is_repeat) {
                 snprintf(msg, sizeof(msg), "%zu bytes filled.", data_to_write.size);
             } else {
@@ -5166,6 +5284,21 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
     
     // move (v command)
     if (cmd == 'v') {
+        /* 破綻点修正: '&'/'|'/'^'/'~'/'<'/'>' と違い v はこれまで範囲チェックを
+         * 一切行わず editor_movmem() に直行していた。start<=dest<=end の
+         * no-op や start>=len の no-op では問題にならないが、start がバッファ
+         * 内で end だけ極端に大きい場合(例: "1,99999999999999 v 0")、
+         * editor_movmem() 内の読み出しループが end-start+1 回まわり実質
+         * ハングする。end が EOF を跨ぐこと自体は意図した仕様(zero-pad)
+         * なので editor_check_op_range は使わず、i/I と同じ MAX_FILL_SIZE
+         * による範囲長の上限チェックだけを行う。 */
+        if (x2 >= x && (x2 - x + 1) > MAX_FILL_SIZE) {
+            char emsg[80];
+            snprintf(emsg, sizeof(emsg), "Fill size too large (max %llu bytes).",
+                     (unsigned long long)MAX_FILL_SIZE);
+            display_stderr(&editor->display, emsg, editor->scriptingflag, editor->verbose);
+            return -1;
+        }
         editor_save_undo_state(editor);
         uint64_t xp = editor_movmem(editor, x, x2, x3);
         editor_commit_undo(editor);

@@ -29,6 +29,14 @@ MAX_UNDO_BYTES = 256 * 1024 * 1024   # 256 MiB
 # (bi.c 側 UNDO_ENTRY_COST と必ず一致させること)。
 UNDO_ENTRY_COST = 96
 
+# address-gap-hang 対策(bi.c の MAX_FILL_SIZE と共通)。setmem/insmem/ovwmem が
+# バッファ末尾より先の巨大なアドレスへ自動拡張しようとすると、その分だけ
+# bytearray を確保・ゼロ埋めしてハング/MemoryError になる
+# (例: 2バイトのファイルに "999999999999 i 41" で末尾までのギャップを
+# ゼロ埋めしようとする)。ギャップがこれを超える一括拡張は行わず、安全側に
+# 倒して無警告の no-op とする(bi.c 側と同じ意図)。
+MAX_FILL_SIZE = 0x40000000  # 1 GiB
+
 
 def _fmt_float32(v):
     """float32 を「読み戻すと同じビットパターンに戻る最短の10進表現」にする。
@@ -408,6 +416,9 @@ class MemoryBuffer:
         self._check_untracked()
         orig_len = len(self.mem)
         if addr >= len(self.mem):
+            # address-gap-hang 対策: bi.c memory_set() と同じ理由。
+            if addr - len(self.mem) > MAX_FILL_SIZE:
+                return
             self.mem += bytearray(addr - len(self.mem) + 1)
         old_val = self.mem[addr]
         new_val = int(data) & 0xff
@@ -422,6 +433,9 @@ class MemoryBuffer:
         self._check_untracked()
         mem2 = bytearray(b & 0xff for b in mem2)
         if start >= len(self.mem):
+            # address-gap-hang 対策: bi.c memory_insert() と同じ理由。
+            if start - len(self.mem) > MAX_FILL_SIZE:
+                return
             # 末尾を超える挿入: N..start-1 を 0 で埋めてから mem2 を連結。
             # 差分ログには「実際に挿入された領域 (0埋め分 + mem2)」を旧末尾
             # 位置 old_len から記録する。pattern 部分だけを記録すると
@@ -478,6 +492,10 @@ class MemoryBuffer:
 
     def ovwmem(self, start, mem0):
         if not mem0:
+            return
+        # address-gap-hang 対策: bi.c memory_overwrite() と同じ理由。
+        if start + len(mem0) > len(self.mem) and \
+                (start + len(mem0)) - len(self.mem) > MAX_FILL_SIZE:
             return
         self._check_untracked()
 
@@ -976,6 +994,10 @@ class Display:
         """
         del verbose   # -v の有無によらず常に出す
         if scripting:
+            # 破綻点修正: stdout はリダイレクト時ブロックバッファなので、
+            # 先に流しておかないとこの警告が直前の通常メッセージより前に
+            # 現れて出力順が狂う(bi.c display_warnmm の fflush(stdout) と対)。
+            sys.stdout.flush()
             print(s, file=sys.stderr)
         else:
             self.clrmm()
@@ -1540,14 +1562,25 @@ class BiEditor:
         if self.memory._diff_overflow:
             # 記録量が MAX_UNDO_BYTES を超えたためこの操作の差分は残っていない。
             # 操作自体は完了しているので、バッファは「記録の無い変更」を被った
-            # 状態にある。ここで古い undo 履歴を残すと、それを逆適用したときに
-            # 今回の変更の上に別の時点の内容を書き戻してデータを破壊する。
-            # 履歴全体を捨てるのが唯一安全な選択。redo も同じ理由で無効になる。
+            # 状態にある。このまま古い undo エントリを undo_stack の先頭に
+            # 残しておくと、それを pop して逆適用したときに今回の(記録の無い)
+            # 変更の上に別の時点の内容を書き戻してデータを破壊する。
+            #
+            # [修正] 以前はこれを避けるため undo_stack/redo_stack を丸ごと
+            # 消去していたが、それより前の(まだ安全に戻せる)履歴まで一緒に
+            # 失っていた。ここでは記録の無い変更があった位置に「バリア」を
+            # 1つ積むだけにする。undo() はバリアを検出したら pop せずに
+            # 諦めるので、バリアより古い履歴が誤って逆適用されることはなく、
+            # かつバリアが積まれるまでの履歴は保持される。
+            # redo_stack はこの操作の直前の状態を前提にしているため、今回の
+            # 記録の無い変更で前提が崩れる。安全に破棄する。
             self._undo_mark_snapshot = None
             self._undo_meta_snapshot = None
             self._undo_cursor_snapshot = None
-            self.undo_stack = []
             self.redo_stack = []
+            self.undo_stack.append(self.UNDO_BARRIER)
+            if len(self.undo_stack) > self.max_undo_levels:
+                self.undo_stack.pop(0)
             # 操作は成功しているので stderr は使えない(error_occurred を立てて
             # スクリプト/マルチステートメントを打ち切ってしまう)。かといって
             # stdmm では -v 無しのスクリプト実行時に沈黙し、undo 履歴が消えた
@@ -1586,6 +1619,14 @@ class BiEditor:
         """差分を逆適用して undo を実行"""
         if not self.undo_stack:
             self.stdmm("No more undo.")
+            return False
+
+        if self.undo_stack[-1] is self.UNDO_BARRIER:
+            # この先(スタックの下)は記録の無い変更より前の履歴で、今の
+            # バッファに対して逆適用すると壊れるため安全に辿れない。
+            # バリアは pop せずに残す(何度 undo を試みても同じ位置で
+            # 止まる)。
+            self.warnmm("This operation can not undo.")
             return False
 
         state = self.undo_stack.pop()
@@ -1739,9 +1780,23 @@ class BiEditor:
         # [変更] 従来は対話モードのみ有効(scripting 中は undo を取らない)
         # だったが、save_undo_state/commit_undo と同じ理由で撤去し、
         # スクリプト実行中も同じ経路で記録する。
-        buf_before = list(self.memory.mem)
-        undo_enabled = True
+        #
+        # 破綻点修正: exec は任意のPythonコードでバッファのどこをどう
+        # 変えるか事前に分からないため、他のコマンドのように実際の変更量
+        # だけを _diff_reserve() する経路が使えない。スナップショットを
+        # 取る前に「バッファ全体が変化した」という最悪ケースを仮定して
+        # コストを見積り、MAX_UNDO_BYTES を超えるなら最初からスナップ
+        # ショット自体を取らない(setmem 等が使う _diff_reserve と同じ
+        # 見積り式・同じ上限)。これを怠ると、大容量ファイルに対する
+        # @exec のたびに buf_before/buf_after という2つのバッファ全体
+        # コピーが無条件に作られ、他の編集経路のために導入した
+        # MAX_UNDO_BYTES の予算を素通りしてOOMし得た。
+        mem_len = len(self.memory.mem)
+        undo_enabled = (UNDO_ENTRY_COST + mem_len * 2) <= MAX_UNDO_BYTES
         if undo_enabled:
+            # list ではなく bytes でスナップショットする(list はint要素+
+            # ポインタ配列でバッファの数倍のメモリを食うため)。
+            buf_before = bytes(self.memory.mem)
             mark_before = list(self.memory.mark)
             meta_before = (self.memory.modified, self.memory.lastchange)
             cursor_before = self.display.fpos()
@@ -1767,30 +1822,45 @@ class BiEditor:
         # exec() が mem をリスト等の非bytearrayに差し替えた場合に備え型を正規化する
         # (self.mem のセッターが bytearray へ変換する)。
         self.memory.mem = self.memory.mem
+
+        if not undo_enabled:
+            # スナップショットを取っていないので変化の有無を安価には確認
+            # できない。exec は何でもできる以上、変化したかもしれない側に
+            # 倒して modified/lastchange を無条件で立てる(誤って立てるのは
+            # 無害だが、変化を見逃して未保存扱いにしないのは危険なため)。
+            self.memory.modified   = True
+            self.memory.lastchange = True
+            # commit_undo() のオーバーフロー処理と同じ理由: この記録の無い
+            # 変更より前の undo_stack をそのまま残すと、後で pop して
+            # 逆適用したときに壊れる。バリアを積んで安全に頭打ちにする。
+            self.redo_stack = []
+            self.undo_stack.append(self.UNDO_BARRIER)
+            if len(self.undo_stack) > self.max_undo_levels:
+                self.undo_stack.pop(0)
+            self.warnmm("This operation can not undo.")
+            return
+
         # バッファが実際に変化した場合のみ modified/lastchange を更新する
-        if list(self.memory.mem) != buf_before:
+        buf_after = bytes(self.memory.mem)
+        if buf_after != buf_before:
             self.memory.modified   = True
             self.memory.lastchange = True
 
-        # exec 前後でバッファが変化していれば差分を undo_stack に記録する。
-        if undo_enabled:
-            buf_after = list(self.memory.mem)
-            if buf_after != buf_before:
-                diff_log = self._build_exec_diff(buf_before, buf_after)
-                if diff_log:
-                    state = {
-                        'diff': diff_log,
-                        'mark_before': mark_before,
-                        'mark_after': list(self.memory.mark),
-                        'modified_before': meta_before[0],
-                        'lastchange_before': meta_before[1],
-                        'cursor_before': cursor_before,
-                        'cursor_after': self.display.fpos(),
-                    }
-                    self.undo_stack.append(state)
-                    if len(self.undo_stack) > self.max_undo_levels:
-                        self.undo_stack.pop(0)
-                    self.redo_stack = []
+            diff_log = self._build_exec_diff(buf_before, buf_after)
+            if diff_log:
+                state = {
+                    'diff': diff_log,
+                    'mark_before': mark_before,
+                    'mark_after': list(self.memory.mark),
+                    'modified_before': meta_before[0],
+                    'lastchange_before': meta_before[1],
+                    'cursor_before': cursor_before,
+                    'cursor_after': self.display.fpos(),
+                }
+                self.undo_stack.append(state)
+                if len(self.undo_stack) > self.max_undo_levels:
+                    self.undo_stack.pop(0)
+                self.redo_stack = []
 
     def _build_exec_diff(self, before, after):
         """exec 前後のバッファを比較し、undo 用の差分リストを生成する。
@@ -1807,8 +1877,10 @@ class BiEditor:
         while (tail < lb - head and tail < la - head and
                before[lb - 1 - tail] == after[la - 1 - tail]):
             tail += 1
-        old_mid = before[head:lb - tail]
-        new_mid = after[head:la - tail]
+        # before/after は bytes で渡ってくる。他の差分エントリ
+        # (setmem/insmem/ovwmem 側)と型を揃えるため list に変換する。
+        old_mid = list(before[head:lb - tail])
+        new_mid = list(after[head:la - tail])
         diff = []
         if len(old_mid) == len(new_mid):
             # 長さ不変: 領域上書き1エントリで表現
@@ -2916,20 +2988,42 @@ class BiEditor:
                     v = 10 * v + int(line[idx])
                     idx += 1
                 length = v
+                is_repeat = True
             else:
                 length = 1
-            
+                is_repeat = False
+
             # fill mode for 'i' with range
+            # 破綻点修正: 範囲(x,x2)と repeat(*n)が両方指定された場合
+            # (例: "0,f i 55 *2")、以前は範囲を無条件優先して *n を無視して
+            # おり、bi.c(repeat優先・範囲を超える分は切り捨て)と書き込む
+            # バイト数自体が食い違っていた(bi.c=2バイト/bi.py=16バイト)。
+            # bi.c 側に揃え、is_repeat のときは repeat を優先する。
             if ch == 'i' and xf2:
                 if len(m):
-                    if (x2 - x + 1) > self.MAX_FILL_SIZE:
-                        self.stderr(f"Fill size too large (max {self.MAX_FILL_SIZE} bytes).")
-                        return -1
+                    if is_repeat:
+                        if length * len(m) > self.MAX_FILL_SIZE:
+                            self.stderr(f"Repeat count too large (max {self.MAX_FILL_SIZE} bytes total).")
+                            return -1
+                        data = m * length
+                        # 範囲より長い場合は切り捨て(bi.c と同じ: overwrite は範囲外を書かない)
+                        if len(data) > (x2 - x + 1):
+                            data = data[:(x2 - x + 1)]
+                    else:
+                        if (x2 - x + 1) > self.MAX_FILL_SIZE:
+                            self.stderr(f"Fill size too large (max {self.MAX_FILL_SIZE} bytes).")
+                            return -1
+                        data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
                     self.save_undo_state()
-                    data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
                     self.memory.ovwmem(x, data)
                     self.commit_undo()
-                    self.stdmm(f"{len(data)} bytes filled.")
+                    # is_repeat のときは範囲と食い違い得るバイト数になるため
+                    # "filled." と名乗らせず "overwritten." のままにする
+                    # (bi.c のメッセージ選択と一致させる)。
+                    if is_repeat:
+                        self.stdmm(f"{len(data)} bytes overwritten.")
+                    else:
+                        self.stdmm(f"{len(data)} bytes filled.")
                     self.display.jump(x + len(data))
                 else:
                     self.stderr("No data specified.")
@@ -2937,11 +3031,18 @@ class BiEditor:
 
             if ch == 'I' and xf2:
                 if len(m):
-                    if (x2 - x + 1) > self.MAX_FILL_SIZE:
-                        self.stderr(f"Fill size too large (max {self.MAX_FILL_SIZE} bytes).")
-                        return -1
+                    if is_repeat:
+                        if length * len(m) > self.MAX_FILL_SIZE:
+                            self.stderr(f"Repeat count too large (max {self.MAX_FILL_SIZE} bytes total).")
+                            return -1
+                        # insert は範囲に収める必要が無いので切り捨てない(bi.c と同じ)。
+                        data = m * length
+                    else:
+                        if (x2 - x + 1) > self.MAX_FILL_SIZE:
+                            self.stderr(f"Fill size too large (max {self.MAX_FILL_SIZE} bytes).")
+                            return -1
+                        data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
                     self.save_undo_state()
-                    data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
                     self.memory.insmem(x, data)
                     self.commit_undo()
                     self.stdmm(f"{len(data)} bytes inserted.")
@@ -3018,6 +3119,15 @@ class BiEditor:
         
         # move
         elif ch == 'v':
+            # 破綻点修正: bi.c 側と同じ理由。start が範囲内でも end だけ極端に
+            # 大きいと movmem() 内の redmem(start, end) が end-start+1 バイトの
+            # bytearray を確保しようとしてハング/MemoryError になる
+            # (例: "1,99999999999999 v 0")。end が EOF を跨ぐこと自体は
+            # 意図した仕様(zero-pad)なので _check_op_range は使わず、i/I と
+            # 同じ MAX_FILL_SIZE による範囲長の上限チェックだけを行う。
+            if x2 >= x and (x2 - x + 1) > self.MAX_FILL_SIZE:
+                self.stderr(f"Fill size too large (max {self.MAX_FILL_SIZE} bytes).")
+                return -1
             # パーシャル編集中: x3 もバッファ相対に変換(窓外は拒否)
             x3 = self._partial_rel(x3)
             if x3 is None:
@@ -3315,7 +3425,14 @@ class BiEditor:
     # 打ち間違えるだけで(例: "0i 41*99999999999")数百GB相当のメモリ確保を
     # 試みてハングアップ/スワップ枯渇/MemoryErrorになっていた。妥当な
     # 上限(1GiB)を設けて明確なエラーにする。
-    MAX_FILL_SIZE = 0x40000000  # 1 GiB
+    # モジュールtop-level定数(MemoryBuffer.setmem/insmem/ovwmem と共有)をそのまま使う。
+    MAX_FILL_SIZE = MAX_FILL_SIZE
+
+    # undo_stack に積む「バリア」の目印。MAX_UNDO_BYTES 超過で差分を記録
+    # できなかった操作があったことを表す特別なエントリ(通常の state辞書とは
+    # 区別できる一意なオブジェクト)。undo() はこれを検出したら pop せずに
+    # 諦める(bi.c 側 DiffState.is_barrier と対)。
+    UNDO_BARRIER = object()
 
     def _check_op_range(self, x, x2):
         """ビット演算・シフト/ローテートの対象範囲がバッファ内に収まっているか検査する。
