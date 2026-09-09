@@ -37,6 +37,15 @@ UNDO_ENTRY_COST = 96
 # 倒して無警告の no-op とする(bi.c 側と同じ意図)。
 MAX_FILL_SIZE = 0x40000000  # 1 GiB
 
+# Parser.get_value() の "{式}" 電卓機能(bi.doc記載の仕様)で eval() に渡す前の
+# ホワイトリスト。bi.c 側の [Bug7修正]（旧実装が固定パスへ式をそのまま書いて
+# popen/python3 実行しており "{__import__('os').system(...)}" 等のコマンド
+# インジェクションが可能だった件の修正）と同じ方針・同じ文字集合を使う。
+# 数字・16進文字・演算子・括弧・空白しか通さないため、識別子を書ける文字が
+# 16進の a-f/A-F と x/X しか残らず、os 等のモジュール名や関数名そのものを
+# 式中に書けなくなる。
+CALC_EXPR_ALLOWED_CHARS = frozenset("0123456789abcdefABCDEFxX+-*/%()& |^~<>! \t")
+
 
 def _fmt_float32(v):
     """float32 を「読み戻すと同じビットパターンに戻る最短の10進表現」にする。
@@ -148,9 +157,18 @@ cp: int = 0
 def setmem(addr: int, data: int) -> None:
     """グローバルな mem[] にバイト値を書き込む。
     addr がバッファ末尾を超える場合は自動的に0埋め拡張する。
+
+    [欠陥の修正] MemoryBuffer.setmem() が持つ address-gap-hang 対策
+    (MAX_FILL_SIZE=1GiBを超えるギャップは拡張しない)がここには無かった。
+    この関数は '@' コマンド(call_exec、globals()経由でユーザーのPythonコードに
+    直接公開されている)から到達できるため、"@setmem(999999999999999, 1)" の
+    ように打つだけで、通常のコマンド経路が防いでいたはずの巨大アドレスへの
+    ゼロ埋め拡張によるOOM/ハングが素通りで再発できてしまっていた。
     """
     global mem
     if addr >= len(mem):
+        if addr - len(mem) > MAX_FILL_SIZE:
+            return
         mem += bytearray(addr - len(mem) + 1)
     mem[addr] = int(data) & 0xff
 
@@ -901,7 +919,16 @@ class Display:
             self.term.color(6)
             a = y * 16 + addr
             by = 0
-            while by < 16:
+            # [欠陥の修正] col(表示した「文字数」)を by(消費した「バイト数」)
+            # とは別に数える。UTF-8モードではマルチバイト文字1個が複数バイト
+            # を消費するため、16バイトぶんの行が16文字未満で終わることがある
+            # (例: 2バイト文字が8個で16バイト=8文字)。bi.c の display_repaint
+            # は文字数を数えて16文字に満たない分を空白でパディングしており、
+            # ASCII/UTF-8パネルの右端が行ごとにずれないようにしている。
+            # ここに対応するパディングが無かったため、多バイト文字を含む行だけ
+            # パネル幅が縮んでいた。
+            col = 0
+            while by < 16 and col < 16:
                 in_hl = (self.highlight_ranges and self.is_highlighted(a))
                 if in_hl:
                     self.term.highlight_color()
@@ -913,6 +940,10 @@ class Display:
                     c = self.printchar(a)
                 a += c
                 by += c
+                col += 1
+            while col < 16:
+                print(" ", end='')
+                col += 1
             print("  ", end='', flush=True)
         self.term.color(0)
         self.term.dispcursor()
@@ -1071,12 +1102,25 @@ class Parser:
             else:
                 return self.UNKNOWN, idx
             
+            # [重大な脆弱性の修正] {} は電卓式評価 (bi.doc 記載の仕様)。
+            # 従来は __builtins__ だけを空にして dict(globals()) をそのまま
+            # eval の名前空間に渡していたが、globals() にはこのモジュールが
+            # import 済みの os/sys/io/re 等がそのまま残っており、
+            # "{os.system('...')}" のように __import__ を経由しない式だけで
+            # 任意コード実行ができてしまっていた（__builtins__ を潰しても
+            # 既に import 済みのモジュールへの参照そのものは塞げない）。
+            #
+            # bi.c 側の [Bug7修正]（固定パスへの popen 実行が同種のコマンド
+            # インジェクションを許していた件）と同じ方針で、式全体を
+            # CALC_EXPR_ALLOWED_CHARS のホワイトリストで事前検証し、
+            # 違反があれば eval を呼ばず即 UNKNOWN を返す。識別子を書ける
+            # 文字が16進の a-f/A-F と x/X しか残らないため、os 等の名前を
+            # 式中に書くこと自体ができなくなる。名前空間も dict(globals())
+            # ではなく空の globals に絞り、多重の防御にする。
+            if not all(c in CALC_EXPR_ALLOWED_CHARS for c in u):
+                return self.UNKNOWN, idx
             try:
-                # {} は mem[]/cp を参照できる電卓式評価 (bi.doc 記載の仕様)。
-                # __builtins__ だけ封じて open()/__import__() 等の任意コード実行を防ぐ。
-                safe_globals = dict(globals())
-                safe_globals["__builtins__"] = {}
-                v = int(eval(u, safe_globals, {}))
+                v = int(eval(u, {"__builtins__": {}}, {}))
             except Exception:
                 return self.UNKNOWN, idx
         elif ch == '^':

@@ -19,6 +19,7 @@
 #include <errno.h>    /* fopen 失敗理由(ENOENT/EISDIR/EACCES等)の区別用 */
 #include <sys/stat.h> /* fstat, S_ISDIR: ディレクトリ誤指定の検出用 */
 #include <math.h>     /* isfinite: 浮動小数点表示の非有限値判定用       */
+#include <time.h>     /* SIGINT緊急保存でのタイムスタンプ生成用 */
 /* ========================================================================
  * 定数
  * ======================================================================== */
@@ -308,19 +309,35 @@ char*    parser_comment(const char *s);
 
 /* ========================================================================
  * HistoryManager
+ *
+ * [重大な欠陥の修正] 以前はコマンド履歴(`:`)と検索履歴(`/`)を readline の
+ * 単一の履歴リストで共有しており、bi.py の HistoryManager
+ * (self.histories = {'command': [], 'search': []} で完全分離)とパリティが
+ * 崩れていた(`:`をいくつか打った後に`/`で↑キーを押すとコマンド履歴が
+ * 混ざって出てくる)。分離管理を行う実装(HistoryManagerEx、コメント
+ * 「Python版から移植」)は既に書かれていたが、どこからも呼ばれていない
+ * デッドコードだった。型をここへ引き上げ、BiEditor がこちらを使うよう
+ * 配線する。
  * ======================================================================== */
 
+#define HISTORY_MODE_COMMAND 0
+#define HISTORY_MODE_SEARCH  1
+
 typedef struct {
-    char  **command_history;
-    size_t  command_count;
-    size_t  command_capacity;
-    char  **search_history;
-    size_t  search_count;
-    size_t  search_capacity;
+    char **entries;      /* 履歴エントリ配列 */
+    size_t count;        /* 現在の履歴数 */
+    size_t capacity;     /* 配列の容量 */
+    size_t max_size;     /* 最大履歴数 */
+} HistoryStore;
+
+typedef struct {
+    HistoryStore command_hist;  /* コマンド履歴 */
+    HistoryStore search_hist;   /* 検索履歴 */
+    int current_mode;           /* 現在 readline に積んである方 */
 } HistoryManager;
 
 void  history_init(HistoryManager *hist);
-char* history_getln(HistoryManager *hist, const char *prompt, const char *mode);
+char* history_getln(HistoryManager *hist, const char *prompt, int mode);
 void  history_free(HistoryManager *hist);
 
 /* ========================================================================
@@ -926,15 +943,48 @@ void terminal_highlight_color(Terminal *term) {
 static struct termios g_saved_termios;
 static bool           g_termios_saved = false;
 
+/* [重大な欠陥の修正] bi.py の main() は SIGINT を KeyboardInterrupt として
+ * 捕まえ、editor.memory.lastchange が立っていれば <file>.save へ退避保存
+ * してから終了する(SIGTERM/SIGHUPはPython側もOSのデフォルト動作＝
+ * 保存せず終了なので、そこはC版と元々一致している)。C版はSIGINTでも
+ * termios を復元するだけで即座にプロセスを終了しており、未保存の変更が
+ * 無条件に失われていた。
+ *
+ * シグナルハンドラの中では fopen/fwrite 等 async-signal-safe でない処理を
+ * 呼んではならないため、ハンドラ自体はフラグを立てるだけにする
+ * (CPythonがSIGINTを「バイトコード命令の合間」という安全な地点まで遅らせて
+ * からKeyboardInterruptを送出するのと同じ考え方)。実際の退避保存は、
+ * ブロッキング呼び出し(getchar/readline/getline)から制御が戻った直後の
+ * 安全な地点で editor_check_sigint_emergency_save() を呼んで行う。 */
+static volatile sig_atomic_t g_sigint_pending = 0;
+
+/* main() で一度だけ設定する。シグナル到来時に退避保存する対象。 */
+static BiEditor  *g_signal_editor   = NULL;
+static const char *g_signal_filename = NULL;
+
 static void terminal_restore_on_signal(int sig) {
     if (g_termios_saved) {
         tcsetattr(STDIN_FILENO, TCSANOW, &g_saved_termios);
         g_termios_saved = false;
     }
-    /* デフォルトハンドラを呼び出してプロセスを正常終了させる */
+    if (sig == SIGINT && g_signal_editor != NULL) {
+        /* 退避保存が必要かもしれないので、ここでは終了せずフラグだけ立てて
+         * 戻る。ブロッキング呼び出しは EINTR で中断されて戻ってくるので、
+         * その直後でフラグを確認して安全に保存する。 */
+        g_sigint_pending = 1;
+        return;
+    }
+    /* SIGTERM/SIGHUP、または保存対象が未設定の間のSIGINTは、
+     * bi.py 側もOSデフォルト動作(保存せず終了)なので揃えて即終了する。 */
     signal(sig, SIG_DFL);
     raise(sig);
 }
+
+/* ブロッキング呼び出し(getchar/readline/getline)から戻った直後に呼ぶ。
+ * 本体は BiEditor の完全な定義が見えるファイル後方(main関数の直前)に置く。
+ * SIGINT保留中なら、変更があれば <file>.save へ退避保存してメッセージを
+ * 出し、bi.py の except KeyboardInterrupt と同じ終了コード130で終了する。 */
+static void editor_check_sigint_emergency_save(void);
 
 /* main() から一度だけ呼ぶ初期化関数 */
 static void terminal_setup_signal_handlers(void) {
@@ -954,18 +1004,43 @@ int terminal_getch(void) {
 
     if (tcgetattr(STDIN_FILENO, &g_saved_termios) != 0) {
         /* stdin が tty でない（スクリプトモード等）: rawモード変更をスキップ */
-        return getchar();
+        int c = getchar();
+        editor_check_sigint_emergency_save();
+        return c;
     }
     g_termios_saved = true;
 
+    /* [重大な欠陥の修正] 従来は ICANON|ECHO だけを落としており、ISIG/IXON/
+     * ICRNL 等が有効なままだった。bi.py 側は tty.setraw() を使っており、
+     * これは BRKINT/ICRNL/INPCK/ISTRIP/IXON(入力)、OPOST(出力)、
+     * CSIZE|PARENB を落として CS8 を立て(制御)、ECHO/ICANON/IEXTEN/ISIG
+     * (ローカル)を落とす、という広範な設定変更を行う。この差により:
+     *   - ISIG が生きたままだったCは、fedit のキー入力待ち中に Ctrl-C を
+     *     押すと SIGINT でプロセスごと終了していた(Pythonは raw な1バイト
+     *     0x03 として getch() が返すだけで、キー処理側の判断に委ねられる)。
+     *   - IXON が生きたままだったCは、Ctrl-S でソフトウェアフロー制御が
+     *     掛かり、Ctrl-Q を押すまで端末がフリーズしたように見えていた。
+     *   - ICRNL が生きたままだったCは、端末が送るCR(0x0D)をLF(0x0A)へ
+     *     変換してしまい、Pythonが受け取る生のバイトと食い違っていた。
+     * tty.setraw() と同じ設定に揃える。 */
     new_settings = g_saved_termios;
-    new_settings.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &new_settings);
+    new_settings.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    new_settings.c_oflag &= ~(OPOST);
+    new_settings.c_cflag &= ~(CSIZE | PARENB);
+    new_settings.c_cflag |= CS8;
+    new_settings.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+    new_settings.c_cc[VMIN]  = 1;
+    new_settings.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &new_settings);
 
     ch = getchar();
 
-    tcsetattr(STDIN_FILENO, TCSANOW, &g_saved_termios);
+    /* bi.py の getch() は termios.TCSADRAIN で復元する。TCSANOWとの実質的な
+     * 差は「未送出の出力を書き切ってから戻すか」だけで、稀な条件でしか
+     * 表面化しないが、揃えておく。 */
+    tcsetattr(STDIN_FILENO, TCSADRAIN, &g_saved_termios);
     g_termios_saved = false;
+    editor_check_sigint_emergency_save();
     return ch;
 }
 
@@ -1307,7 +1382,15 @@ int search_hitre(SearchEngine *search, size_t addr) {
         search->regex_cache_valid = true;
     }
     if (search->regex_cache_error) return -1;
-    if (addr >= search->memory->mem.size) return -1;
+    /* [重大な欠陥の修正] addr がバッファ範囲外なら即 -1(検索失敗として中断)
+     * を返していたが、bi.py の hitre() は範囲外の addr でも単に
+     * self._regex_matches.get(addr) が None になり 0(不一致・継続)を返す
+     * だけで、呼び出し元のラップアラウンドに任せる。この差により、
+     * search_next(fp=display_fpos()+1, ...) がカーソルをファイル末尾に
+     * 置いた状態で呼ばれた場合(fp==mem_len、範囲外)、C版だけが即座に
+     * 検索失敗として中断し、以前にマッチがあってもラップアラウンドせずに
+     * "Not found" になっていた。範囲外の addr は cache 中のどの pos とも
+     * 一致しないため、下の二分探索は自然に 0 を返す。専用チェックは不要。 */
 
     /* regex_cache は pos 昇順で構築されるため二分探索できる */
     MatchArray *cache = &search->regex_cache;
@@ -1365,7 +1448,7 @@ size_t search_next(SearchEngine *search, size_t fp, size_t mem_len) {
                 if (!wrapped) {
                     // 最初のwrap around
                     display_stdmm_wait(search->display, 
-                        "Search reached BOTTOM, wrap around to TOP", 
+                        "Search reached BOTTOM, wrap around to TOP.",
                         search->editor->scriptingflag,
                         search->editor->verbose);
                     wrapped = true;
@@ -1392,9 +1475,12 @@ size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
     if (mem_len == 0) return (size_t)-1;
     if (!search->regexp && search->smem.size == 0) return (size_t)-1;
     search_begin_scan(search);
+    /* bi.py の searchlast() (`if fp < 0: fp = mem_len - 1`) と同じく、
+     * 開始位置の補正だけでは wrapped を立てない。ここで立てると「Wait.」
+     * 表示が抑制され、ヒットしても display_clrmm が呼ばれなくなり、
+     * 実際に検索をやり直して一周した場合と見分けが付かなくなる。 */
     if (fp >= mem_len) {
         fp = mem_len - 1;
-        wrapped=true;
     }
 
     size_t curpos = fp;
@@ -1420,7 +1506,7 @@ size_t search_last(SearchEngine *search, size_t fp, size_t mem_len) {
         
         if (curpos == 0) {
             display_stdmm_wait(search->display, 
-                "Search reached TOP, wrap around to BOTTOM", 
+                "Search reached TOP, wrap around to BOTTOM.",
                 search->editor->scriptingflag,
                 search->editor->verbose);
             wrapped=true;
@@ -2153,74 +2239,12 @@ char* parser_comment(const char *s) {
 
 /* ========================================================================
  * HistoryManager実装
+ *
+ * Python版の HistoryManager (self.histories = {'command': [], 'search': []},
+ * getln(s, mode) でモードを切り替えて入力) と同じく、コマンド履歴と検索履歴を
+ * HistoryStore 2本で完全に分離管理する。readline のネイティブな履歴は、
+ * どちらのモードで入力を取るかに応じて中身を積み替えて使う。
  * ======================================================================== */
-
-void history_init(HistoryManager *hist) {
-    hist->command_history = NULL;
-    hist->command_count = 0;
-    hist->command_capacity = 0;
-    hist->search_history = NULL;
-    hist->search_count = 0;
-    hist->search_capacity = 0;
-}
-
-char* history_getln(HistoryManager *hist, const char *prompt, const char *mode) {
-    static char buffer[4096];
-    
-    // readline使用
-    char *line = readline(prompt);
-    if (!line) {
-        buffer[0] = '\0';
-        return buffer;
-    }
-    
-    if (line[0]) {
-        add_history(line);
-    }
-    
-    strncpy(buffer, line, sizeof(buffer) - 1);
-    buffer[sizeof(buffer) - 1] = '\0';
-    free(line);
-    
-    return buffer;
-}
-
-
-/* ========================================================================
- * Python版から移植: 履歴管理の改善
- * コマンド履歴と検索履歴を分離管理する機能を追加
- * ======================================================================== */
-
-/*
- * 注: この実装は Python版の HistoryManager クラスの機能を C に移植したものです
- * 
- * Python版の特徴:
- * - self.histories = {'command': [], 'search': []}
- * - get_history_list(): readlineから履歴を取得
- * - set_history_list(mode): モード別に履歴を設定
- * - getln(s, mode): モードを切り替えて入力
- * 
- * C版での実装:
- * - command_history[], search_history[] で分離管理
- * - history_switch_mode() でモード切替
- * - history_getln_with_mode() でモード対応入力
- */
-
-#define HISTORY_MODE_COMMAND 0
-#define HISTORY_MODE_SEARCH  1
-
-typedef struct {
-    char **entries;      /* 履歴エントリ配列 */
-    size_t count;        /* 現在の履歴数 */
-    size_t capacity;     /* 配列の容量 */
-    size_t max_size;     /* 最大履歴数 */
-} HistoryStore;
-
-typedef struct {
-    HistoryStore command_hist;  /* コマンド履歴 */
-    HistoryStore search_hist;   /* 検索履歴 */
-    int current_mode;           /* 現在のモード */
-} HistoryManagerEx;
 
 void history_store_init(HistoryStore *store, size_t max_size) {
     store->entries = NULL;
@@ -2267,76 +2291,64 @@ void history_store_free(HistoryStore *store) {
     store->capacity = 0;
 }
 
-void history_manager_ex_init(HistoryManagerEx *mgr) {
-    history_store_init(&mgr->command_hist, 1000);
-    history_store_init(&mgr->search_hist, 1000);
-    mgr->current_mode = HISTORY_MODE_COMMAND;
+void history_init(HistoryManager *hist) {
+    history_store_init(&hist->command_hist, 1000);
+    history_store_init(&hist->search_hist, 1000);
+    hist->current_mode = HISTORY_MODE_COMMAND;
 }
 
-void history_manager_ex_free(HistoryManagerEx *mgr) {
-    history_store_free(&mgr->command_hist);
-    history_store_free(&mgr->search_hist);
+void history_free(HistoryManager *hist) {
+    history_store_free(&hist->command_hist);
+    history_store_free(&hist->search_hist);
+    clear_history();
 }
 
-void history_manager_ex_add(HistoryManagerEx *mgr, const char *entry, int mode) {
+static void history_add(HistoryManager *hist, const char *entry, int mode) {
     /* Python版の histories[mode].append(entry) 相当 */
     if (mode == HISTORY_MODE_SEARCH) {
-        history_store_add(&mgr->search_hist, entry);
+        history_store_add(&hist->search_hist, entry);
     } else {
-        history_store_add(&mgr->command_hist, entry);
+        history_store_add(&hist->command_hist, entry);
     }
 }
 
-void history_manager_ex_switch_mode(HistoryManagerEx *mgr, int mode) {
-    /* Python版の set_history_list(mode) 相当 */
-    mgr->current_mode = mode;
-    
-#ifdef HAVE_READLINE
-    /* readlineの履歴を切り替え */
+static void history_switch_mode(HistoryManager *hist, int mode) {
+    /* Python版の set_history_list(mode) 相当。readline のネイティブな
+     * 履歴を、これから使う方のモードの中身に積み替える。 */
+    hist->current_mode = mode;
     clear_history();
-    
-    HistoryStore *store = (mode == HISTORY_MODE_SEARCH) ? 
-                          &mgr->search_hist : &mgr->command_hist;
-    
+    HistoryStore *store = (mode == HISTORY_MODE_SEARCH)
+                        ? &hist->search_hist : &hist->command_hist;
     for (size_t i = 0; i < store->count; i++) {
         add_history(store->entries[i]);
     }
-#endif
 }
 
-char* history_manager_ex_getln(HistoryManagerEx *mgr, const char *prompt, int mode) {
+char* history_getln(HistoryManager *hist, const char *prompt, int mode) {
     /* Python版の getln(s, mode) 相当 */
     static char buffer[4096];
-    
-    /* モード切替 */
-    if (mode != mgr->current_mode) {
-        history_manager_ex_switch_mode(mgr, mode);
+
+    if (mode != hist->current_mode) {
+        history_switch_mode(hist, mode);
     }
-    
-    /* 入力取得 */
+
     char *line = readline(prompt);
+    editor_check_sigint_emergency_save();
     if (!line) {
         buffer[0] = '\0';
         return buffer;
     }
-    
-    /* 履歴に追加 */
+
     if (line[0]) {
-#ifdef HAVE_READLINE
         add_history(line);
-#endif
-        history_manager_ex_add(mgr, line, mode);
+        history_add(hist, line, mode);
     }
-    
+
     strncpy(buffer, line, sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
     free(line);
-    
-    return buffer;
-}
 
-void history_free(HistoryManager *hist) {
-    clear_history();
+    return buffer;
 }
 
 /* ========================================================================
@@ -2558,7 +2570,9 @@ bool filemgr_readfile_partial(FileManager *fmgr, const char *filename,
     long fsize = ftell(f);
     if (fsize < 0 || (size_t)fsize <= offset) {
         fclose(f);
-        if (msg) snprintf(msg, msg_size, "Offset 0x%zX exceeds file size.", offset);
+        if (msg) snprintf(msg, msg_size,
+                          "Partial read error: offset 0x%zX exceeds file size (0x%zX).",
+                          offset, (size_t)fsize);
         return false;
     }
 
@@ -3311,7 +3325,7 @@ void editor_fedit(BiEditor *editor) {
         else if (ch == '/') {
             terminal_locate(&editor->term, 0, BOTTOMLN);
             terminal_color(&editor->term, 7, 0);
-            char *input = history_getln(&editor->history, "/", "search");
+            char *input = history_getln(&editor->history, "/", HISTORY_MODE_SEARCH);
             
             if (input && input[0]) {
                 // 入力の先頭に / を追加してパースする
@@ -3571,7 +3585,7 @@ void editor_fedit(BiEditor *editor) {
             // コマンドモード
             size_t before_len = editor->memory.mem.size;
             disp_curpos(editor);
-            char *line = history_getln(&editor->history, ":", "command");
+            char *line = history_getln(&editor->history, ":", HISTORY_MODE_COMMAND);
             int f = editor_commandline(editor, line);
             if (editor->memory.mem.size != before_len) {
                 matcharray_clear(&editor->display.highlight_ranges);
@@ -3671,7 +3685,14 @@ static void cmd_typed_display(BiEditor *editor,
 
     uint64_t start = x;
     uint64_t end   = xf2 ? x2 : x;
-    int multi = (end > start);
+    /* [重大な欠陥の修正] 「複数行表示になるか」を end>start という範囲の
+     * バイト数だけで決めていたが、実際に出力される行数は
+     * floor((end-start)/size)+1 であり、型の幅(size)が範囲より広い場合
+     * (例: 4バイトの範囲を128bit型の?qで見る)は end>start でも実際には
+     * 1行しか出ない。bi.py 側は実際に生成した行数(len(lines_out))で
+     * 判定しており、その基準に合わせてここも「2行以上出力されるか」を
+     * 直接計算する。 */
+    int multi = (end - start) >= (uint64_t)size;
 
     if (multi && !editor->scriptingflag) {
         terminal_locate(&editor->term, 0, BOTTOMLN+1);
@@ -4364,10 +4385,29 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
             if (*scriptfile) {
                 printf("\n");
                 int result = editor_scripting(editor, scriptfile);
-                
+
+                /* [重大な欠陥の修正] bi.py の同箇所
+                 * (self.verbose and not self.scriptingflag: 待機→
+                 *  self.scriptingflag復元→not scriptingflag: 画面クリア)
+                 * と同じ手順を踏む。editor_scripting() はもう scriptingflag
+                 * を書き換えないので、この時点の editor->scriptingflag は
+                 * まだ呼び出し前(外側)の値のまま。対話モード由来
+                 * (scriptingflag==false)でTを使ったときだけキー入力を
+                 * 待ち、その後スタックから復元してから画面をクリアする。
+                 * 以前はこの待機・クリア処理自体が丸ごと欠落しており、
+                 * ネストしたT/t実行後の画面がbi.pyと食い違っていた。 */
+                if (editor->verbose && !editor->scriptingflag) {
+                    display_stdmm(&editor->display, "[ Hit any key ]",
+                                  editor->scriptingflag, editor->verbose);
+                    terminal_getch();
+                }
+
                 editor->verbose = old_verbose;
                 editor->scriptingflag = old_scripting;
-                
+                if (!editor->scriptingflag) {
+                    terminal_clear(&editor->term);
+                }
+
                 if (result == 0 || result == 1) {
                     return result;
                 }
@@ -5152,10 +5192,27 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         int times = 1;
         idx = parser_skipspc(line, idx);
         uint64_t t = parser_expression(&editor->parser, line, &idx);
+        bool times_too_large = false;
         if (t != UNKNOWN) {
-            times = (int)t;
+            /* [重大な欠陥の修正] 従来は uint64_t の t を無条件に (int)t へ
+             * キャストしてから MAX_SHIFT_TIMES と比較していた。t が
+             * 2^31 以上だとその変換自体が処理系依存/負値化し、以下のような
+             * 誤動作を起こしていた:
+             *   - t=2^31 付近 → times が負になり MAX_SHIFT_TIMES 超過を
+             *     素通りした上、for(t=0;t<times;t++) が1回も回らず無言の
+             *     no-op になる(bi.py は多倍長整数なので同じ入力を正しく
+             *     "Repeat count too large" で拒否する)。
+             *   - t=2^32+5 のように上位ビットだけが大きい値 → 下位32bitの
+             *     "5" にすり替わり、要求と全く異なる回数だけ実行されて
+             *     しまう。
+             * uint64_t のまま上限と比較してから int へ落とす。 */
+            if (t > (uint64_t)MAX_SHIFT_TIMES) {
+                times_too_large = true;
+            } else {
+                times = (int)t;
+            }
         }
-        
+
         int bit = -1;
         idx = parser_skipspc(line, idx);
         if (idx < strlen(line) && line[idx] == ',') {
@@ -5170,7 +5227,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         /* 破綻点修正: times(繰り返し回数)に上限が無かったため、Python版と
          * 同様の対策としてcompareコマンドのFCMP_MAXNに倣った上限を設ける
          * (C版自体は高速だが、bi.py側との仕様の一貫性のため揃える)。 */
-        if (times > MAX_SHIFT_TIMES) {
+        if (times_too_large) {
             char emsg[64];
             snprintf(emsg, sizeof(emsg), "Repeat count too large (max %d).", MAX_SHIFT_TIMES);
             display_stderr(&editor->display, emsg, editor->scriptingflag, editor->verbose);
@@ -6025,9 +6082,17 @@ int editor_scripting(BiEditor *editor, const char *scriptfile) {
     size_t linecap = 0;
     ssize_t linelen;
     int flag = -1;
-    editor->scriptingflag = true;
-    
+    /* [重大な欠陥の修正] 以前はここで無条件に scriptingflag=true にしていた。
+     * トップレベルの -s はmain()が呼び出し前に既に true をセットしているので
+     * 実害は無いが、対話モード中に T/t コマンドでこの関数がネスト呼び出し
+     * されると、外側が対話モード(scriptingflag=false)であっても実行中だけ
+     * 強制的に true になってしまい、bi.py の scripting() (self.scriptingflag
+     * を一切変更しない)とパリティが崩れていた。呼び出し側(main() の -s、
+     * T/tハンドラ)が必要な値を設定してから呼ぶ設計に統一し、ここでは
+     * 触らない。 */
+
     while ((linelen = getline(&line, &linecap, f)) != -1) {
+        editor_check_sigint_emergency_save();
         // 改行を削除
         while (linelen > 0 && (line[linelen-1] == '\n' || line[linelen-1] == '\r')) {
             line[--linelen] = '\0';
@@ -6057,6 +6122,22 @@ int editor_scripting(BiEditor *editor, const char *scriptfile) {
     return 0;
 }
 
+/* -o/-l/-e の引数を16進数として厳密に検証する。
+ * [重大な欠陥の修正] strtoull() の戻り値をチェックせずそのまま使っていたため、
+ * "bi file -o zzz" のように数値として解釈できない値を渡しても無警告で 0 として
+ * 処理を続行していた(bi.py 側は argparse の type=lambda x: int(x,16) により
+ * 起動時にエラー終了するのでパリティが崩れていた)。空文字列・先頭以外に
+ * 不正な文字がある・全体が空白のみ、をいずれも拒否する。 */
+static bool parse_hex_arg(const char *s, size_t *out) {
+    if (!s || !*s) return false;
+    char *end = NULL;
+    errno = 0;
+    unsigned long long v = strtoull(s, &end, 16);
+    if (end == s || *end != '\0' || errno == ERANGE) return false;
+    *out = (size_t)v;
+    return true;
+}
+
 int print_usage(char *fn) {
     fprintf(stderr, "Usage: %s [options] <file> [options]\n", fn);
     fprintf(stderr, "  Options can appear before or after <file>.\n");
@@ -6070,6 +6151,50 @@ int print_usage(char *fn) {
     fprintf(stderr, "  -e <end>     Partial edit: end offset inclusive (hex)\n");
     fprintf(stderr, "  -c <command> Execute a single bi command non-interactively, then exit\n");
     return 1;
+}
+
+/* [重大な欠陥の修正] bi.py の main() は SIGINT を KeyboardInterrupt として
+ * 捕まえ、editor.memory.lastchange が立っていれば <file>.save へ退避保存
+ * してから終了コード130で終わる。C版は terminal_restore_on_signal が
+ * termios を復元するだけで即座にプロセスを終了しており、未保存の変更が
+ * 無条件に失われていた。ハンドラ自体はフラグ(g_sigint_pending)を立てる
+ * だけにしておき(async-signal-safeでないfopen/fwriteをハンドラの中で
+ * 直接呼ばないため)、ブロッキング呼び出しから戻った安全な地点でこの
+ * 関数を呼んで実際の退避保存を行う。既存ファイルは上書きしない
+ * (bi.py の _emergency_save_path と同じ規則)。 */
+static void editor_check_sigint_emergency_save(void) {
+    if (!g_sigint_pending) return;
+    g_sigint_pending = 0;
+
+    BiEditor *editor = g_signal_editor;
+    if (editor && editor->memory.lastchange) {
+        char base[4160];
+        snprintf(base, sizeof(base), "%s.save",
+                 (g_signal_filename && *g_signal_filename) ? g_signal_filename : "bi");
+        char path[4224];
+        strncpy(path, base, sizeof(path) - 1);
+        path[sizeof(path) - 1] = '\0';
+        struct stat st;
+        if (stat(path, &st) == 0) {
+            char stamp[32];
+            time_t now = time(NULL);
+            strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", localtime(&now));
+            snprintf(path, sizeof(path), "%s.%s", base, stamp);
+            int n = 0;
+            while (stat(path, &st) == 0) {
+                n++;
+                snprintf(path, sizeof(path), "%s.%s.%d", base, stamp, n);
+            }
+        }
+        char msg[256];
+        if (filemgr_writefile(&editor->filemgr, path, msg, sizeof(msg))) {
+            fprintf(stderr, "\nInterrupted. memory saved to %s.\n", path);
+        }
+    }
+    if (editor) terminal_dispcursor(&editor->term);
+    fflush(stderr);
+    fflush(stdout);
+    exit(130);
 }
 
 /* ========================================================================
@@ -6111,13 +6236,25 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "-w") == 0) {
             write_on_exit = true;
         } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
-            partial_offset = (size_t)strtoull(argv[++i], NULL, 16);
+            if (!parse_hex_arg(argv[++i], &partial_offset)) {
+                fprintf(stderr, "Invalid hex value for -o: '%s'\n", argv[i]);
+                print_usage(argv[0]);
+                return 1;
+            }
             partial_mode   = true;
         } else if (strcmp(argv[i], "-l") == 0 && i + 1 < argc) {
-            partial_length = (size_t)strtoull(argv[++i], NULL, 16);
+            if (!parse_hex_arg(argv[++i], &partial_length)) {
+                fprintf(stderr, "Invalid hex value for -l: '%s'\n", argv[i]);
+                print_usage(argv[0]);
+                return 1;
+            }
             partial_mode   = true;
         } else if (strcmp(argv[i], "-e") == 0 && i + 1 < argc) {
-            end_offset_raw = (size_t)strtoull(argv[++i], NULL, 16);
+            if (!parse_hex_arg(argv[++i], &end_offset_raw)) {
+                fprintf(stderr, "Invalid hex value for -e: '%s'\n", argv[i]);
+                print_usage(argv[0]);
+                return 1;
+            }
             has_end_opt    = true;
             partial_mode   = true;
         } else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
@@ -6155,6 +6292,11 @@ int main(int argc, char *argv[]) {
     editor.verbose = verbose;
     strncpy(editor.filemgr.filename, filename, sizeof(editor.filemgr.filename) - 1);
     editor.filemgr.filename[sizeof(editor.filemgr.filename) - 1] = '\0';
+
+    /* SIGINT時の退避保存(editor_check_sigint_emergency_save)が対象を
+     * 見つけられるよう登録する。 */
+    g_signal_editor   = &editor;
+    g_signal_filename = filename;
 
     // 画面クリア（非対話モード以外）。-s スクリプト または -c コマンドは非対話。
     bool noninteractive = (scriptfile != NULL) || (command != NULL);
