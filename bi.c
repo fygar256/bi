@@ -4482,7 +4482,24 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
     uint64_t x2 = x;
     
     idx = parser_skipspc(parsed_line, idx);
-    if (parsed_line[idx] == ',') {
+    if (!xf && parsed_line[idx] == '*') {
+        /* 先頭アドレス省略 + '*length' 形式:
+         * カレント位置 '.' から '.+length-1' を範囲とする (comma 不要)。
+         * x はカレント位置という明示的な範囲始点として確定するので、
+         * 以降の "xf && xf2" による範囲指定判定 (i/I の fill 等) が
+         * 効くよう xf も true にする ('.,*length' を書いたのと同じ扱い)。
+         * display_fpos() はバッファ相対値を返す (明示 '.' は
+         * parser_to_abs() 経由でファイル絶対値へ変換されてから xf=true に
+         * なる) ため、ここでも同じ変換を通してから xf を立てないと、
+         * パーシャル編集中の絶対値チェック/差し引きが二重にずれる。 */
+        idx = parser_skipspc(parsed_line, idx + 1);
+        uint64_t t = parser_expression(&editor->parser, parsed_line, &idx);
+        if (t == UNKNOWN) t = 1;
+        x = parser_to_abs(x);
+        x2 = x + t - 1;
+        xf = true;
+        xf2 = true;
+    } else if (parsed_line[idx] == ',') {
         idx = parser_skipspc(parsed_line, idx + 1);
         if (parsed_line[idx] == '*') {
             idx = parser_skipspc(parsed_line, idx + 1);
@@ -4498,7 +4515,7 @@ static int editor_commandline_single(BiEditor *editor, const char *line) {
             }
         }
     }
-    
+
     if (x2 < x) x2 = x;
     idx = parser_skipspc(parsed_line, idx);
 

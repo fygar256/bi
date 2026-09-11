@@ -2563,9 +2563,27 @@ class BiEditor:
         else:
             xf = True
         x2 = x
-        
+
         idx = self.parser.skipspc(line, idx)
-        if idx < len(line) and line[idx] == ',':
+        if not xf and idx < len(line) and line[idx] == '*':
+            # 先頭アドレス省略 + '*length' 形式:
+            # カレント位置 '.' から '.+length-1' を範囲とする (comma 不要)。
+            # x はカレント位置という明示的な範囲始点として確定するので、
+            # xf も true にする ('.,*length' と書いたのと同じ扱いにし、
+            # xf を参照する h コマンド等の start 判定を効かせる)。
+            # display.fpos() はバッファ相対値を返す (明示 '.' は
+            # parser.to_abs() 経由でファイル絶対値へ変換されてから xf=True
+            # になる) ため、ここでも同じ変換を通してから xf を立てないと、
+            # パーシャル編集中の絶対値チェック/差し引きが二重にずれる。
+            idx = self.parser.skipspc(line, idx + 1)
+            t, idx = self.parser.expression(line, idx)
+            if t == Parser.UNKNOWN:
+                t = 1
+            x = self.parser.to_abs(x)
+            x2 = x + t - 1
+            xf = True
+            xf2 = True
+        elif idx < len(line) and line[idx] == ',':
             idx = self.parser.skipspc(line, idx + 1)
             if idx < len(line) and line[idx] == '*':
                 idx = self.parser.skipspc(line, idx + 1)

@@ -184,6 +184,9 @@ options:
 
 Remarks
 
+    On command, you can give the value like this: '*length cmd' equivalet to
+    range specification '.,.+length-1 cmd'
+
     Multi statement will truncates processing on error occurred.
 
     Regular expression can be used for string search.
