@@ -1002,9 +1002,6 @@ class Display:
         file_addr = addr + g_partial.offset  # 実ファイル上のアドレス
         a = self.memory.readmem(addr)
         # カーソル位置のバイト詳細（実ファイルアドレスで表示）
-        self.term.locate(0, self.BOTTOMLN+1)
-        self.term.clrline()          # \n なしで行をクリア（末尾改行によるスクロール防止）
-        self.term.locate(0, self.BOTTOMLN+1)
         self.term.color(6)
         s = '.'
         if a < 0x20:
@@ -1013,25 +1010,33 @@ class Display:
             s = '.'
         else:
             s = "'" + chr(a) + "'"
+        # 末尾をスペースで埋めたり幅を超えたりすると、最下行で折り返して
+        # 画面がスクロールし、上のタイトル行がずれて重なって見える。
+        # _putline() で端末幅に切り詰め、余りは行末消去で片付ける。
         if addr < len(self.memory.mem):
-            print(f"{file_addr:012X} : 0x{a:02X} 0b{a:08b} 0o{a:03o} {a} {s}      ", end='', flush=True)
+            self._putline(self.BOTTOMLN + 1,
+                          f"{file_addr:012X} : 0x{a:02X} 0b{a:08b} 0o{a:03o} {a} {s}")
         else:
-            print(f"{file_addr:012X} : ~~                                                   ", end='', flush=True)
+            self._putline(self.BOTTOMLN + 1, f"{file_addr:012X} : ~~")
 
         # PARTIAL ステータス: 25行以上のとき BOTTOMLN+2 に独立表示、それ以外は BOTTOMLN+1 に上書き
         partial_row = self.BOTTOMLN + 2 if self.has_partial_row else self.BOTTOMLN + 1
-        self.term.locate(0, partial_row)
         if g_partial.active:
             self.term.color(6)
             # g_partial.length は元の読込長(writefile_partial のtail算出に使う)なので変更せず、
             # 表示は編集後の現在のバッファ長を見せる。
             cur_len = len(self.memory.mem)
-            print(
-                f" PARTIAL  file_offset:0x{g_partial.offset:012X}"
-                f"  length:0x{cur_len:X}({cur_len}) bytes   ",
-                end='', flush=True
-            )
+            # 狭幅時は見出しを詰め、末尾の単位も省いて 1 行に収める
+            if BPL == 8:
+                tag, ofs_label, len_label, unit = "PART ", "ofs:", "len:", ""
+            else:
+                tag, ofs_label, len_label, unit = ("PARTIAL  ", "file_offset:",
+                                                   "length:", " bytes")
+            self._putline(partial_row,
+                          f" {tag}{ofs_label}0x{g_partial.offset:012X}"
+                          f"  {len_label}0x{cur_len:X}({cur_len}){unit}")
         elif self.has_partial_row:
+            self.term.locate(0, partial_row)
             self.term.clrline()
     
     def disp_curpos(self):
@@ -3430,7 +3435,10 @@ class BiEditor:
                 # -8 指定時は 4 バイト/行で幅が狭いため、基準アドレスを
                 # 別行に出し、桁見出しをデータ列 (14桁目 / 40桁目) に揃える。
                 cols = "".join(f"+{i:X} " for i in range(fw))
-                print(f" R1 base {_fmt_addr(addr1_base)}   R2 base {_fmt_addr(addr2_base)}")
+                # " R1 base " + 12桁 = 21桁。R2 側は下の " R2-addr" と同じ
+                # 27桁目から始まるよう 6 桁詰める。
+                print(f" R1 base {_fmt_addr(addr1_base)}"
+                      f"      R2 base {_fmt_addr(addr2_base)}")
                 print(f" R1-addr      {cols} R2-addr      {cols}")
             else:
                 print(f" R1-addr      Region1 ({_fmt_addr(addr1_base)})   R2-addr      Region2 ({_fmt_addr(addr2_base)})")

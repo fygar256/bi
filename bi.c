@@ -1843,13 +1843,7 @@ void display_printdata(Display *disp) {
     uint8_t a = memory_read(disp->memory, addr);
     
     /* ---- 行: カーソル位置のバイト詳細 ---- */
-    terminal_locate(disp->term, 0, BOTTOMLN+1);
     terminal_color(disp->term, 6, 0);
-    /* 80 個のスペースで消すと、端末幅が 80 桁未満のときに最下行で折り返して
-     * 画面が 1 行スクロールし、上のタイトル行がずれて重なって見える。
-     * bi.py と同じく行全体の消去 (ESC[2K) を使う。 */
-    terminal_clrline(disp->term);
-    terminal_locate(disp->term, 0, BOTTOMLN+1);
     char s[4] = ".";
     if (a < 0x20) {
         snprintf(s, sizeof(s), "^%c", a + '@');
@@ -1859,27 +1853,42 @@ void display_printdata(Display *disp) {
         snprintf(s, sizeof(s), "'%c'", a);
     }
     
+    /* 末尾をスペースで埋めたり幅を超えたりすると、最下行で折り返して
+     * 画面がスクロールし、上のタイトル行がずれて重なって見える。
+     * display_putline() で端末幅に切り詰め、余りは行末消去で片付ける。 */
+    char det[128];
     if (addr < disp->memory->mem.size) {
-        printf("%012zX : 0x%02X 0b", file_addr, a);
-        for (int i = 7; i >= 0; i--) {
-            printf("%d", (a >> i) & 1);
-        }
-        printf(" 0o%03o %d %s      ", a, a, s);
+        char bits[9];
+        for (int i = 0; i < 8; i++) bits[i] = (char)('0' + ((a >> (7 - i)) & 1));
+        bits[8] = '\0';
+        snprintf(det, sizeof(det), "%012zX : 0x%02X 0b%s 0o%03o %d %s",
+                 file_addr, a, bits, a, a, s);
     } else {
-        printf("%012zX : ~~                                                   ", file_addr);
+        snprintf(det, sizeof(det), "%012zX : ~~", file_addr);
     }
+    display_putline(disp, BOTTOMLN + 1, det);
 
     /* PARTIALステータス: 25行以上のとき BOTTOMLN+2 に独立表示、それ以外は BOTTOMLN+1 に上書き */
     int partial_row = g_has_partial_row ? BOTTOMLN + 2 : BOTTOMLN + 1;
-    terminal_locate(disp->term, 0, partial_row);
     if (g_partial.active) {
         terminal_color(disp->term, 6, 0);
         /* g_partial.length は元の読込長(writefile_partial のtail算出に使う)なので
          * 変更せず、表示は編集後の現在のバッファ長を見せる。 */
         size_t cur_len = disp->memory->mem.size;
-        printf(" PARTIAL  file_offset:0x%012zX  length:0x%zX(%zu) bytes   ",
-               g_partial.offset, cur_len, cur_len);
+        char pst[160];
+        /* 狭幅時は見出しを詰め、末尾の単位も省いて 1 行に収める */
+        bool narrow = (g_bpl == 8);
+        snprintf(pst, sizeof(pst),
+                 " %s%s0x%012zX  %s0x%zX(%zu)%s",
+                 narrow ? "PART " : "PARTIAL  ",
+                 narrow ? "ofs:" : "file_offset:",
+                 g_partial.offset,
+                 narrow ? "len:" : "length:",
+                 cur_len, cur_len,
+                 narrow ? "" : " bytes");
+        display_putline(disp, partial_row, pst);
     } else if (g_has_partial_row) {
+        terminal_locate(disp->term, 0, partial_row);
         terminal_clrline(disp->term);
     }
 
@@ -5673,7 +5682,9 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         if (g_bpl == 8) {
             /* -8 指定時は 4 バイト/行で幅が狭いため、基準アドレスを別行に
              * 出し、桁見出しをデータ列 (14桁目 / 40桁目) に揃える。 */
-            printf(" R1 base %s   R2 base %s\n", _hbuf1, _hbuf2);
+            /* " R1 base " + 12桁 = 21桁。R2 側は下の " R2-addr" と同じ
+             * 27桁目から始まるよう 6 桁詰める。 */
+            printf(" R1 base %s      R2 base %s\n", _hbuf1, _hbuf2);
             printf(" R1-addr      ");
             for (int i = 0; i < g_bpl / 2; i++) printf("+%X ", i);
             printf(" R2-addr      ");
