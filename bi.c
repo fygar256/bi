@@ -456,12 +456,32 @@ static void group4(const char *src, char *dst, size_t dstsz) {
 #define _FOOTER_ROWS  2   /* メッセージ行 + カーソル情報行 */
 #define _MIN_DATA_ROWS 3  /* データ行の最小数 */
 
+/* 1行に表示するバイト数。端末が 16 バイト表示に必要な 78 桁
+ * (アドレス13 + hex 48 + ASCII 16 + 余白1) に満たない場合は 8 に落とす。 */
+#define NARROW_COLS 78
+static int g_bpl = 16;
+/* 直近に検出した端末の桁数 (タイトル行の折り返し防止に使う) */
+static int g_scr_cols = 80;
+
+/* 端末幅から 1 行あたりの表示バイト数 (g_bpl) を決め直す。
+ * 端末サイズが取れない場合 (パイプ出力など) は 16 のままにする。 */
+static void update_bpl(void) {
+    struct winsize ws;
+    int cols = NARROW_COLS;   /* フォールバック: 通常幅として扱う */
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) {
+        cols = (int)ws.ws_col;
+    }
+    g_scr_cols = cols;
+    g_bpl = (cols >= NARROW_COLS) ? 16 : 8;
+}
+
 static int g_bottomln = 22;
 static int g_lenonscr = (22 - 3) * 16;
 /* パーシャルモード中かつ25行以上のときにカーソル詳細行とPARTIAL行を独立させるフラグ */
 static int g_has_partial_row = 0;
 
 static void update_screen_size(void) {
+    update_bpl();   /* 幅の変化にも追従させる */
     struct winsize ws;
     int rows = 24;   /* フォールバック */
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
@@ -474,7 +494,7 @@ static void update_screen_size(void) {
     int data_rows = rows - _HEADER_ROWS - footer;
     if (data_rows < _MIN_DATA_ROWS) data_rows = _MIN_DATA_ROWS;
     g_bottomln = _HEADER_ROWS + data_rows;
-    g_lenonscr = data_rows * 16;
+    g_lenonscr = data_rows * g_bpl;
 }
 
 /* マクロ互換エイリアス (コード中で BOTTOMLN / LENONSCR のまま参照できるようにする) */
@@ -888,6 +908,12 @@ void terminal_clear(Terminal *term) {
     printf("\x1b[2J");
     fflush(stdout);
     terminal_locate(term, 0, 0);
+}
+
+/* カーソル位置から行末までを消すエスケープ。表示幅が狭くなった直後に、
+ * 前の広い表示の残骸が行末に居座るのを防ぐ。 */
+static const char *terminal_eol(Terminal *term) {
+    return terminal_scripting(term) ? "" : "\x1b[K";
 }
 
 void terminal_clrline(Terminal *term) {
@@ -1578,16 +1604,16 @@ void display_init(Display *disp, Terminal *term, MemoryBuffer *mem) {
 }
 
 size_t display_fpos(Display *disp) {
-    return disp->homeaddr + disp->curx / 2 + disp->cury * 16;
+    return disp->homeaddr + disp->curx / 2 + disp->cury * g_bpl;
 }
 
 void display_jump(Display *disp, size_t addr) {
     if (addr < disp->homeaddr || addr >= disp->homeaddr + LENONSCR) {
-        disp->homeaddr = addr & ~0xFF;
+        disp->homeaddr = addr - (addr % (size_t)(g_bpl * 16));
     }
     size_t i = addr - disp->homeaddr;
-    disp->curx = (i & 0xF) * 2;
-    disp->cury = i / 16;
+    disp->curx = (int)(i % (size_t)g_bpl) * 2;
+    disp->cury = (int)(i / (size_t)g_bpl);
 }
 
 bool display_is_highlighted(Display *disp, size_t addr) {
@@ -1670,38 +1696,75 @@ int display_printchar(Display *disp, size_t a) {
     return 1;
 }
 
+/* row 行目の先頭へ移動し、端末幅で切り詰めてから行末まで消して描く。
+ * 改行に頼って行を送ると、行が折り返したときに以降の行が1行ずつ
+ * 押し下げられて表示が重なるため、必ず絶対位置で描く。 */
+static void display_putline(Display *disp, int row, const char *text) {
+    terminal_locate(disp->term, 0, row);
+    printf("%.*s%s", g_scr_cols, text, terminal_eol(disp->term));
+}
+
 void display_repaint(Display *disp, const char *filename) {
     update_screen_size();   /* リサイズに追従 */
     // Print title
     terminal_locate(disp->term, 0, 0);
     terminal_color(disp->term, 6, 0);
-    printf("bi C version 3.5.3 by Taisuke Maekawa           utf8mode:%s     %s   ",
-           disp->utf8 ? "on " : "off",
-           disp->insmod ? "insert   " : "overwrite");
+    if (g_bpl == 8) {
+        /* 幅が狭いので 1 文字フラグに圧縮し、ヘッダー行の ASCII 欄
+         * "01234567" の "6"/"7" の桁 (13 + 3*8 + 6 = 43 / 44) の
+         * 真上に来るよう配置する。
+         *   1行目: utf8 = u/a ("6" の桁)  モード = o/i ("7" の桁)
+         *   2行目: modified = m/n ("7" の桁) */
+        char t8[128];
+        snprintf(t8, sizeof(t8), "%-43s%c%c", "bi C 3.5.3 by Taisuke Maekawa",
+                 disp->utf8 ? 'u' : 'a', disp->insmod ? 'i' : 'o');
+        display_putline(disp, 0, t8);
+        terminal_color(disp->term, 5, 0);
+        char fn8[31];
+        strncpy(fn8, filename, 30);
+        fn8[30] = '\0';
+        snprintf(t8, sizeof(t8), "%-30s%12zu  %c", fn8, disp->memory->mem.size,
+                 disp->memory->modified ? 'm' : 'n');
+        display_putline(disp, 1, t8);
+    } else {
+    char tw[160];
+    snprintf(tw, sizeof(tw),
+             "bi C version 3.5.3 by Taisuke Maekawa           utf8mode:%s     %s",
+             disp->utf8 ? "on " : "off",
+             disp->insmod ? "insert   " : "overwrite");
+    display_putline(disp, 0, tw);
     
     terminal_color(disp->term, 5, 0);
     char fn[36];
     strncpy(fn, filename, 35);
     fn[35] = '\0';
-    printf("\nfile:[%-35s] length:%zu bytes [%smodified]    ",
-           fn, disp->memory->mem.size, disp->memory->modified ? "" : "not ");
+    snprintf(tw, sizeof(tw), "file:[%-35s] length:%zu bytes [%smodified]",
+             fn, disp->memory->mem.size, disp->memory->modified ? "" : "not ");
+    display_putline(disp, 1, tw);
+    }
     
     // Print header
     terminal_nocursor(disp->term);
     terminal_locate(disp->term, 0, 2);
     terminal_color(disp->term, 4, 0);
-    printf("OFFSET       +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF ");
+    char hdr[128];
+    size_t hl = (size_t)snprintf(hdr, sizeof(hdr), "OFFSET       ");
+    for (int i = 0; i < g_bpl && hl + 4 < sizeof(hdr); i++)
+        hl += (size_t)snprintf(hdr + hl, sizeof(hdr) - hl, "+%X ", i);
+    for (int i = 0; i < g_bpl && hl + 2 < sizeof(hdr); i++)
+        hl += (size_t)snprintf(hdr + hl, sizeof(hdr) - hl, "%X", i);
+    display_putline(disp, 2, hdr);
     
     // Print hex dump
     terminal_color(disp->term, 7, 0);
-    for (int y = 0; y < LENONSCR / 16; y++) {
+    for (int y = 0; y < LENONSCR / g_bpl; y++) {
         terminal_color(disp->term, 5, 0);
         terminal_locate(disp->term, 0, 3 + y);
-        printf("%012zX ", disp->homeaddr + y * 16 + g_partial.offset);
+        printf("%012zX ", disp->homeaddr + (size_t)y * g_bpl + g_partial.offset);
         
         // Hex part
-        for (int i = 0; i < 16; i++) {
-            size_t a = y * 16 + i + disp->homeaddr;
+        for (int i = 0; i < g_bpl; i++) {
+            size_t a = (size_t)y * g_bpl + i + disp->homeaddr;
             bool in_hl = disp->highlight_ranges.size > 0 && display_is_highlighted(disp, a);
             
             if (in_hl) {
@@ -1729,8 +1792,8 @@ void display_repaint(Display *disp, const char *filename) {
         if (disp->utf8) {
             // UTF-8モード
             int col = 0;
-            for (int i = 0; i < 16 && col < 16; ) {
-                size_t a = y * 16 + i + disp->homeaddr;
+            for (int i = 0; i < g_bpl && col < g_bpl; ) {
+                size_t a = (size_t)y * g_bpl + i + disp->homeaddr;
                 bool in_hl = disp->highlight_ranges.size > 0 && display_is_highlighted(disp, a);
                 
                 if (in_hl) {
@@ -1748,14 +1811,14 @@ void display_repaint(Display *disp, const char *filename) {
                 col++;
             }
             // 残りを空白で埋める
-            while (col < 16) {
+            while (col < g_bpl) {
                 printf(" ");
                 col++;
             }
         } else {
             // 通常モード
-            for (int i = 0; i < 16; i++) {
-                size_t a = y * 16 + i + disp->homeaddr;
+            for (int i = 0; i < g_bpl; i++) {
+                size_t a = (size_t)y * g_bpl + i + disp->homeaddr;
                 bool in_hl = disp->highlight_ranges.size > 0 && display_is_highlighted(disp, a);
                 
                 if (in_hl) {
@@ -1770,7 +1833,7 @@ void display_repaint(Display *disp, const char *filename) {
                 }
             }
         }
-        printf(" ");
+        printf("%s", terminal_eol(disp->term));
     }
 }
 
@@ -1782,7 +1845,10 @@ void display_printdata(Display *disp) {
     /* ---- 行: カーソル位置のバイト詳細 ---- */
     terminal_locate(disp->term, 0, BOTTOMLN+1);
     terminal_color(disp->term, 6, 0);
-    printf("                                                                                ");
+    /* 80 個のスペースで消すと、端末幅が 80 桁未満のときに最下行で折り返して
+     * 画面が 1 行スクロールし、上のタイトル行がずれて重なって見える。
+     * bi.py と同じく行全体の消去 (ESC[2K) を使う。 */
+    terminal_clrline(disp->term);
     terminal_locate(disp->term, 0, BOTTOMLN+1);
     char s[4] = ".";
     if (a < 0x20) {
@@ -3271,15 +3337,15 @@ void editor_fedit(BiEditor *editor) {
             editor->display.curx = 0;
             continue;
         } else if (ch == '$') {
-            editor->display.curx = 30;
+            editor->display.curx = g_bpl * 2 - 2;
             continue;
         } else if (ch == 'j') {
             editor_commit_undo(editor);  /* [#2修正] 入力途中のニブルを破棄せず確定し、移動でバイト境界をリセット */
             stroke = false;
-            if (editor->display.cury < LENONSCR / 16 - 1) {
+            if (editor->display.cury < LENONSCR / g_bpl - 1) {
                 editor->display.cury++;
             } else {
-                editor->display.homeaddr += 16;
+                editor->display.homeaddr += (size_t)g_bpl;
             }
             continue;
         } else if (ch == 'k') {
@@ -3287,8 +3353,8 @@ void editor_fedit(BiEditor *editor) {
             stroke = false;
             if (editor->display.cury > 0) {
                 editor->display.cury--;
-            } else if (editor->display.homeaddr >= 16) {
-                editor->display.homeaddr -= 16;
+            } else if (editor->display.homeaddr >= (size_t)g_bpl) {
+                editor->display.homeaddr -= (size_t)g_bpl;
             }
             continue;
         } else if (ch == 'h') {
@@ -3297,25 +3363,25 @@ void editor_fedit(BiEditor *editor) {
             if (editor->display.curx > 0) {
                 editor->display.curx--;
             } else if (display_fpos(&editor->display) != 0) {
-                editor->display.curx = 31;
+                editor->display.curx = g_bpl * 2 - 1;
                 if (editor->display.cury > 0) {
                     editor->display.cury--;
-                } else if (editor->display.homeaddr >= 16) {
-                    editor->display.homeaddr -= 16;
+                } else if (editor->display.homeaddr >= (size_t)g_bpl) {
+                    editor->display.homeaddr -= (size_t)g_bpl;
                 }
             }
             continue;
         } else if (ch == 'l') {
             editor_commit_undo(editor);  /* [#2修正] 入力途中のニブルを破棄せず確定し、移動でバイト境界をリセット */
             stroke = false;
-            if (editor->display.curx < 31) {
+            if (editor->display.curx < g_bpl * 2 - 1) {
                 editor->display.curx++;
             } else {
                 editor->display.curx = 0;
-                if (editor->display.cury < LENONSCR / 16 - 1) {
+                if (editor->display.cury < LENONSCR / g_bpl - 1) {
                     editor->display.cury++;
                 } else {
-                    editor->display.homeaddr += 16;
+                    editor->display.homeaddr += (size_t)g_bpl;
                 }
             }
             continue;
@@ -3561,14 +3627,14 @@ void editor_fedit(BiEditor *editor) {
             }
             
             // カーソル移動
-            if (editor->display.curx < 31) {
+            if (editor->display.curx < g_bpl * 2 - 1) {
                 editor->display.curx++;
             } else {
                 editor->display.curx = 0;
-                if (editor->display.cury < LENONSCR / 16 - 1) {
+                if (editor->display.cury < LENONSCR / g_bpl - 1) {
                     editor->display.cury++;
                 } else {
-                    editor->display.homeaddr += 16;
+                    editor->display.homeaddr += (size_t)g_bpl;
                 }
             }
         } else if (ch == 'x') {
@@ -3825,8 +3891,9 @@ static void cmd_typed_display(BiEditor *editor,
 
 /* ========================================================================
  * 16進ダンプ表示ヘルパー: [start],[end] h
- *   範囲 [x..x2] を 16バイト/行で「アドレス + 16進 + ASCII」表示する。
- *   行頭は16バイト境界に丸めて桁を揃える。
+ *   範囲 [x..x2] を g_bpl バイト/行 (-8 指定時は 8) で
+ *   「アドレス + 16進 + ASCII」表示する。
+ *   行頭は g_bpl バイト境界に丸めて桁を揃える。
  *   - 対話モード      : 画面はクリアせず、最下行からシアンで表示しキー入力で復帰。
  *   - スクリプト/-c   : -v または -c 実行時に標準出力へプレーン出力（-s 非verboseは無出力）。
  *   表示アドレスはファイル絶対値 (バッファ index + g_partial.offset)。
@@ -3837,6 +3904,7 @@ static void cmd_hexdump(BiEditor *editor,
 {
     /* スクリプト(-s)モードで非verbose時は無出力。-c コマンド実行時は出力する。 */
     if (editor->scriptingflag && !editor->verbose && !g_cmdmode) return;
+    update_bpl();
 
     size_t   mem_len = editor->memory.mem.size;
     uint64_t start   = xf ? x : 0;
@@ -3849,20 +3917,23 @@ static void cmd_hexdump(BiEditor *editor,
         terminal_color(&editor->term, 4, 0);   /* シアン (coltab[5]=96) */
     }
 
-    printf("             +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF\n");
+    printf("             ");
+    for (int i = 0; i < g_bpl; i++) printf("+%X ", i);
+    for (int i = 0; i < g_bpl; i++) printf("%X", i);
+    printf("\n");
 
     if (!editor->scriptingflag) {
         terminal_color(&editor->term, 5, 0);   /* シアン (coltab[5]=96) */
     }
 
-    uint64_t row = start - (start % 16);   /* 16バイト境界へ丸める */
+    uint64_t row = start - (start % (uint64_t)g_bpl);   /* g_bpl バイト境界へ丸める */
     while (row <= end) {
         uint64_t file_addr = (row + (uint64_t)g_partial.offset) & 0xffffffffffffULL;
         char hexpart[64];    /* "XX " * 16 + 終端 */
         char ascpart[128];   /* UTF-8対応: 最大16×4バイト + 終端 */
         size_t hp = 0, ap = 0;
         /* ヘックスペイン: 常にバイト単位 */
-        for (int i = 0; i < 16; i++) {
+        for (int i = 0; i < g_bpl; i++) {
             uint64_t cur = row + (uint64_t)i;
             if (cur < start || cur > end) {
                 hexpart[hp++] = ' '; hexpart[hp++] = ' '; hexpart[hp++] = ' ';
@@ -3877,7 +3948,7 @@ static void cmd_hexdump(BiEditor *editor,
         }
         hexpart[hp] = '\0';
         /* ASCIIペイン: UTF-8対応 */
-        for (int i = 0; i < 16; ) {
+        for (int i = 0; i < g_bpl; ) {
             uint64_t cur = row + (uint64_t)i;
             if (cur < start || cur > end) { ascpart[ap++] = ' '; i++; continue; }
             if (cur >= mem_len)           { ascpart[ap++] = '~'; i++; continue; }
@@ -3908,7 +3979,7 @@ static void cmd_hexdump(BiEditor *editor,
         ascpart[ap] = '\0';
         printf("%012llX %s%s\n",
                (unsigned long long)file_addr, hexpart, ascpart);
-        row += 16;
+        row += (uint64_t)g_bpl;
     }
     fflush(stdout);
 
@@ -5423,6 +5494,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             return -1;
         }
 
+        update_bpl();
 #define FCMP_SPAN 10
 #define FCMP_MAXN 8192
 
@@ -5598,8 +5670,19 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         /* -c (g_cmdmode) 実行時もカラーのエスケープシーケンスを出力する。 */
         editor->term.force_color = g_cmdmode;
         terminal_color(&editor->term,4,0);
+        if (g_bpl == 8) {
+            /* -8 指定時は 4 バイト/行で幅が狭いため、基準アドレスを別行に
+             * 出し、桁見出しをデータ列 (14桁目 / 40桁目) に揃える。 */
+            printf(" R1 base %s   R2 base %s\n", _hbuf1, _hbuf2);
+            printf(" R1-addr      ");
+            for (int i = 0; i < g_bpl / 2; i++) printf("+%X ", i);
+            printf(" R2-addr      ");
+            for (int i = 0; i < g_bpl / 2; i++) printf("+%X ", i);
+            printf("\n");
+        } else {
         printf(" R1-addr      Region1 (%s)   R2-addr      Region2 (%s)\n",
                _hbuf1, _hbuf2);
+        }
         terminal_color(&editor->term,7,0);
         fflush(stdout);
 
@@ -5608,8 +5691,10 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
         /* ギャップを除いた実バイトオフセットを別途カウント */
         size_t off1 = 0, off2 = 0;
 
-        for (size_t rs = 0; rs < np; rs += 8) {
-            size_t re = rs + 8 < np ? rs + 8 : np;
+        /* 1行あたりのペア数: -8 指定時は 4、通常は 8 */
+        const size_t fw = (size_t)(g_bpl / 2);
+        for (size_t rs = 0; rs < np; rs += fw) {
+            size_t re = rs + fw < np ? rs + fw : np;
             bool row_diff = false;
 
             /* この行の先頭時点での実バイトオフセットを保存 */
@@ -5619,6 +5704,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             /* 範囲外フラグを事前計算（最大8エントリ） */
             bool oob_a[8] = {false,false,false,false,false,false,false,false};
             bool oob_b[8] = {false,false,false,false,false,false,false,false};
+            /* fw は 4 または 8 なので oob_a/b[8] に収まる */
             {
                 size_t to1 = off1, to2 = off2;
                 for (size_t k = rs; k < re; k++) {
@@ -5645,7 +5731,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
 
             /* Region1 */
             terminal_color(&editor->term,7,0);
-            for (size_t k = rs; k < rs + 8; k++) {
+            for (size_t k = rs; k < rs + fw; k++) {
                 if (k < re) {
                     size_t ki = k - rs;
                     bool diff = (align_a[k] != align_b[k] || oob_a[ki] != oob_b[ki]);
@@ -5665,7 +5751,7 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
 
             /* Region2 */
             terminal_color(&editor->term,7,0);
-            for (size_t k = rs; k < rs + 8; k++) {
+            for (size_t k = rs; k < rs + fw; k++) {
                 if (k < re) {
                     size_t ki = k - rs;
                     bool diff = (align_a[k] != align_b[k] || oob_a[ki] != oob_b[ki]);

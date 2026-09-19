@@ -186,6 +186,26 @@ class _PartialState:
 
 g_partial = _PartialState()
 
+# 1行に表示するバイト数。端末が 16 バイト表示に必要な 78 桁
+# (アドレス13 + hex 48 + ASCII 16 + 余白1) に満たない場合は 8 に落とす。
+BPL = 16
+NARROW_COLS = 78
+# 直近に検出した端末の桁数 (タイトル行の折り返し防止に使う)
+SCR_COLS = 80
+
+
+def update_bpl():
+    """端末幅から 1 行あたりの表示バイト数 (BPL) を決め直す。
+    端末サイズが取れない場合 (パイプ出力など) は 16 のままにする。"""
+    global BPL, SCR_COLS
+    try:
+        cols = os.get_terminal_size().columns
+    except OSError:
+        cols = NARROW_COLS      # フォールバック: 通常幅として扱う
+    SCR_COLS = cols
+    BPL = 16 if cols >= NARROW_COLS else 8
+    return BPL
+
 
 class Terminal:
     """ターミナル制御を担当するクラス"""
@@ -262,6 +282,11 @@ class Terminal:
     def clrline(self):
         if self._scripting(): return
         print(f"{self.ESC}2K", end='', flush=True)
+
+    def eol(self):
+        """カーソル位置から行末までを消すエスケープ。
+        表示幅が狭くなった直後に、前の広い表示の残骸が行末に居座るのを防ぐ。"""
+        return '' if self._scripting() else f"{self.ESC}K"
     
     def rev(self):
         if self._scripting() and not self.force_color: return
@@ -787,6 +812,7 @@ class Display:
     def update_screen_size(self):
         """端末サイズを取得して BOTTOMLN / LENONSCR を再計算する。
         取得できない場合はデフォルト値 (BOTTOMLN=22) を使用する。"""
+        update_bpl()           # 幅の変化にも追従させる
         try:
             rows = os.get_terminal_size().lines
         except OSError:
@@ -800,31 +826,31 @@ class Display:
         #             BOTTOMLN+1=カーソル詳細  [BOTTOMLN+2=PARTIAL(パーシャルかつ25行以上時)]
         data_rows = max(self._MIN_DATA_ROWS, rows - self._HEADER_ROWS - footer)
         self.BOTTOMLN  = self._HEADER_ROWS + data_rows   # == data_rows + 3
-        self.LENONSCR  = data_rows * 16
+        self.LENONSCR  = data_rows * BPL
     
     def fpos(self):
-        return self.homeaddr + self.curx // 2 + self.cury * 16
+        return self.homeaddr + self.curx // 2 + self.cury * BPL
     
     def jump(self, addr):
         if addr < self.homeaddr or addr >= self.homeaddr + self.LENONSCR:
-            self.homeaddr = addr & ~(0xff)
+            self.homeaddr = addr - (addr % (BPL * 16))
         i = addr - self.homeaddr
-        self.curx = (i & 0xf) * 2
-        self.cury = (i // 16)
+        self.curx = (i % BPL) * 2
+        self.cury = (i // BPL)
     
     def scrup(self):
-        if self.homeaddr >= 16:
-            self.homeaddr -= 16
+        if self.homeaddr >= BPL:
+            self.homeaddr -= BPL
     
     def scrdown(self):
-        self.homeaddr += 16
+        self.homeaddr += BPL
     
     def inccurx(self):
-        if self.curx < 31:
+        if self.curx < BPL * 2 - 1:
             self.curx += 1
         else:
             self.curx = 0
-            if self.cury < self.LENONSCR // 16 - 1:
+            if self.cury < self.LENONSCR // BPL - 1:
                 self.cury += 1
             else:
                 self.scrdown()
@@ -878,16 +904,37 @@ class Display:
             print(chr(self.memory.mem[a] & 0xff) if 0x20 <= self.memory.mem[a] <= 0x7e else '.', end='')
             return 1
     
+    def _putline(self, row, text):
+        """row 行目の先頭へ移動し、端末幅で切り詰めてから行末まで消して描く。
+        改行に頼って行を送ると、行が折り返したときに以降の行が1行ずつ
+        押し下げられて表示が重なるため、必ず絶対位置で描く。"""
+        self.term.locate(0, row)
+        print(text[:SCR_COLS] + self.term.eol(), end='', flush=True)
+
     def print_title(self, filename):
         self.term.locate(0, 0)
         self.term.color(6)
-        print(f'bi Py version 3.5.3 by Taisuke Maekawa          utf8mode:{"off" if not self.utf8 else "on "}     {"insert   " if self.insmod else "overwrite"}   ')
+        if BPL == 8:
+            # 幅が狭いので 1 文字フラグに圧縮し、ヘッダー行の ASCII 欄
+            # "01234567" の "6"/"7" の桁 (13 + 3*8 + 6 = 43 / 44) の
+            # 真上に来るよう配置する。
+            #   1行目: utf8 = u/a ("6" の桁)  モード = o/i ("7" の桁)
+            #   2行目: modified = m/n ("7" の桁)
+            u = 'u' if self.utf8 else 'a'
+            m = 'i' if self.insmod else 'o'
+            self._putline(0, f'{"bi Py 3.5.3 by Taisuke Maekawa":<43}{u}{m}')
+            self.term.color(5)
+            fn = filename[0:30]
+            self._putline(1, f'{fn:<30}{len(self.memory.mem):>12}  '
+                             f'{"m" if self.memory.modified else "n"}')
+            return
+        self._putline(0, f'bi Py version 3.5.3 by Taisuke Maekawa          utf8mode:{"off" if not self.utf8 else "on "}     {"insert   " if self.insmod else "overwrite"}')
         self.term.color(5)
         if len(filename) > 35:
             fn = filename[0:35]
         else:
             fn = filename
-        print(f'file:[{fn:<35}] length:{len(self.memory.mem)} bytes [{("not " if not self.memory.modified else "")+"modified"}]    ')
+        self._putline(1, f'file:[{fn:<35}] length:{len(self.memory.mem)} bytes [{("not " if not self.memory.modified else "")+"modified"}]')
     
     def repaint(self, filename):
         self.update_screen_size()   # リサイズに追従
@@ -895,16 +942,18 @@ class Display:
         self.term.nocursor()
         self.term.locate(0, 2)
         self.term.color(4)
-        print("OFFSET       +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF ")
+        hdr = "".join(f"+{i:X} " for i in range(BPL))
+        asc = "".join(f"{i:X}" for i in range(BPL))
+        self._putline(2, f"OFFSET       {hdr}{asc}")
         self.term.color(7)
         addr = self.homeaddr
-        for y in range(self.LENONSCR // 16):
+        for y in range(self.LENONSCR // BPL):
             self.term.color(5)
             self.term.locate(0, 3 + y)
-            print(f"{(addr + y * 16 + g_partial.offset) & 0xffffffffffff:012X} ", end='')
+            print(f"{(addr + y * BPL + g_partial.offset) & 0xffffffffffff:012X} ", end='')
             self.term.color(7)
-            for i in range(16):
-                a = y * 16 + i + addr
+            for i in range(BPL):
+                a = y * BPL + i + addr
                 in_hl = (self.highlight_ranges and self.is_highlighted(a))
                 if in_hl:
                     self.term.highlight_color()
@@ -917,7 +966,7 @@ class Display:
                     print(f"~~ " if a >= len(self.memory.mem) else f"{self.memory.mem[a] & 0xff:02X} ", end='')
             self.term.color(7)
             self.term.color(6)
-            a = y * 16 + addr
+            a = y * BPL + addr
             by = 0
             # [欠陥の修正] col(表示した「文字数」)を by(消費した「バイト数」)
             # とは別に数える。UTF-8モードではマルチバイト文字1個が複数バイト
@@ -928,7 +977,7 @@ class Display:
             # ここに対応するパディングが無かったため、多バイト文字を含む行だけ
             # パネル幅が縮んでいた。
             col = 0
-            while by < 16 and col < 16:
+            while by < BPL and col < BPL:
                 in_hl = (self.highlight_ranges and self.is_highlighted(a))
                 if in_hl:
                     self.term.highlight_color()
@@ -941,10 +990,10 @@ class Display:
                 a += c
                 by += c
                 col += 1
-            while col < 16:
+            while col < BPL:
                 print(" ", end='')
                 col += 1
-            print("  ", end='', flush=True)
+            print(self.term.eol(), end='', flush=True)
         self.term.color(0)
         self.term.dispcursor()
     
@@ -1806,7 +1855,9 @@ class BiEditor:
             print(msg, end='', flush=True)
             Terminal.getch()
             self.term.locate(0, self.display.BOTTOMLN + 1)
-            print(" " * 80, end='', flush=True)
+            # 80 個のスペースで消すと端末幅が 80 桁未満のとき折り返して
+            # 画面がスクロールするため、行全体の消去を使う。
+            self.term.clrline()
     
     def call_exec(self, line):
         if len(line) <= 1:
@@ -2052,12 +2103,12 @@ class BiEditor:
                 self.display.curx = 0
                 continue
             elif ch == '$':
-                self.display.curx = 30
+                self.display.curx = BPL * 2 - 2
                 continue
             elif ch == 'j':
                 self.commit_undo()   # 入力途中のニブルを破棄せず undo 可能な形で確定
                 stroke = False
-                if self.display.cury < self.display.LENONSCR // 16 - 1:
+                if self.display.cury < self.display.LENONSCR // BPL - 1:
                     self.display.cury += 1
                 else:
                     self.display.scrdown()
@@ -2077,7 +2128,7 @@ class BiEditor:
                     self.display.curx -= 1
                 else:
                     if self.display.fpos() != 0:
-                        self.display.curx = 31
+                        self.display.curx = BPL * 2 - 1
                         if self.display.cury > 0:
                             self.display.cury -= 1
                         else:
@@ -2729,14 +2780,15 @@ class BiEditor:
                 return -1
             Terminal.getch()
             self.term.locate(0, self.display.BOTTOMLN)
-            print(" " * 80, end='', flush=True)
+            self.term.clrline()
         return -1
 
     def cmd_hexdump(self, x, x2, xf, xf2):
         """16進ダンプ表示コマンド: [start],[end] h
 
-        範囲 [x..x2] を 16バイト/行で「アドレス + 16進 + ASCII」表示する。
-        行頭は 16 バイト境界に丸めて桁を揃える。
+        範囲 [x..x2] を BPL バイト/行 (-8 指定時は 8) で
+        「アドレス + 16進 + ASCII」表示する。
+        行頭は BPL バイト境界に丸めて桁を揃える。
         - 対話モード      : 画面はクリアせず、最下行からシアンで表示してキー入力で復帰。
         - スクリプト/-c   : -v または -c 実行時に標準出力へプレーン出力（-s 非verboseでは無出力）。
         表示アドレスはファイル絶対値 (バッファ index + g_partial.offset)。
@@ -2745,6 +2797,7 @@ class BiEditor:
         # スクリプト(-s)モードで非verbose時は無出力。-c コマンド実行時は出力する。
         if self.scriptingflag and not self.verbose and not self.cmdmode:
             return
+        update_bpl()
         mem_len = len(self.memory.mem)
         start = int(x) if xf else 0
         end = int(x2) if xf2 else (mem_len - 1 if mem_len > 0 else 0)
@@ -2759,12 +2812,12 @@ class BiEditor:
         # kill された(bi.c は 1 行ずつ printf するので落ちない)。
         # ジェネレータにして bi.c と同じ逐次出力に揃える。
         def _rows():
-            row = start - (start % 16)          # 16バイト境界へ丸める
+            row = start - (start % BPL)         # BPL バイト境界へ丸める
             while row <= end:
                 file_addr = (row + g_partial.offset) & 0xffffffffffff
                 hexs = []
                 ascs = []
-                for i in range(16):
+                for i in range(BPL):
                     cur = row + i
                     if cur < start or cur > end:
                         hexs.append("  ")       # 指定範囲外の余白
@@ -2774,7 +2827,7 @@ class BiEditor:
                         b = self.memory.mem[cur] & 0xff
                         hexs.append(f"{b:02X}")
                 i = 0
-                while i < 16:
+                while i < BPL:
                     cur = row + i
                     if cur < start or cur > end:
                         ascs.append(' ')
@@ -2803,10 +2856,13 @@ class BiEditor:
                     i += 1
                 hexstr = ' '.join(hexs) 
                 yield f"{file_addr:012X} {hexstr} {''.join(ascs)}"
-                row += 16
+                row += BPL
+
+        dump_hdr = ("             " + "".join(f"+{i:X} " for i in range(BPL))
+                    + "".join(f"{i:X}" for i in range(BPL)))
 
         if self.scriptingflag:
-            print("             +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF")
+            print(dump_hdr)
             for ln in _rows():
                 print(ln)
             return
@@ -2814,7 +2870,7 @@ class BiEditor:
         # 対話モード: 画面はクリアせず、最下行からシアンで表示してキー待ち
         self.term.locate(0, self.display.BOTTOMLN + 1)
         self.term.color(4)          # シアン (coltab[5]=96)
-        print("             +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F 0123456789ABCDEF")
+        print(dump_hdr)
         self.term.color(5)          # シアン (coltab[5]=96)
         for ln in _rows():
             print(ln)
@@ -3245,6 +3301,7 @@ class BiEditor:
             x3 = self._partial_rel(x3)
             if x3 is None:
                 return -1
+            update_bpl()
             FCMP_SPAN = 10
             FCMP_MAXN = 8192
 
@@ -3358,7 +3415,8 @@ class BiEditor:
             align_b.reverse()
             np_ = len(align_a)
 
-            # 表示: 8ペア/行
+            # 表示: FCMP_PERLINE ペア/行 (-8 指定時は 4、通常は 8)
+            fw = BPL // 2
             def _fmt_addr(a):
                 if a < 0:
                     return f"-{(-a):012X}"
@@ -3368,7 +3426,14 @@ class BiEditor:
             # -c (cmdmode) 実行時もカラーのエスケープシーケンスを出力する。
             self.term.force_color = self.cmdmode
             self.term.color(4)
-            print(f" R1-addr      Region1 ({_fmt_addr(addr1_base)})   R2-addr      Region2 ({_fmt_addr(addr2_base)})")
+            if fw == 4:
+                # -8 指定時は 4 バイト/行で幅が狭いため、基準アドレスを
+                # 別行に出し、桁見出しをデータ列 (14桁目 / 40桁目) に揃える。
+                cols = "".join(f"+{i:X} " for i in range(fw))
+                print(f" R1 base {_fmt_addr(addr1_base)}   R2 base {_fmt_addr(addr2_base)}")
+                print(f" R1-addr      {cols} R2-addr      {cols}")
+            else:
+                print(f" R1-addr      Region1 ({_fmt_addr(addr1_base)})   R2-addr      Region2 ({_fmt_addr(addr2_base)})")
 
             any_diff = False
             off1 = 0
@@ -3376,11 +3441,11 @@ class BiEditor:
 
             rs = 0
             while rs < np_:
-                re = min(rs + 8, np_)
+                re = min(rs + fw, np_)
 
-                # 範囲外フラグを事前計算（最大8エントリ）
-                oob_a = [False] * 8
-                oob_b = [False] * 8
+                # 範囲外フラグを事前計算（最大 fw エントリ）
+                oob_a = [False] * fw
+                oob_b = [False] * fw
                 to1, to2 = off1, off2
                 for k in range(rs, re):
                     ki = k - rs
@@ -3407,7 +3472,7 @@ class BiEditor:
                 self.term.color(7)
 
                 # Region1
-                for k in range(rs, rs + 8):
+                for k in range(rs, rs + fw):
                     if k < re:
                         ki = k - rs
                         diff = (align_a[k] != align_b[k] or oob_a[ki] != oob_b[ki])
@@ -3430,7 +3495,7 @@ class BiEditor:
                 self.term.color(7)
 
                 # Region2
-                for k in range(rs, rs + 8):
+                for k in range(rs, rs + fw):
                     if k < re:
                         ki = k - rs
                         diff = (align_a[k] != align_b[k] or oob_a[ki] != oob_b[ki])
@@ -3457,7 +3522,7 @@ class BiEditor:
                     if align_b[k] >= 0:
                         off2 += 1
 
-                rs += 8
+                rs += fw
 
             if not self.scriptingflag or self.cmdmode:
                 self.term.color(4)
@@ -3844,6 +3909,8 @@ def main():
     ap.add_argument('-c', '--command', type=str, default=None, metavar='COMMAND',
                     help='execute a single bi command non-interactively, then exit')
     args = ap.parse_args()
+
+    update_bpl()   # 端末幅に応じた 1 行あたりのバイト数を決定
 
     # パーシャルモードの判定・長さ計算
     partial_mode = False
