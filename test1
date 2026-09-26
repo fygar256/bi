@@ -1,0 +1,286 @@
+#!/bin/sh
+#
+# bi test1 -- bi.c (C版) と bi.py (Python版) が同じ結果を出すことを確かめる。
+#
+# 同じ入力ファイルに同じコマンドを与え、
+#       ・標準出力＋標準エラー
+#       ・編集後のファイルの中身
+#       ・終了コード
+# の3つが全て一致することを見る。axx の test1 と同じ考え方である。
+#
+# 2つの実装は別々に書かれているので、どちらかだけを直したときの食い違いは
+# 黙って通り抜ける。それを通さないための道具である。
+#
+# 実行:
+#       ./test1                 (./bi と ./bi.py を使う)
+#       BIC=bi BIP=bip ./test1  (インストール済みのものを使う)
+#
+# 作業は test1.work/ の中だけで行う。py/ と c/ に同じ名前でファイルを置き、
+# それぞれのディレクトリの中で走らせる。ファイル名が同じなので、メッセージに
+# ファイル名が出る場合でも比較がずれない。
+#
+
+BIC=${BIC:-"$PWD/bi"}
+BIP=${BIP:-"$PWD/bi.py"}
+
+command -v "$BIC" >/dev/null 2>&1 || { echo "test1: C版が見つからない: $BIC (make するか BIC= で指定)"; exit 1; }
+command -v "$BIP" >/dev/null 2>&1 || { echo "test1: Python版が見つからない: $BIP (chmod +x bi.py するか BIP= で指定)"; exit 1; }
+
+W=test1.work
+rm -rf $W
+mkdir -p $W/fix $W/py $W/c
+
+FAIL=0
+NO=0
+
+# ---------------------------------------------------------------- 素材
+#   x.bin    0x00..0xff の 256 バイト
+#   txt.bin  正規表現用のテキスト
+#   ins.bin  読み込み用の小さいファイル
+#   pt.bin   パーシャル編集用の 1024 バイト
+#   ub.bin   undo 記録上限のちょうど下 (2796202 バイト)
+#   uo.bin   undo 記録上限のちょうど上 (2796203 バイト)
+python3 - $W/fix <<'PYEOF'
+import sys, os
+d = sys.argv[1]
+open(os.path.join(d, 'x.bin'),   'wb').write(bytes(range(256)))
+open(os.path.join(d, 'txt.bin'), 'wb').write(b'cdd cd7 abc-abc 0123 hello world\n')
+open(os.path.join(d, 'ins.bin'), 'wb').write(bytes([0xa0,0xa1,0xa2,0xa3,0xa4,0xa5,0xa6,0xa7]))
+open(os.path.join(d, 'pt.bin'),  'wb').write(bytes(range(256)) * 4)
+open(os.path.join(d, 'ub.bin'),  'wb').write(b'\x00' * 2796202)
+open(os.path.join(d, 'uo.bin'),  'wb').write(b'\x00' * 2796203)
+PYEOF
+
+# ------------------------------------------------------- 比較の下請け
+#   run <素材> <引数...>  両方を走らせて py/ と c/ に結果を残す
+run() {
+    fix=$1
+    shift
+    for d in $W/py $W/c; do
+        rm -f $d/x.bin $d/ins.bin $d/out.bin $d/s.bi $d/out
+        cp $W/fix/$fix $d/x.bin
+        cp $W/fix/ins.bin $d/ins.bin
+        [ -f $W/fix/s.bi ] && cp $W/fix/s.bi $d/s.bi
+    done
+    ( cd $W/py && "$BIP" x.bin "$@" ) > $W/py/out 2>&1
+    PRC=$?
+    ( cd $W/c  && "$BIC" x.bin "$@" ) > $W/c/out 2>&1
+    CRC=$?
+}
+
+#   差があった項目を並べて返す（無ければ空）
+difference() {
+    st=''
+    cmp -s $W/py/out   $W/c/out   || st="$st stdout"
+    cmp -s $W/py/x.bin $W/c/x.bin || st="$st file"
+    [ "$PRC" = "$CRC" ] || st="$st rc($PRC/$CRC)"
+    if [ -f $W/py/out.bin ] || [ -f $W/c/out.bin ]; then
+        cmp -s $W/py/out.bin $W/c/out.bin || st="$st out.bin"
+    fi
+    echo "$st"
+}
+
+#   t <素材> <引数...>   一致しなければ失敗
+t() {
+    NO=`expr $NO + 1`
+    run "$@"
+    st=`difference`
+    if [ -n "$st" ]; then
+        echo "FAIL #$NO:$st : $*"
+        FAIL=1
+    fi
+}
+
+#   d <素材> <引数...>   bi.doc が「一致しない」と書いている箇所。
+#                        一致してしまったらドキュメントが古い合図なので知らせる
+#                        （失敗にはしない — 揃うのは普通は改善なので）。
+d() {
+    NO=`expr $NO + 1`
+    run "$@"
+    st=`difference`
+    if [ -z "$st" ]; then
+        echo "NOTE #$NO: 一致した (bi.doc は相違すると書いている): $*"
+    fi
+}
+
+# ================================================================
+#   1. 表示系 — 標準出力が一致すること
+# ================================================================
+t x.bin -c '0,f h'                  # 範囲ダンプ
+t x.bin -c "^,\$ h"                 # 全体ダンプ ('^' は先頭アドレス)
+t x.bin -c 'h'                      # 範囲省略は全体
+t x.bin -c '?255'                   # 値の10/16/8進・ASCII・2進表示
+t x.bin -c '?0'
+t x.bin -c "?\$"                    # ファイル末尾アドレス
+t x.bin -c '0,7?s'                  # int16
+t x.bin -c '0,7?i'                  # int32
+t x.bin -c '0,7?l'                  # int64
+t x.bin -c '0,7?us'                 # uint16
+t x.bin -c '0,7?ui'                 # uint32
+t x.bin -c '0,7?ul'                 # uint64
+t x.bin -c '0,7?f'                  # float32 (最短往復表現)
+t x.bin -c '0,7?d'                  # float64 (最短往復表現)
+t x.bin -c '_big::0,7?ui'           # エンディアン指定
+t x.bin -c '_little::0,7?ui'
+t x.bin -c '0,1f f 20'              # データ比較 (一致しない範囲)
+t x.bin -c '0,1f f 0'               # データ比較 (自分自身)
+
+# ================================================================
+#   2. 書き換え系 — ファイルの中身が一致すること
+# ================================================================
+t x.bin -w -c '10 i aa bb cc'       # 上書き
+t x.bin -w -c '10 I aa bb cc'       # 挿入
+t x.bin -w -c '0 i/hello'           # 文字列で上書き
+t x.bin -w -c '0 I/hello'           # 文字列で挿入
+t x.bin -w -c '10 i ff *20'         # 繰り返し回数つき
+t x.bin -w -c '10,1f i 41'          # 範囲を埋める
+t x.bin -w -c '10,1f i/ab'          # 範囲を文字列で埋める
+t x.bin -w -c '*4 i 99'             # '*長さ' 形式
+t x.bin -w -c '10,1f d'             # 範囲削除
+t x.bin -w -c "\$ I 77"             # 末尾に足す
+t x.bin -w -c '0,7 y::20 p'         # yank して上書き貼り付け
+t x.bin -w -c '0,7 y::20 P'         # yank して挿入貼り付け
+t x.bin -w -c 'y//00 01 02::40 p'   # データ指定で yank
+t x.bin -w -c '8,f v 20'            # 移動
+t x.bin -w -c '0,7 c 40'            # 複写 (上書き)
+t x.bin -w -c '0,7 C 40'            # 複写 (挿入)
+t x.bin -w -c '0 R ins.bin'         # ファイルを読んで挿入
+t x.bin -w -c '0 r ins.bin'         # ファイルを読んで上書き
+t x.bin -w -c '0,f w out.bin'       # 範囲をファイルへ書く
+
+# ================================================================
+#   3. ビット演算・シフト・ローテート
+# ================================================================
+t x.bin -w -c '0,ff ^ff'            # xor
+t x.bin -w -c '^ff'                 # 行頭の '^' は xor コマンド
+t x.bin -w -c '20,2f &0f'           # and
+t x.bin -w -c '20,2f |f0'           # or
+t x.bin -w -c '0,f ~'               # not
+t x.bin -w -c '0,ff <1,0'           # 1ビット左シフト (0 を詰める)
+t x.bin -w -c '0,ff <1,1'           # 1ビット左シフト (1 を詰める)
+t x.bin -w -c '0,ff <1'             # バイト単位ローテート
+t x.bin -w -c '0,ff >1,0'           # 右シフト
+t x.bin -w -c '0,ff >3,1'
+t x.bin -w -c '0,ff >1'
+t x.bin -w -c '0,ff <<2,0'          # マルチバイトシフト
+t x.bin -w -c '0,ff >>2,1'
+t x.bin -w -c '0,ff <<3'            # マルチバイトローテート
+t x.bin -w -c '0,ff >>3'
+
+# ================================================================
+#   4. 検索・置換
+# ================================================================
+t x.bin -w -c '0,3f s //00 01//ff fe'      # データ→データ
+t txt.bin -w -c '0,$ s /abc/XYZ/'          # 正規表現→文字列
+t txt.bin -w -c '0,$ s /a[0-9]/Z/'         # 移植可能な正規表現
+t txt.bin -w -c '0,$ s /[a-c]+/Q/'
+t txt.bin -w -c '0,$ s /^cdd/TOP/'
+t txt.bin -w -c '0,$ s /abc//ff ee/'       # 正規表現→データ
+t txt.bin -w -c '0,$ s //61 62 63/ABC/'    # データ→文字列
+t txt.bin -c '/abc'                        # 検索
+t txt.bin -c '/abc::n'                     # 次を検索
+t txt.bin -c '/zzz'                        # 見つからない検索
+t x.bin   -c '//10 11 12'                  # データ検索
+
+# ================================================================
+#   5. アドレスの書き方
+# ================================================================
+t x.bin -w -c '5ma::0i41'                  # マークを打つ
+t x.bin -w -c "5ma::'a i 42"               # マークをアドレスに使う
+t x.bin -w -c '^+4,$ i 43'                 # 先頭からの相対
+t x.bin -w -c '10::.+2 i 44'               # カレント位置からの相対
+t x.bin -w -c '{0xff^0x55} i 99'           # '{}' 電卓
+t x.bin -w -c '{16*4} i 98'
+t x.bin -w -c '%16 i 97'                   # '%' で10進
+t x.bin -c 'M'                             # マーク一覧
+t x.bin -w -c '5ma::6mb::M'
+
+# ================================================================
+#   6. コメント・複文・エラー
+# ================================================================
+t x.bin -w -c '0 i 41 # comment'           # '#' 以降はコメント
+t x.bin -w -c '0 i 41::20 i 42::40 i 43'   # 複文
+t x.bin -w -c '0 i 41::zzz::20 i 42'       # 途中でエラーなら打ち切る
+t x.bin -w -c 'zzz'                        # 知らないコマンド
+t x.bin -w -c '0 i zz'                     # 16進でない
+t x.bin -w -c '0,f s /[/X/'                # 壊れた正規表現
+t x.bin -w -c '999999999999 i 41'          # 遠すぎるアドレス (埋めてはいけない)
+t x.bin -w -c '0,$ s /zzz/X/'              # 対象が無い置換
+t x.bin -w -c '{mem[5]+0x30} i 77'         # 白リストが弾く式 (両方ともカレント位置)
+
+# ================================================================
+#   7. undo / redo
+# ================================================================
+t x.bin -w -c '0 i 41::u'                  # 取り消し
+t x.bin -w -c '0 i 41::u::U'               # やり直し
+t x.bin -w -c '0 i 41::20 i 42::u::u'      # 2段階
+t x.bin -w -c 'u'                          # 取り消すものが無い
+t x.bin -w -c '0 i 41::u::u'               # 行き過ぎた取り消し
+
+# undo 記録の上限 (MAX_UNDO_BYTES)。両実装が同じバイト数で
+# "This operation can not undo." に切り替わること。
+# 2.8MB を2回ずつ走らせるので、ここだけ少し時間がかかる。
+t ub.bin -w -c '0,$ ^ff'                   # 上限のちょうど下 — 何も言わない
+t uo.bin -w -c '0,$ ^ff'                   # 上限のちょうど上 — 出る
+
+# ================================================================
+#   8. パーシャル編集 (-o / -l / -e)
+# ================================================================
+t pt.bin -o 100 -l 10 -c 'h'               # 窓の中身
+t pt.bin -o 100 -e 10f -c 'h'              # -e でも同じ窓
+t pt.bin -o 100 -l 10 -c "^,\$ h"          # 窓全体
+t pt.bin -o 100 -l 10 -c '0,f h'           # 窓の外 — Invalid range.
+t pt.bin -o 100 -l 10 -c '100,1ff h'       # 窓をはみ出す範囲
+t pt.bin -o 100 -l 10 -w -c '100 i 41'     # 窓の中を書く
+t pt.bin -o 100 -l 10 -w -c '0 i 41'       # 窓の外を書く
+t pt.bin -o 100 -l 10 -w -c 'wp'           # 元の位置へ書き戻す
+t pt.bin -o 400 -l 10 -c 'h'               # ファイル末尾を越える窓
+
+# ================================================================
+#   9. スクリプト (-s) と単発コマンド (-c)
+# ================================================================
+cat > $W/fix/s.bi <<'EOF'
+# test1 のスクリプト
+0 i 41 42 43
+10,1f ^ff
+0,7 c 40
+0,f h
+?$
+EOF
+t x.bin -s s.bi                            # 静かに実行
+t x.bin -v -s s.bi                         # 経過を出す
+t x.bin -w -s s.bi                         # 書き戻す
+rm -f $W/fix/s.bi
+
+# ================================================================
+#   10. bi.doc が「両者で違う」と書いている箇所
+#       揃ってしまったらドキュメントが古い合図として知らせる。
+# ================================================================
+d txt.bin -w -c '0,$ s /cd\d/XX/'          # \d      bi.py は数字、bi.c は違う
+d txt.bin -w -c '0,$ s /[[:digit:]]/Z/'    # POSIX文字クラス  bi.c のみ
+d txt.bin -w -c '0,$ s /a(?:bc)/Z/'        # 非捕捉グループ   bi.py のみ
+d x.bin   -w -c '@setmem(0,0xEE)'          # '@' からのバッファ操作は bi.py のみ
+d txt.bin -w -c '0,$ s /a/#/'              # '#' を置換文字列に書いた場合
+d x.bin   -c '0,f?Q'                       # float128 (bi.py は double に丸まる)
+
+# ================================================================
+#   11. 環境によって変わるので合否に入れないもの
+#       GNU 拡張 (\w \W \s \S \b) は glibc の regex にはあるが
+#       FreeBSD の libc には無く、bi.c は黙って1件も拾わない。
+#       bi.doc は「両方で使える」に分類しているが、環境次第である。
+# ================================================================
+for pat in '\w' '\s' '\b'; do
+    run txt.bin -w -c "0,\$ s /$pat/Z/"
+    if [ -n "`difference`" ]; then
+        echo "INFO: 正規表現 $pat は bi.py と bi.c で結果が違う (この環境の libc 次第)"
+    fi
+done
+
+# ================================================================
+if [ $FAIL -eq 0 ]; then
+    rm -rf $W
+    echo "test all passed"
+else
+    echo "test1: 食い違いあり。$W/py と $W/c に最後の結果が残っている。"
+    exit 1
+fi
