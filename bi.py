@@ -3117,36 +3117,19 @@ class BiEditor:
                 is_repeat = False
 
             # fill mode for 'i' with range
-            # 破綻点修正: 範囲(x,x2)と repeat(*n)が両方指定された場合
-            # (例: "0,f i 55 *2")、以前は範囲を無条件優先して *n を無視して
-            # おり、bi.c(repeat優先・範囲を超える分は切り捨て)と書き込む
-            # バイト数自体が食い違っていた(bi.c=2バイト/bi.py=16バイト)。
-            # bi.c 側に揃え、is_repeat のときは repeat を優先する。
+            # 範囲(x,x2)と repeat(*n)が両方指定された場合 (例: "0,f i 55 *2")
+            # は範囲を優先し、*n は読み捨てる。範囲全体をデータで埋める。
+            # bi.c も同じ規則にしてある。
             if ch == 'i' and xf2:
                 if len(m):
-                    if is_repeat:
-                        if length * len(m) > self.MAX_FILL_SIZE:
-                            self.stderr(f"Repeat count too large (max {self.MAX_FILL_SIZE} bytes total).")
-                            return -1
-                        data = m * length
-                        # 範囲より長い場合は切り捨て(bi.c と同じ: overwrite は範囲外を書かない)
-                        if len(data) > (x2 - x + 1):
-                            data = data[:(x2 - x + 1)]
-                    else:
-                        if (x2 - x + 1) > self.MAX_FILL_SIZE:
-                            self.stderr(f"Fill size too large (max {self.MAX_FILL_SIZE} bytes).")
-                            return -1
-                        data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
+                    if (x2 - x + 1) > self.MAX_FILL_SIZE:
+                        self.stderr(f"Fill size too large (max {self.MAX_FILL_SIZE} bytes).")
+                        return -1
+                    data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
                     self.save_undo_state()
                     self.memory.ovwmem(x, data)
                     self.commit_undo()
-                    # is_repeat のときは範囲と食い違い得るバイト数になるため
-                    # "filled." と名乗らせず "overwritten." のままにする
-                    # (bi.c のメッセージ選択と一致させる)。
-                    if is_repeat:
-                        self.stdmm(f"{len(data)} bytes overwritten.")
-                    else:
-                        self.stdmm(f"{len(data)} bytes filled.")
+                    self.stdmm(f"{len(data)} bytes filled.")
                     self.display.jump(x + len(data))
                 else:
                     self.stderr("No data specified.")
@@ -3154,17 +3137,10 @@ class BiEditor:
 
             if ch == 'I' and xf2:
                 if len(m):
-                    if is_repeat:
-                        if length * len(m) > self.MAX_FILL_SIZE:
-                            self.stderr(f"Repeat count too large (max {self.MAX_FILL_SIZE} bytes total).")
-                            return -1
-                        # insert は範囲に収める必要が無いので切り捨てない(bi.c と同じ)。
-                        data = m * length
-                    else:
-                        if (x2 - x + 1) > self.MAX_FILL_SIZE:
-                            self.stderr(f"Fill size too large (max {self.MAX_FILL_SIZE} bytes).")
-                            return -1
-                        data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
+                    if (x2 - x + 1) > self.MAX_FILL_SIZE:
+                        self.stderr(f"Fill size too large (max {self.MAX_FILL_SIZE} bytes).")
+                        return -1
+                    data = m * ((x2 - x + 1) // len(m)) + m[0:((x2 - x + 1) % len(m))]
                     self.save_undo_state()
                     self.memory.insmem(x, data)
                     self.commit_undo()

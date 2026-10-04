@@ -135,6 +135,9 @@ t x.bin -w -c '0 I/hello'           # 文字列で挿入
 t x.bin -w -c '10 i ff *20'         # 繰り返し回数つき
 t x.bin -w -c '10,1f i 41'          # 範囲を埋める
 t x.bin -w -c '10,1f i/ab'          # 範囲を文字列で埋める
+t x.bin -w -c '10,1f i 41 *2'       # 範囲と *n — 範囲を優先、*n は読み捨て
+t x.bin -w -c '10,1f I 41 42 *2'    # 挿入でも範囲を優先
+t x.bin -w -c '10,1f i 41 *0'       # 範囲があれば *0 もエラーにしない
 t x.bin -w -c '*4 i 99'             # '*長さ' 形式
 t x.bin -w -c '10,1f d'             # 範囲削除
 t x.bin -w -c "\$ I 77"             # 末尾に足す

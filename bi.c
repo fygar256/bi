@@ -5102,12 +5102,19 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             if (n != UNKNOWN && n > 0) {
                 is_repeat = true;
                 repeat_count = n;
-            } else {
+            } else if (!(xf && xf2)) {
                 display_stderr(&editor->display, "Invalid repeat count.", 
                                editor->scriptingflag, editor->verbose);
                 bytearray_free(&pattern);
                 return -1;
             }
+        }
+
+        /* 範囲と *n を同時に与えたとき (0,f i 55 *2) は範囲を優先し、
+         * *n は読み捨てる。範囲全体をパターンで埋める。bi.py も同じ規則。 */
+        if (xf && xf2) {
+            is_repeat = false;
+            repeat_count = 1;
         }
 
         // 範囲チェック（削除・上書き系で重要）
@@ -5241,10 +5248,8 @@ int execute_command(BiEditor *editor, const char *line, size_t idx,
             /* bi.py は範囲指定のフィル(<start>,<end> i data)を "filled."、
              * 単なる上書き([offset]i data [*n])を "overwritten." と呼び分ける。
              * 両実装で文言を揃える。
-             * ただし is_repeat の場合はここから外す。範囲と *n を同時に
-             * 与えたとき (0,f i 55 *2) は *n(繰り返し回数)を優先し、範囲を
-             * 超える分は切り捨てる。bi.py 側もこの規則に揃えてあるので、
-             * 書き込むバイト数は両実装で一致する。 */
+             * 範囲と *n を同時に与えたときは範囲が優先されて is_repeat は
+             * 偽になっているので、ここも "filled." になる。 */
             if (xf && xf2 && !is_repeat) {
                 snprintf(msg, sizeof(msg), "%zu bytes filled.", data_to_write.size);
             } else {
